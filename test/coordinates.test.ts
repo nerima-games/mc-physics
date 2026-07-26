@@ -1,0 +1,264 @@
+/**
+ * The coordinate and AABB invariants.
+ *
+ * plan.md §3.4 says every "things float" bug in the reference was a
+ * foot-origin/centre Y mismatch. These are the tests that make the same class
+ * of bug impossible here rather than merely unlikely.
+ *
+ * Regression names (docs/design-notes.md):
+ *   physics-y-convention-is-typed
+ *   physics-block-occupies-y-to-y-plus-one
+ *   physics-spawn-plane-is-surface-plus-one
+ *   physics-resting-contact-is-not-a-collision
+ */
+import { describe, expect, it } from '@effect/vitest'
+import { Effect, FastCheck } from 'effect'
+import {
+  CONTACT_EPSILON,
+  CentreY,
+  FULL_BLOCK_SHAPE,
+  FootY,
+  HalfHeight,
+  PLAYER_HALF_HEIGHT,
+  PLAYER_HALF_WIDTH,
+  SLAB_SHAPE,
+  blockAABB,
+  centreOfFoot,
+  entityAABB,
+  footOfCentre,
+  intersects,
+  isRestingOn,
+  penetrationY,
+  standingPlaneAbove,
+} from '../domain/coordinates'
+
+const arbitraryY = FastCheck.double({ min: -1024, max: 1024, noNaN: true, noDefaultInfinity: true })
+const arbitraryHalfHeight = FastCheck.double({
+  min: 0.05,
+  max: 8,
+  noNaN: true,
+  noDefaultInfinity: true,
+}).map((value) => HalfHeight(value))
+
+describe('the foot / centre Y convention', () => {
+  it.effect('round-trips foot -> centre -> foot exactly', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
+          const foot = FootY(y)
+          return Math.abs(footOfCentre(centreOfFoot(foot, halfHeight), halfHeight) - foot) < 1e-9
+        }),
+        { numRuns: 300 },
+      )
+    }),
+  )
+
+  it.effect('round-trips centre -> foot -> centre exactly', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
+          const centre = CentreY(y)
+          return Math.abs(centreOfFoot(footOfCentre(centre, halfHeight), halfHeight) - centre) < 1e-9
+        }),
+        { numRuns: 300 },
+      )
+    }),
+  )
+
+  it.effect('the centre is exactly one half-height above the feet, never zero and never a full height', () =>
+    Effect.sync(() => {
+      // Off-by-a-factor-of-two here is the second commonest form of the bug:
+      // subtracting the full height rather than the half sinks the body into
+      // the floor by exactly one body length.
+      const foot = FootY(64)
+      expect(centreOfFoot(foot, PLAYER_HALF_HEIGHT)).toBe(64.9)
+      expect(footOfCentre(CentreY(64.9), PLAYER_HALF_HEIGHT)).toBeCloseTo(64, 10)
+    }),
+  )
+
+  it.effect('rejects a non-positive half-height, which would collapse the two conventions into one', () =>
+    Effect.sync(() => {
+      expect(() => HalfHeight(0)).toThrow()
+      expect(() => HalfHeight(-1)).toThrow()
+      expect(() => HalfHeight(Number.NaN)).toThrow()
+    }),
+  )
+})
+
+describe('block occupancy', () => {
+  it.effect('a block at cell y occupies exactly [y, y+1] on every axis', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.integer({ min: -256, max: 256 }),
+          FastCheck.integer({ min: 0, max: 255 }),
+          FastCheck.integer({ min: -256, max: 256 }),
+          (bx, by, bz) => {
+            const box = blockAABB(bx, by, bz)
+            return (
+              box.minX === bx &&
+              box.maxX === bx + 1 &&
+              box.minY === by &&
+              box.maxY === by + 1 &&
+              box.minZ === bz &&
+              box.maxZ === bz + 1
+            )
+          },
+        ),
+        { numRuns: 200 },
+      )
+    }),
+  )
+
+  it.effect('a slab occupies the bottom half of its cell and nothing above it', () =>
+    Effect.sync(() => {
+      const box = blockAABB(0, 64, 0, SLAB_SHAPE)
+      expect(box.minY).toBe(64)
+      expect(box.maxY).toBe(64.5)
+    }),
+  )
+
+  it.effect('the full-block shape is the unit cube, so shapes compose by simple translation', () =>
+    Effect.sync(() => {
+      expect(FULL_BLOCK_SHAPE).toStrictEqual({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 })
+    }),
+  )
+
+  it.effect('the standing plane above a block is surfaceY + 1, not surfaceY', () =>
+    Effect.sync(() => {
+      // The reference spawns at `surfaceY + 1 + PLAYER_HALF_HEIGHT`
+      // (spawn-selection-search.ts:206) — one to reach the block's top face,
+      // then the half-height to reach the body centre. Both steps, in order.
+      FastCheck.assert(
+        FastCheck.property(FastCheck.integer({ min: 0, max: 254 }), (surfaceY) => {
+          const foot = standingPlaneAbove(surfaceY)
+          return foot === blockAABB(0, surfaceY, 0).maxY
+        }),
+        { numRuns: 100 },
+      )
+      expect(centreOfFoot(standingPlaneAbove(62), PLAYER_HALF_HEIGHT)).toBe(63.9)
+    }),
+  )
+})
+
+describe('resting contact', () => {
+  it.effect('an entity standing exactly on a block surface reads as resting, never as embedded', () =>
+    Effect.sync(() => {
+      // Touching faces must not read as a collision to be resolved, or the
+      // resolver pushes the entity up every frame and it vibrates on the spot.
+      //
+      // Note this asserts `isRestingOn`, NOT `!intersects`. `(foot + h) - h` is
+      // not exactly `foot` in IEEE-754, so an exact test fails: this very
+      // property found surfaceY=1, halfHeight=0.05, where the reconstructed
+      // foot lands 2 ulp below the block top. That is what CONTACT_EPSILON is
+      // for, and pretending otherwise would just move the bug into the resolver.
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.integer({ min: 0, max: 254 }),
+          arbitraryHalfHeight,
+          (surfaceY, halfHeight) => {
+            const centre = centreOfFoot(standingPlaneAbove(surfaceY), halfHeight)
+            const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, halfHeight)
+            return isRestingOn(body, blockAABB(0, surfaceY, 0))
+          },
+        ),
+        { numRuns: 300 },
+      )
+    }),
+  )
+
+  it.effect('the float error at a resting contact really is within CONTACT_EPSILON, by orders of magnitude', () =>
+    Effect.sync(() => {
+      // Pins the size of the error rather than merely tolerating it. If a
+      // change to the conversions makes the error grow, this fails long before
+      // the epsilon stops covering it.
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.integer({ min: 0, max: 254 }),
+          arbitraryHalfHeight,
+          (surfaceY, halfHeight) => {
+            const centre = centreOfFoot(standingPlaneAbove(surfaceY), halfHeight)
+            const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, halfHeight)
+            const depth = penetrationY(body, blockAABB(0, surfaceY, 0))
+            return depth <= CONTACT_EPSILON / 1000
+          },
+        ),
+        { numRuns: 300 },
+      )
+    }),
+  )
+
+  it.effect('the documented counterexample is exactly as documented', () =>
+    Effect.sync(() => {
+      const halfHeight = HalfHeight(0.05)
+      const centre = centreOfFoot(standingPlaneAbove(1), halfHeight)
+      const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, halfHeight)
+      const block = blockAABB(0, 1, 0)
+      // Strictly, it overlaps. Physically, it is standing still on the floor.
+      expect(intersects(body, block)).toBe(true)
+      expect(isRestingOn(body, block)).toBe(true)
+      expect(penetrationY(body, block)).toBeLessThan(1e-15)
+      expect(penetrationY(body, block)).toBeGreaterThan(0)
+    }),
+  )
+
+  it.effect('an entity one epsilon BELOW the surface does intersect — the boundary is where it is claimed', () =>
+    Effect.sync(() => {
+      const surfaceY = 64
+      const centre = CentreY(centreOfFoot(standingPlaneAbove(surfaceY), PLAYER_HALF_HEIGHT) - 0.001)
+      const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+      expect(intersects(body, blockAABB(0, surfaceY, 0))).toBe(true)
+    }),
+  )
+
+  it.effect('an entity built from a FOOT Y by mistake would sink half a body — which is why the types differ', () =>
+    Effect.sync(() => {
+      // This test documents the bug the branding prevents. `CentreY(...)` here
+      // is an explicit, visible lie; in the reference the same mistake is an
+      // invisible `number` flowing into a `number` parameter.
+      const surfaceY = 64
+      const foot = standingPlaneAbove(surfaceY)
+      const correct = entityAABB(
+        0.5,
+        centreOfFoot(foot, PLAYER_HALF_HEIGHT),
+        0.5,
+        PLAYER_HALF_WIDTH,
+        PLAYER_HALF_HEIGHT,
+      )
+      const wrong = entityAABB(0.5, CentreY(foot), 0.5, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+
+      expect(intersects(correct, blockAABB(0, surfaceY, 0))).toBe(false)
+      expect(intersects(wrong, blockAABB(0, surfaceY, 0))).toBe(true)
+      expect(correct.minY - wrong.minY).toBeCloseTo(Number(PLAYER_HALF_HEIGHT), 10)
+    }),
+  )
+
+  it.effect('an entity AABB is symmetric about its centre on every axis', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
+          const box = entityAABB(3, CentreY(y), -7, PLAYER_HALF_WIDTH, halfHeight)
+          return (
+            Math.abs((box.minX + box.maxX) / 2 - 3) < 1e-9 &&
+            Math.abs((box.minY + box.maxY) / 2 - y) < 1e-9 &&
+            Math.abs((box.minZ + box.maxZ) / 2 + 7) < 1e-9
+          )
+        }),
+        { numRuns: 200 },
+      )
+    }),
+  )
+
+  it.effect('intersection is symmetric in its arguments', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(arbitraryY, arbitraryY, (a, b) => {
+          const left = entityAABB(0, CentreY(a), 0, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+          const right = entityAABB(0, CentreY(b), 0, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+          return intersects(left, right) === intersects(right, left)
+        }),
+        { numRuns: 200 },
+      )
+    }),
+  )
+})
