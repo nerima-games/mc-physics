@@ -1,7 +1,7 @@
 # 公開 API
 
 - 出典: plan.md §3.4 + **参照実装の実コードによる検証**
-- 参照実装ルート: `/Users/take/ghq/github.com/takeokunn/ts-minecraft`（以下パスはこれ相対）
+- 参照実装ルート: `<reference-impl>`（以下パスはこれ相対）
 
 ## 1. `step(state, world, dt)` —— 参照実装では 3 層に分かれている
 
@@ -107,18 +107,46 @@ export type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>
 export const MIN_DELTA_SECS = 0.001
 export const MAX_DELTA_SECS = 0.05
 export const FIRST_FRAME_DELTA_SECS = 0.016
-export const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>  // refined: [MIN, MAX] を要求
-export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs
+// kernel の refinement 逐語: 有限かつ非負。ゼロは合法。範囲は要求しない
+export const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>
+export const isClampedDelta = (deltaSecs: number): boolean          // [MIN, MAX] に入っているか
+export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs // 境界。出力は常に isClampedDelta
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs
 ```
 
-参照実装との差分 2 つ:
+参照実装との差分は **NaN の扱いだけ**である。
+`Math.max(a, NaN)` は NaN であり、NaN の delta は 1 フレームで世界中の位置を汚染したうえ、
+出所の痕跡を残さない。そのため `clampDeltaTime` は NaN を初回フレーム値に落とす。
 
-1. **`DeltaTimeSecs` を refined にした**（参照実装は 0・負・Infinity・NaN を弾く schema）。
-   本リポジトリは範囲まで要求するので、クランプを通らない値は**構築できない**。
-   クランプが唯一の入口であることが慣習ではなく事実になる。
-2. **NaN を初回フレーム値に落とす**。`Math.max(a, NaN)` は NaN であり、
-   NaN の delta は 1 フレームで世界中の位置を汚染したうえ、出所の痕跡を残さない。
+### 2-1. ブランドは `[0.001, 0.05]` を要求**しない**
+
+`DeltaTimeSecs` は当初 `[MIN_DELTA_SECS, MAX_DELTA_SECS]` に refine してあり、
+「クランプを通らない値は構築できない」と説明していた。**それは誤りだった。**
+
+`DeltaTimeSecs` は `@nerima-games/mc-kernel` の資産であり、kernel は「有限かつ非負」に refine している
+（`mc-kernel/domain/quantities.ts:37-42`。ゼロは合法 —— 1 クロック tick に 2 回フレームが
+スケジュールされうるため）。そして `Brand.Brand<'DeltaTimeSecs'>` は**文字列でキーされる**ので、
+kernel のブランドと本リポジトリのブランドは**検証の中身が違っても TypeScript にとって同じ型**である。
+
+したがって kernel 経由で作った `DeltaTimeSecs(30)` は `integrateBody` の引数として型検査を通り、
+コンストラクタも何も言わない。狭いほうのブランドが買っていたのは安全ではなく**偽の保証**だった。
+（`Context.Tag` のキー衝突と同じ根である。詳細は [design-notes.md](./design-notes.md) P-5。）
+
+**クランプは弱まっていない。属すべき場所に移った。**
+
+| 何を言うか | どこで言うか |
+| --- | --- |
+| 「これはフレームの経過秒である」（有限・非負） | `DeltaTimeSecs` ブランド。kernel と同一 |
+| 「これは積分器に渡して安全な step である」 | `clampDeltaTime` の出力、および `isClampedDelta` |
+
+「30 秒バックグラウンドにあったタブをどうするか」は delta を**生んだループ**の問いであって、
+量そのものの性質ではない。`clampDeltaTime` は積分に渡す delta を作る唯一の正規の入口であり続ける。
+`isClampedDelta` は、その不変条件に実際に依存する場所で invariant を検査可能にする。
+
+固定しているテスト:
+`REGRESSION: the brand is kernel’s refinement — finite and non-negative, zero included`、
+`REGRESSION: clampDeltaTime is the boundary — its output is always inside the safe range`、
+`pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary`。
 
 ## 3. 座標規約（`domain/coordinates.ts`）—— 本リポジトリの中核
 

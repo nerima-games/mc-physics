@@ -72,22 +72,23 @@ mc-physics はブロック ID の語彙を持たない。
 ### セットアップ
 
 ```console
-$ direnv allow          # devenv 経由で nodejs_22 + pnpm が入る
+$ direnv allow          # flake.nix の devShell で nodejs_22 + corepack が入る
 $ pnpm install
 ```
 
-devenv を使わない場合は Node.js 22 以上と pnpm 9.15.0 を用意する
+Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0 を用意する
 （`package.json` の `packageManager` が版を pin しているので `corepack pnpm ...` でよい）。
 
-> **注意**: `devenv.lock` はコミットされていない。生成には `devenv` の実行が必要なため、
-> 初回に devenv を動かした人がコミットすること。
+> **注意**: ツールチェーンは `devenv.nix` から `flake.nix` + `flake.lock` に移行済みである。
+> `flake.lock` はコミットされているので、`nix develop`（`.envrc` は `use flake`）は
+> 誰の手元でも同じ nixpkgs に解決される。`devenv.nix` / `devenv.lock` はもう存在しない。
 
 ### コマンド
 
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json` と `tsconfig.test.json` の両方を型検査 |
-| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定） |
+| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API） |
 | `pnpm test:watch` | vitest watch |
@@ -106,7 +107,9 @@ import {
 // スポーン: surfaceY の上に立つ。+1 でブロック上面、+halfHeight で体の中心。
 const centre = centreOfFoot(standingPlaneAbove(surfaceY), PLAYER_HALF_HEIGHT)
 
-// 1 フレーム進める。クランプを通らない delta は構築できない。
+// 1 フレーム進める。`clampDeltaTime` が積分に渡す delta を作る唯一の正規の入口である。
+// ブランド自体は kernel と同じく「有限かつ非負」までしか言わない（docs/public-api.md §2-1）。
+// 範囲が要るところでは `isClampedDelta` で assert する。
 const dt = clampDeltaTime(rawDeltaSecs)     // min(max(0.001, raw), 0.05)
 const next = integrateBody(body, dt)
 // ... このあとに AABB 衝突リゾルバが走る（未実装）。順序は逆にできない。
@@ -123,6 +126,13 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 
 **このリポジトリはまだ第一版（叩き台）である。**
 
+- **`DeltaTimeSecs` のブランドは kernel の refinement（有限・非負）であり、`[0.001, 0.05]` ではない。**
+  かつて範囲まで refine してあり「クランプを通らない値は構築できない」と説明していたが、
+  `Brand.Brand<'DeltaTimeSecs'>` は**文字列でキーされる**ので、
+  kernel で作った `DeltaTimeSecs(30)` は本リポジトリの `integrateBody` の引数の型を満たしてしまう。
+  狭いブランドが買っていたのは安全ではなく偽の保証だった。
+  クランプは `clampDeltaTime` として境界に残り、`isClampedDelta` が不変条件を assert 可能にしている
+  （[`docs/design-notes.md`](./docs/design-notes.md) P-5、[`docs/public-api.md`](./docs/public-api.md) §2-1）。
 - **AABB 衝突リゾルバが未実装。これがこのリポジトリの本体である。**
   現在あるのは座標規約・deltaTime クランプ・semi-implicit Euler 積分・voxel DDA。
   リゾルバが満たすべき条件は [`docs/testing.md`](./docs/testing.md) §4 に列挙してある。

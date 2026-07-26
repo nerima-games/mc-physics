@@ -1,6 +1,6 @@
 # 移植元と実測 LOC
 
-- 参照実装ルート: `/Users/take/ghq/github.com/takeokunn/ts-minecraft`（以下パスはこれ相対）
+- 参照実装ルート: `<reference-impl>`（以下パスはこれ相対）
 - 計測日: 2026-07-26
 - 計測方法: `wc -l`（コメント・空行を含む物理行数）
 
@@ -110,7 +110,7 @@ plan.md の 1,453 も、参照実装自身の
 | plan.md の記述 | 実測 |
 | --- | --- |
 | physics 1,453 LOC | 狭義 **805** / `packages/game` 全体 **1,254**。1,453 は再現不能 |
-| voxel-DDA 2.3ms→0.09ms、25倍 | **裏が取れない**。散文ドキュメント 2 箇所のみで、ベンチマークもプロファイラ出力もコミットされていない（`design-notes.md` P-7） |
+| voxel-DDA 2.3ms→0.09ms、25倍 | **出典あり**（以前の「裏が取れない」は撤回）。参照実装のコミット `101074e3` に `frame:interaction 2.3ms -> 0.09ms`、"Performance (all browser-measured)" の下。計装済みステージ上でのブラウザ実測であり、`frame:interaction` ステージ全体の時間。ベンチマークスクリプトが無いため再実行はできない（`design-notes.md` P-7） |
 | 検証: プロパティテスト（エネルギー非増加、めり込みゼロ、決定論） | **参照実装には存在しない**。property test も fuzz も determinism test も energy test も 1 つも無い。この行は新リポジトリへの**要求**であって、参照実装の記述ではない |
 
 ### 4.1 plan.md で正しかったこと（すべて再検証済み）

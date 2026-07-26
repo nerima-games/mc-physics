@@ -7,7 +7,7 @@
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）と `tsconfig.test.json`（テスト・ツール）の両方 |
-| `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない） |
+| `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
 | `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止 |
 | `pnpm test` | vitest。`@effect/vitest` の `it.effect` が主 API |
 | `pnpm test:coverage` | カバレッジ計測（閾値は未設定。§3 参照） |
@@ -16,15 +16,16 @@
 セットアップ:
 
 ```console
-$ direnv allow          # devenv 経由で nodejs_22 + pnpm が入る
+$ direnv allow          # flake.nix の devShell で nodejs_22 + corepack が入る
 $ pnpm install
 ```
 
-devenv を使わない場合は Node.js 22 以上と pnpm 9.15.0 が要る。
+Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0 が要る。
 `package.json` の `packageManager` が版を pin しているので `corepack pnpm ...` でよい。
 
-> `devenv.lock` はコミットされていない。生成には devenv の実行が必要なため、
-> 初回に devenv を動かした人がコミットすること。
+> ツールチェーンは `devenv.nix` から `flake.nix` + `flake.lock` に移行済みである。
+> `flake.lock` はコミットされているので、`nix develop`（`.envrc` は `use flake`）は
+> 誰の手元でも同じ nixpkgs に解決される。`devenv.nix` / `devenv.lock` はもう存在しない。
 
 ## 2. テストの方針
 
@@ -132,6 +133,11 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 | ファイル | 内容 |
 | --- | --- |
 | `test/coordinates.test.ts` | foot/centre のラウンドトリップ、半分と全体の取り違え検出、ブロック占有 `[y,y+1]`、`surfaceY+1`、接地が衝突と読まれないこと、**浮動小数誤差の大きさの固定**、文書化された反例、AABB の対称性 |
-| `test/integrate.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、`DeltaTimeSecs` の構築拒否、semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、DDA（原点セル除外・法線・maxDistance・退化入力・訪問順・決定論） |
-| `test/public-api.test.ts` | barrel の export、実測定数の固定、終端速度と delta 上限の導出関係、`CONTACT_EPSILON` の桁 |
+| `test/integrate.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、**`DeltaTimeSecs` ブランドが kernel の refinement であること**（有限・非負。ゼロも 30 も通る）、**`clampDeltaTime` の出力が常に安全域に入ること**（プロパティテスト）、semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、DDA（原点セル除外・法線・maxDistance・退化入力・訪問順・決定論） |
+| `test/public-api.test.ts` | barrel の export、実測定数の固定、**ブランドが kernel 準拠でクランプが境界にあること**、終端速度と delta 上限の導出関係、`CONTACT_EPSILON` の桁 |
+
+> **「`DeltaTimeSecs` の構築拒否」は現在テストしていない。** ブランドはクランプ範囲を要求しない
+> ——要求しても意味が無かったからである（[design-notes.md](./design-notes.md) P-5、
+> [public-api.md](./public-api.md) §2-1）。代わりに、ブランドが**何を通すか**と
+> クランプが**何を返すか**を別々のテストが主張している。
 | `test/check-dependency-whitelist.test.ts` | 16 リポジトリ roster の完全性、非循環、体験モジュール間エッジ 0、kit の devDependency 専用性、推移閉包の拒否、`Date.now()` 禁止、import 抽出 |

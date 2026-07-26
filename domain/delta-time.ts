@@ -33,10 +33,46 @@
  *
  * See docs/design-notes.md, regressions `physics-delta-clamp-is-exact` and
  * `physics-terminal-velocity-cannot-tunnel`.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE BRAND IS LOOSE AND THE CLAMP IS A FUNCTION
+ * ---------------------------------------------------------------------------
+ *
+ * `DeltaTimeSecs` belongs to `@nerima-games/mc-kernel`
+ * (`mc-kernel/domain/quantities.ts:37-42`), which refines it to "finite and
+ * non-negative" and says so explicitly: a ZERO delta is legal, because a frame
+ * may be scheduled twice inside one clock tick. This declaration mirrors that
+ * refinement exactly, error message included.
+ *
+ * It used to refine to `[0.001, 0.05]` instead, and that was a defect rather
+ * than a stricter-is-safer choice. `Brand.Brand<'DeltaTimeSecs'>` is keyed by
+ * the STRING `'DeltaTimeSecs'`, so kernel's brand and this one are the SAME
+ * TYPE to TypeScript however differently they validate. A `DeltaTimeSecs(30)`
+ * constructed through kernel — legal there — therefore satisfied
+ * `integrateBody`'s parameter type while violating the invariant its comment
+ * claimed, and no compiler nor constructor would say a word. Two nominally
+ * identical brands with different invariants is the same failure mode as two
+ * `Context.Tag`s sharing a key (see `mc-sim/domain/kernel-vocabulary.ts`): the
+ * type system cannot distinguish them, so the stricter one buys nothing and
+ * costs a false guarantee.
+ *
+ * The clamp is not thereby weakened; it is moved to where it belongs. It is a
+ * FRAME-LOOP concern — "what happens after a tab was backgrounded for thirty
+ * seconds" is a question about the loop that produced the delta, not about the
+ * quantity itself — and it is applied at the boundary by `clampDeltaTime`,
+ * which remains the only sanctioned way to turn a raw interval into a delta fit
+ * for integration. mc-sim does exactly this with kernel's brand already
+ * (`mc-sim/domain/frame-timing.ts`). `isClampedDelta` below makes the invariant
+ * assertable at the points that actually depend on it.
  */
 import { Brand } from 'effect'
 
-/** A frame duration in seconds. Always in [MIN_DELTA_SECS, MAX_DELTA_SECS]. */
+/**
+ * Elapsed simulation time for one frame, in seconds. Finite and non-negative.
+ *
+ * Kernel's refinement, verbatim. NOT clamped — see the module header, and use
+ * `clampDeltaTime` before handing one to the integrator.
+ */
 export type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>
 
 export const MIN_DELTA_SECS = 0.001
@@ -45,19 +81,21 @@ export const MAX_DELTA_SECS = 0.05
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
 export const FIRST_FRAME_DELTA_SECS = 0.016
 
-/**
- * Refined rather than nominal: an unclamped delta must not be constructible.
- * The clamp is the only supported way in, and this refinement is what makes
- * that true rather than merely conventional.
- */
 export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
-  (value) => Number.isFinite(value) && value >= MIN_DELTA_SECS && value <= MAX_DELTA_SECS,
-  (value) =>
-    Brand.error(
-      `DeltaTimeSecs must be in [${MIN_DELTA_SECS}, ${MAX_DELTA_SECS}], received ${value}. ` +
-        'Use clampDeltaTime rather than constructing one directly.',
-    ),
+  (value) => Number.isFinite(value) && value >= 0,
+  (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
 )
+
+/**
+ * Is this delta inside the integrator's safe step range?
+ *
+ * The predicate the brand deliberately no longer enforces, exposed so that the
+ * invariant is still checkable where it matters — in the integrator's tests,
+ * and in any future assertion at the frame-loop boundary. `clampDeltaTime`
+ * returns a value for which this is true, always.
+ */
+export const isClampedDelta = (deltaSecs: number): boolean =>
+  Number.isFinite(deltaSecs) && deltaSecs >= MIN_DELTA_SECS && deltaSecs <= MAX_DELTA_SECS
 
 /**
  * The clamp. Byte-for-byte the reference's expression, deliberately.

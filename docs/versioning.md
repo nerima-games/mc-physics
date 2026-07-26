@@ -73,6 +73,23 @@ Step 0 の実装として GitHub Packages を選んである。組織 `nerima-ga
 
 ## 5. 何が破壊的変更なのか
 
+> **`0.x` の間の読み替え（全 16 リポジトリ共通の方針）**
+>
+> 本リポジトリは `0.1.0` であり、下流が契約を実際に消費して確認するまで `0.x` から出ない。
+> **semver では `0.x` の破壊的変更は major bump ではなく minor bump である**（`0.1.0` → `0.2.0`）。
+> したがって以下の MAJOR / MINOR / PATCH は **`1.0.0` 到達後の分類**であり、
+> `0.x` の間は次のように読み替える。
+>
+> | 分類 | `1.0.0` 到達後 | `0.x` の間（現在） |
+> | --- | --- | --- |
+> | MAJOR | major bump | **minor bump**（`0.1.0` → `0.2.0`） |
+> | MINOR | minor bump | patch bump |
+> | PATCH | patch bump | patch bump |
+>
+> 分類そのものは `0.x` でも意味を持つ。MAJOR に分類される変更は、
+> bump の大きさに関わらず**下流に必ず影響するもの**であり、告知と協調リリースの対象である。
+> `0.x` の間に major bump を切ることはない。
+
 ### MAJOR（1.0.0 到達後）
 
 - `FootY` / `CentreY` のどちらを「位置」の既定とするかの変更
@@ -82,6 +99,10 @@ Step 0 の実装として GitHub Packages を選んである。組織 `nerima-ga
 - ブロック占有規約 `[y, y+1]` の変更
 - 積分手法の変更（semi-implicit → 別のもの）
 - `CONTACT_EPSILON` の変更
+- **`DeltaTimeSecs` ブランドの述語を kernel から乖離させること** —— 乖離しても TypeScript には
+  見えないので（ブランドは文字列でキーされる）、下流は乖離に気づけないまま壊れる。
+  kernel の述語が変わったときだけ、それに追随する形で変える
+  （[design-notes.md](./design-notes.md) P-5、[public-api.md](./public-api.md) §2-1）
 
 これらはすべて「決定論的リプレイの結果が変わる」という一点で MAJOR である。
 plan.md §5.1-3 が「クロック注入による決定論。全シミュレーションが fast-forward 可能」を

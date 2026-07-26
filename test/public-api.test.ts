@@ -39,6 +39,7 @@ describe('public API surface', () => {
         'FIRST_FRAME_DELTA_SECS',
         'clampDeltaTime',
         'deltaTimeBetween',
+        'isClampedDelta',
         // integrate
         'GRAVITY_Y',
         'TERMINAL_VELOCITY_Y',
@@ -62,6 +63,25 @@ describe('the measured constants plan.md §3.4 carries over', () => {
       expect(physics.MIN_DELTA_SECS).toBe(0.001)
       expect(physics.MAX_DELTA_SECS).toBe(0.05)
       expect(physics.FIRST_FRAME_DELTA_SECS).toBe(0.016)
+    }),
+  )
+
+  // REGRESSION: the clamp bounds above are the INTEGRATOR's safe range, and the
+  // `DeltaTimeSecs` brand deliberately does not enforce them — it mirrors
+  // kernel's (mc-kernel/domain/quantities.ts:37-42) "finite, non-negative"
+  // refinement exactly, because the two share the brand key `'DeltaTimeSecs'`
+  // and are therefore one type to TypeScript. Pinned in the barrel as well as
+  // in domain/delta-time.ts, because a consumer meets it through the barrel.
+  // See domain/delta-time.ts for why the clamp belongs at the boundary instead.
+  it.effect('pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary', () =>
+    Effect.sync(() => {
+      expect(physics.DeltaTimeSecs(0)).toBe(0)
+      expect(physics.DeltaTimeSecs(30)).toBe(30)
+      expect(() => physics.DeltaTimeSecs(-1)).toThrow()
+      expect(() => physics.DeltaTimeSecs(Number.NaN)).toThrow()
+
+      expect(physics.isClampedDelta(physics.clampDeltaTime(30))).toBe(true)
+      expect(physics.isClampedDelta(30)).toBe(false)
     }),
   )
 

@@ -1,6 +1,6 @@
 # 責務
 
-- 出典: `/Users/take/Documents/plan.md` §3.4
+- 出典: plan.md（**非公開**）§3.4
 - 参照実装: `takeokunn/ts-minecraft`
 
 ## 1. plan.md §3.4 の記述（原文）

@@ -20,6 +20,7 @@ import {
   MIN_DELTA_SECS,
   clampDeltaTime,
   deltaTimeBetween,
+  isClampedDelta,
 } from '../domain/delta-time'
 import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrate, integrateBody, maxFallPerStep, type Body } from '../domain/integrate'
 
@@ -75,12 +76,49 @@ describe('the deltaTime clamp', () => {
     }),
   )
 
-  it.effect('refuses to construct an unclamped DeltaTimeSecs, so the clamp cannot be bypassed', () =>
+  // REGRESSION: this brand is `Brand.Brand<'DeltaTimeSecs'>`, and a brand is
+  // keyed by that STRING — so kernel's `DeltaTimeSecs`
+  // (mc-kernel/domain/quantities.ts:37-42) and this one are the same type to
+  // TypeScript no matter how differently they validate. This declaration used
+  // to refine to [0.001, 0.05] while kernel refines to "finite, non-negative",
+  // which meant a kernel-constructed `DeltaTimeSecs(30)` typechecked as an
+  // argument to `integrateBody` while breaking the invariant its comment
+  // claimed. The refinement is now kernel's, exactly.
+  it.effect('REGRESSION: the brand is kernel’s refinement — finite and non-negative, zero included', () =>
     Effect.sync(() => {
-      expect(() => DeltaTimeSecs(0)).toThrow()
-      expect(() => DeltaTimeSecs(1)).toThrow()
-      expect(() => DeltaTimeSecs(Number.NaN)).toThrow()
+      // A zero delta is LEGAL: kernel's note says a frame may be scheduled
+      // twice inside one clock tick. Stages handle it; the brand does not
+      // reject it.
+      expect(DeltaTimeSecs(0)).toBe(0)
+      expect(DeltaTimeSecs(FIRST_FRAME_DELTA_SECS)).toBe(FIRST_FRAME_DELTA_SECS)
       expect(DeltaTimeSecs(MAX_DELTA_SECS)).toBe(MAX_DELTA_SECS)
+      // Out of the integrator's safe range, but a perfectly good quantity —
+      // exactly what a backgrounded tab produces before anyone clamps it.
+      expect(DeltaTimeSecs(30)).toBe(30)
+
+      expect(() => DeltaTimeSecs(-0.000_001)).toThrow()
+      expect(() => DeltaTimeSecs(Number.NaN)).toThrow()
+      expect(() => DeltaTimeSecs(Number.POSITIVE_INFINITY)).toThrow()
+    }),
+  )
+
+  // The safety property the old refinement was reaching for, restated where it
+  // is actually true: the CLAMP is the boundary, not the constructor.
+  it.effect('REGRESSION: clampDeltaTime is the boundary — its output is always inside the safe range', () =>
+    Effect.sync(() => {
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.double({ min: -1000, max: 1000, noNaN: false }),
+          (raw) => isClampedDelta(clampDeltaTime(raw)),
+        ),
+        { numRuns: 500 },
+      )
+
+      expect(isClampedDelta(DeltaTimeSecs(30))).toBe(false)
+      expect(isClampedDelta(DeltaTimeSecs(0))).toBe(false)
+      expect(isClampedDelta(MIN_DELTA_SECS)).toBe(true)
+      expect(isClampedDelta(MAX_DELTA_SECS)).toBe(true)
+      expect(isClampedDelta(FIRST_FRAME_DELTA_SECS)).toBe(true)
     }),
   )
 })

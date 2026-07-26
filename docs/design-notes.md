@@ -209,6 +209,9 @@ Mob も別経路で同順（`packages/entity/application/mob/entity-manager-phys
 
 ## P-5 `physics-delta-clamp-is-exact` / `physics-terminal-velocity-cannot-tunnel`
 
+> **注記**: `physics-delta-clamp-is-exact` が担っていた主張は、現在**ブランドの述語**と
+> **クランプの出力**の 2 本に分かれている。理由は下の「ブランドはクランプを強制しない」節にある。
+
 ### plan.md §3.4 の記述
 
 > deltaTime は `min(max(0.001, raw), 0.05)` にクランプ、初回フレームは 0.016
@@ -246,21 +249,82 @@ Mob も別経路で同順（`packages/entity/application/mob/entity-manager-phys
 重複したフレームコールバックから来る。0 だと速度積分が no-op になり、
 `x / dt` で計算される量がすべて無限大になる。
 
+### ブランドはクランプを強制しない —— 強制していたのは**誤り**だった
+
+`DeltaTimeSecs` は当初 `[0.001, 0.05]` に refine してあり、
+「クランプを通らない値は構築できないので、クランプが唯一の入口であることが慣習ではなく事実になる」
+と説明していた。**その説明は成立していない。**
+
+`DeltaTimeSecs` は `@nerima-games/mc-kernel` の資産であり
+（`mc-kernel/domain/quantities.ts:37-42`）、kernel は「有限かつ非負」に refine している。
+そして `Brand.Brand<'DeltaTimeSecs'>` は**文字列 `'DeltaTimeSecs'` でキーされる**。
+つまり kernel のブランドと本リポジトリのブランドは、
+**検証の中身がどれだけ違っても TypeScript にとっては同じ型**である。
+
+帰結は具体的である。kernel 経由で構築した `DeltaTimeSecs(30)`（kernel では合法）は、
+`integrateBody` の引数の型を**満たす**。コンパイラも、こちらのコンストラクタも、何も言わない。
+30 秒の delta は 1 step で全エンティティを床の下へ運ぶ。
+狭いほうのブランドが買っていたのは安全ではなく、**偽の保証**だった。
+
+これは Tag のキー衝突（`mc-sim/domain/kernel-vocabulary.ts` の `ClockPort`）と**同じ根**である。
+名前が同一で不変条件が違う 2 つのものを、型システムは区別できない。
+
+### 現在の形: kernel の述語 + 境界のクランプ + assert 可能な述語
+
+```typescript
+// kernel の refinement、逐語。クランプ済みではない。
+export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
+  (value) => Number.isFinite(value) && value >= 0,
+  (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
+)
+
+// 積分に渡す前に通す境界。参照実装の式そのまま。
+export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs
+
+// ブランドが意図的に強制しなくなった述語。要る場所で assert できる。
+export const isClampedDelta = (deltaSecs: number): boolean
+```
+
+**クランプは弱まっていない。属すべき場所に移った。**
+「30 秒バックグラウンドにあったタブをどうするか」は delta を生んだ**ループ**の問いであって、
+量そのものの性質ではない。`clampDeltaTime` は積分に適した delta を作る唯一の正規の入口であり続ける
+（mc-sim は kernel のブランドに対して既に同じことをしている: `mc-sim/domain/frame-timing.ts`）。
+`isClampedDelta` は、その不変条件に実際に依存する場所——積分器のテストと、
+将来フレームループ境界に置くアサーション——で invariant を**検査可能**にする。
+
 ### 回帰テスト
 
-`test/integrate.test.ts`:
+**`physics-delta-clamp-is-exact` は 2 つに割れた。**
+「ブランドが何を受け付けるか」と「クランプが何を返すか」は別の主張であり、
+両者を 1 本のテストが担っていたことが、そもそも不変条件をブランドに載せた誤りの反映だった。
+
+`test/integrate.test.ts`、クランプ側:
 
 - `is exactly min(max(0.001, raw), 0.05)`（プロパティテスト、500 runs）
 - `caps a backgrounded tab at 0.05s instead of teleporting everything through the floor`
 - `floors a zero, negative or backwards-clock delta at 0.001s`
 - `maps NaN to the first-frame delta rather than letting it poison every position`
 - `uses 0.016s for the first frame, where there is no previous timestamp to subtract`
-- `refuses to construct an unclamped DeltaTimeSecs, so the clamp cannot be bypassed`
+- `REGRESSION: clampDeltaTime is the boundary — its output is always inside the safe range`
+  —— `isClampedDelta(clampDeltaTime(raw))` を 500 runs のプロパティテストで検査する。
+  かつて「コンストラクタが弾く」で言おうとしていたことを、**それが実際に真である場所**で言い直したもの
+
+`test/integrate.test.ts`、ブランド側:
+
+- `REGRESSION: the brand is kernel’s refinement — finite and non-negative, zero included`
+  —— `DeltaTimeSecs(0)` も `DeltaTimeSecs(30)` も**通る**ことを assert する。
+  ゼロは合法である（1 クロック tick に 2 回フレームがスケジュールされうる、と kernel が書いている）。
+  30 は積分器の安全域の外だが、まっとうな量である —— まさにバックグラウンドタブが生む値である。
+  弾かれるのは負・NaN・Infinity だけ
+
+トンネリング側:
+
 - `TUNNELLING INVARIANT: one step at the delta cap never falls further than one body height`
 - `never lets a dynamic body fall faster than terminal velocity`（プロパティテスト）
 
 `test/public-api.test.ts`:
 
+- `pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary`
 - `keeps terminal velocity strictly inside what the delta cap allows the resolver to catch`
   —— 数字ではなく**導出**を検査する。片方だけ変えたら落ちる。
 
@@ -317,18 +381,35 @@ Mob も別経路で同順（`packages/entity/application/mob/entity-manager-phys
 唯一の呼び出し元は `packages/presentation/highlight/block-highlight.ts:139-148`、
 DDA と mesh の切り替えは `:159-161`。
 
-### 「2.3ms→0.09ms、25倍」は裏が取れなかった（正直に記録する）
+### 「2.3ms→0.09ms、25倍」の出所（**訂正**: 以前「裏が取れない」と書いたのは誤り）
 
-この数値は参照実装の**散文ドキュメントにしか存在しない**:
+本書は以前この数値を「散文ドキュメント 2 箇所のみ。裏が取れない」と記録していた。
+**その判定は誤りである。**追跡対象のファイルだけを全文検索して結論を出しており、
+**コミットメッセージを見ていなかった**。
 
-- `docs/reference/shipping-readiness-2026-07-10.md:50`:
-  `- Block targeting via voxel-DDA: 2.3 ms → **0.09 ms** (~25×).`
-  見出しは "## Performance (measured, not estimated)"、
-  出典は「2026-07-10 の in-browser profiling campaign (CDP profiler, QA APIs)」とされる。
-- `docs/explanations/architecture/repo-decomposition-plan.md:145`（plan.md の元原稿）
+一次出典は参照実装のコミット `101074e3`
+（`feat: debug instrumentation campaign — 10 fixes, achievements system, voxel-DDA targeting`）である:
 
-**ベンチマークスクリプトも `.bench.ts` も、コミットされたプロファイラ出力も存在しない。**
-再現不能な主張として扱うこと。
+```
+Performance (all browser-measured):
+- block targeting replaced three.js triangle raycast with voxel DDA
+  (Amanatides & Woo) over cached chunk data: frame:interaction 2.3ms -> 0.09ms
+```
+
+- 計測対象は `frame:interaction` ステージの時間であり、DDA 関数単体のマイクロベンチではない。
+- 計測手段は**ブラウザ実測**（同コミットが同時に入れた `debug-frame-spikes` /
+  `debug-log-capture` と QA API で計装したステージ上での測定）。
+  同じ節に "final numbers: walking p95 10ms @120fps, heap 207MB GC'd plateau" が並ぶ。
+- 追跡ファイル側の散文は二次資料である:
+  `docs/reference/shipping-readiness-2026-07-10.md:50`
+  （`- Block targeting via voxel-DDA: 2.3 ms → **0.09 ms** (~25×).`、
+  見出し "## Performance (measured, not estimated)"）と
+  `docs/explanations/architecture/repo-decomposition-plan.md:145`（plan.md の元原稿）。
+
+**再現可能性についての限定は残る。** ベンチマークスクリプトも `.bench.ts` も、
+コミットされたプロファイラ出力も存在しない。数値は「計装済みステージに対する
+一回きりのブラウザ実測」であって、CI で再実行できるものではない。
+**由来は明確・再現手段は無い**、が正しい記述である。
 
 コード中のコメント（`voxel-raycast.ts:3-6`）はもっと弱く、もっと擁護しやすい主張をしている:
 
@@ -342,7 +423,9 @@ DDA と mesh の切り替えは `:159-161`。
 `block-highlight.ts:120-125` も「~16% of the main thread」を繰り返している。
 
 **アルゴリズム上の論拠 —— O(横断セル数) 対 O(射程内の三角形数) —— は単独で成立する。**
-それが DDA を採る本当の理由である。25 倍という数字は要らない。
+それが DDA を採る本当の理由であり、25 倍という数字に依存しない。
+数字のほうは（由来が判明した今も）本リポジトリでは再現できないので、
+テストの assert 対象にはしない。
 
 ### 参照実装への訂正 2 点
 
@@ -434,5 +517,5 @@ export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 | ブロックは `[y, y+1]` を占有 | **正しい**。`aabb-collision-shapes.ts:16-23` |
 | スポーンは `surfaceY+1` 基準 | **正しい**。`spawn-selection-search.ts:206` |
 | ground-clamp はリゾルバ内、`step()` の後 | **正しい**。`aabb-collision.ts:281-285` + 呼び出し鎖（P-3） |
-| voxel-DDA 2.3ms→0.09ms、25倍 | **裏が取れない**。散文ドキュメントのみ。ベンチマークもプロファイラ出力もコミットされていない（P-7） |
+| voxel-DDA 2.3ms→0.09ms、25倍 | **出典あり**。参照実装のコミット `101074e3` に `frame:interaction 2.3ms -> 0.09ms`（"all browser-measured"）。計装済みステージに対するブラウザ実測で、`frame:interaction` ステージ全体の時間。ベンチマークスクリプトは無く再実行はできない（P-7）。※以前ここに「裏が取れない」と書いていたのは、追跡ファイルだけを検索した誤りである |
 | プロパティテスト（エネルギー非増加・めり込みゼロ・決定論） | **参照実装には存在しない**。property test も fuzz も determinism test も energy test も無い。plan.md §3.4 のこの行は新リポジトリへの**要求**であって、参照実装の現状の記述ではない |
