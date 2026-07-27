@@ -279,6 +279,51 @@ export const FULL_BLOCK_COLLISION_SHAPE: BlockCollisionShape = {
 
 `design-notes.md` P-6 に詳細。
 
+## 3-2. AABB 衝突リゾルバ（`domain/resolve.ts`）
+
+参照実装の `resolveBlockCollisions` / `resolveBlockCollisionsInto`
+（`packages/game/domain/aabb-collision.ts:41-50`, `:325-337`）に対応する。
+
+```typescript
+export type IsBlockSolid = (bx: number, by: number, bz: number) => boolean
+export type BlockShapeAt = (bx: number, by: number, bz: number) => AABB | null
+
+export type ResolveOptions = {
+  readonly halfWidth: number
+  readonly halfHeight: HalfHeight
+  readonly isBlockSolid: IsBlockSolid
+  readonly blockShapeAt?: BlockShapeAt
+  readonly stepHeight?: number        // 既定 0。参照実装の MAX_STEP_UP に相当するが「値」は mc-sim のもの
+}
+
+export type Resolution = { readonly body: Body; readonly isGrounded: boolean }
+
+export const resolveBody  = (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions): Resolution
+export const resolveWorld = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions): ReadonlyArray<Resolution>
+export const stepBody     = (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number): Resolution
+export const stepWorld    = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number): ReadonlyArray<Resolution>
+export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number
+```
+
+**`stepBody` が plan.md §3.4 の `step(state, world, dt)` である。**
+中身は `resolveBody(integrateBody(body, dt), dt, options)` の 1 行でしかないが、
+その 1 行が P-3 の順序であり、名前が付いていることで逆順が diff に現れる。
+
+参照実装との差分（詳細は `design-notes.md` P-9）:
+
+| 項目 | 参照実装 | 本リポジトリ |
+| --- | --- | --- |
+| 軸順序 | Y → X → Z | 同じ。ただし**根拠は実測**（P-9-1） |
+| 床とみなす条件 | `MAX_STEP_UP = 0.6` **または** `|vy| >= 8` **または** 中心セル直下 | `-vy * dt`（このステップの実変位）**＋注入された `stepHeight`**。定数なし |
+| 水平フェーズ | X と Z を別々に書き下し（約 100 行の重複） | `clampAxis` 1 つを両軸で共有 |
+| 面の採用条件 | `face >= x - halfW && face < x + halfW` | 同じ（face-span ガード）。**同時に補正量の上限でもある**（P-9-4） |
+| `isGrounded` | ground clamp の隣で立てるフラグ | 解決後の位置から世界に問い直す**プローブ**。`resolveBody` が固定点になる（P-9-5） |
+| 出力 | 引数のオブジェクトを破壊的に更新 | 純粋。in-place 版はベンチマークができてから（`integrate.ts` と同じ方針） |
+| 前提条件 | `overCenter` 特例でめり込みから復帰しようとする | **ステップ前に非めり込みであること**を前提とし、維持する（P-9-7） |
+
+`deltaTime` を受け取るのは、床とみなす条件がこのステップの変位を必要とするからである。
+積分に使ったのと同じ delta を渡すこと —— 別の値を渡すのは丸め誤差ではなく、別の問いへの答えになる。
+
 ## 4. voxel-DDA（`domain/dda.ts`）
 
 参照実装 `packages/world/domain/voxel-raycast.ts:21-26`（原文）:
@@ -333,11 +378,12 @@ export const voxelRaycast = (
 
 | 項目 | 参照実装 | LOC | 扱い |
 | --- | --- | --- | --- |
-| **AABB 衝突リゾルバ本体** | `packages/game/domain/aabb-collision.ts` | 361 | **次の作業**。このリポジトリの本体 |
-| `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | 同上 |
-| `clampSneakEdge` | `aabb-collision.ts:353-357` | — | 同上 |
-| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `FULL_BLOCK_SHAPE` / `SLAB_SHAPE` のみ実装済み |
-| step-up（`MAX_STEP_UP = 0.6`） | `aabb-collision.ts` | — | リゾルバと同時 |
+| ~~**AABB 衝突リゾルバ本体**~~ | `packages/game/domain/aabb-collision.ts` | 361 | **実装済み**（`domain/resolve.ts`）。§3-2 |
+| `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | **移植しない（今は）**。純粋版が定義であり、in-place 版はベンチマークができてから。`integrate.ts` と同じ方針 |
+| `clampSneakEdge` | `aabb-collision.ts:352-360` | — | 未着手。機構はここ・値は mc-sim（`responsibility.md` §3） |
+| step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | 未着手。Y フェーズの reach 上限だけで slab への step-up は成立するので、再実行が要るケースを再現するテストが書けてから（`testing.md` §4） |
+| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `FULL_BLOCK_SHAPE` / `SLAB_SHAPE` のみ。任意形状は `BlockShapeAt` で注入できるので、定数を持つかどうかだけの話になった |
+| ~~step-up（`MAX_STEP_UP = 0.6`）~~ | `aabb-collision.ts:32` | — | **定数としては移植しない**。`ResolveOptions.stepHeight`（既定 0）として注入する |
 | プレイヤー物理の高レベル層 | `player-physics.ts` | 310 | mc-sim 寄り。切り分け要検討 |
 | `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。能力フラグに置き換える（`responsibility.md` §3.1） |
 | Effect の Service / Layer 配線 | `physics-service.ts` ほか | 180 | 消費側（mc-sim）の責務 |

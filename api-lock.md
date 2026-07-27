@@ -13,7 +13,7 @@
 <!-- ------------------------------------------------------------------------- -->
 
 format: 1
-exported declarations: 40
+exported declarations: 50
 supporting declarations: 0
 
 ## Exported
@@ -29,6 +29,12 @@ type AABB = {
     readonly maxY: number;
     readonly maxZ: number;
 };
+```
+
+### BlockShapeAt  `type`
+
+```ts
+type BlockShapeAt = (bx: number, by: number, bz: number) => AABB | null;
 ```
 
 ### Body  `type`
@@ -123,6 +129,12 @@ const HalfHeight: Brand.Brand.Constructor<HalfHeight>;
 type HalfHeight = number & Brand.Brand<'HalfHeight'>;
 ```
 
+### IsBlockSolid  `type`
+
+```ts
+type IsBlockSolid = (bx: number, by: number, bz: number) => boolean;
+```
+
 ### IsTargetable  `type`
 
 ```ts
@@ -151,6 +163,27 @@ const PLAYER_HALF_HEIGHT: HalfHeight;
 
 ```ts
 const PLAYER_HALF_WIDTH = 0.3;
+```
+
+### Resolution  `type`
+
+```ts
+type Resolution = {
+    readonly body: Body;
+    readonly isGrounded: boolean;
+};
+```
+
+### ResolveOptions  `type`
+
+```ts
+type ResolveOptions = {
+    readonly halfWidth: number;
+    readonly halfHeight: HalfHeight;
+    readonly isBlockSolid: IsBlockSolid;
+    readonly blockShapeAt?: BlockShapeAt;
+    readonly stepHeight?: number;
+};
 ```
 
 ### SLAB_SHAPE  `const`
@@ -204,6 +237,12 @@ const centreOfFoot: (foot: FootY, halfHeight: HalfHeight) => CentreY;
 
 ```ts
 const clampDeltaTime: (rawDeltaSecs: number) => DeltaTimeSecs;
+```
+
+### collidesWith  `const`
+
+```ts
+const collidesWith: (a: AABB, b: AABB) => boolean;
 ```
 
 ### deltaTimeBetween  `const`
@@ -260,16 +299,46 @@ const isRestingOn: (body: AABB, surface: AABB) => boolean;
 const maxFallPerStep: (maxDeltaSecs: number) => number;
 ```
 
+### maxSpeedWithoutTunnelling  `const`
+
+```ts
+const maxSpeedWithoutTunnelling: (halfExtent: number, blockThickness: number, maxDeltaSecs: number) => number;
+```
+
 ### penetrationY  `const`
 
 ```ts
 const penetrationY: (a: AABB, b: AABB) => number;
 ```
 
+### resolveBody  `const`
+
+```ts
+const resolveBody: (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions) => Resolution;
+```
+
+### resolveWorld  `const`
+
+```ts
+const resolveWorld: (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions) => ReadonlyArray<Resolution>;
+```
+
 ### standingPlaneAbove  `const`
 
 ```ts
 const standingPlaneAbove: (surfaceY: number) => FootY;
+```
+
+### stepBody  `const`
+
+```ts
+const stepBody: (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number) => Resolution;
+```
+
+### stepWorld  `const`
+
+```ts
+const stepWorld: (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number) => ReadonlyArray<Resolution>;
 ```
 
 ### vec3  `const`

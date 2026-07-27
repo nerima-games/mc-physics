@@ -102,8 +102,8 @@ Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0 を用意する
 
 ```typescript
 import {
-  centreOfFoot, standingPlaneAbove, PLAYER_HALF_HEIGHT,
-  clampDeltaTime, integrateBody, voxelRaycast, vec3,
+  centreOfFoot, standingPlaneAbove, PLAYER_HALF_HEIGHT, PLAYER_HALF_WIDTH,
+  clampDeltaTime, stepBody, voxelRaycast, vec3,
 } from '@nerima-games/mc-physics'
 
 // スポーン: surfaceY の上に立つ。+1 でブロック上面、+halfHeight で体の中心。
@@ -113,8 +113,16 @@ const centre = centreOfFoot(standingPlaneAbove(surfaceY), PLAYER_HALF_HEIGHT)
 // ブランド自体は kernel と同じく「有限かつ非負」までしか言わない（docs/public-api.md §2-1）。
 // 範囲が要るところでは `isClampedDelta` で assert する。
 const dt = clampDeltaTime(rawDeltaSecs)     // min(max(0.001, raw), 0.05)
-const next = integrateBody(body, dt)
-// ... このあとに AABB 衝突リゾルバが走る（未実装）。順序は逆にできない。
+
+// 積分 → 解決。この順序は逆にできない（逆にすると 1 フレーム分の落下距離だけ床に沈む）。
+// stepBody がその合成に名前を与えているので、逆順は diff に現れる。
+const { body: next, isGrounded } = stepBody(body, dt, {
+  halfWidth: PLAYER_HALF_WIDTH,
+  halfHeight: PLAYER_HALF_HEIGHT,
+  isBlockSolid,        // 能力フラグを解決するのは呼び出し側。ブロック ID は渡ってこない
+  // blockShapeAt,     // 立方体でないブロックだけ答え、それ以外は null
+  // stepHeight: 0.6,  // ゲーム的なチューニング値。既定 0（= step-up 無し）
+})
 
 // ブロック狙撃は DDA。原点セルは決して返さない。
 const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
@@ -135,14 +143,25 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
   狭いブランドが買っていたのは安全ではなく偽の保証だった。
   クランプは `clampDeltaTime` として境界に残り、`isClampedDelta` が不変条件を assert 可能にしている
   （[`docs/design-notes.md`](./docs/design-notes.md) P-5、[`docs/public-api.md`](./docs/public-api.md) §2-1）。
-- **AABB 衝突リゾルバが未実装。これがこのリポジトリの本体である。**
-  現在あるのは座標規約・deltaTime クランプ・semi-implicit Euler 積分・voxel DDA。
-  リゾルバが満たすべき条件は [`docs/testing.md`](./docs/testing.md) §4 に列挙してある。
-  特に:
-  - ground clamp をリゾルバ内部に持ち、`step()` の**後**に走ること
-    （逆にすると全部が 1 フレーム分の落下距離だけ床から浮く）
-  - Y 軸を X より先に解決すること
-  - `CONTACT_EPSILON` 以内のめり込みは「接地」として何もしないこと
+- **AABB 衝突リゾルバは実装済み**（`domain/resolve.ts`）。判断とその根拠は
+  [`docs/design-notes.md`](./docs/design-notes.md) P-9 にある。要点:
+  - **軸順序 Y → X → Z**。根拠は実測である。X を先にすると「平地の継ぎ目に引っかかる」と
+    「step-up が効かなくなる」の 2 つが壊れる。参照実装が順序テストの題材にしている
+    ledge のケースは、本リポジトリでは別の機構が先に効くので順序を区別しない（P-9-1）
+  - **discrete（swept ではない）**。P-5 の delta 上限の論拠がちょうど厳密に成立する形であり、
+    破綻する速度 32 m/s は `maxSpeedWithoutTunnelling` が名前で持っている
+    （ゲームの最速 6.73 m/s の約 4.8 倍）（P-9-2）
+  - **参照実装の `MAX_STEP_UP` / `FALL_VELOCITY_THRESHOLD` を両方とも使わない。**
+    床の判定は「このステップで実際に落ちた距離」`-vy * dt` で厳密に決まる。
+    これが厳密なのは semi-implicit Euler だから（P-4）である（P-9-3）
+  - **`isBlockSolid` は注入**。`domain/` にブロック ID の語彙は 1 つも無い（P-8）
+  - ground clamp はリゾルバ内部にあり、`stepBody` が「積分 → 解決」の合成に名前を与えている
+- **`design-notes.md` P-3 の「順序を崩すと浮く」は誤りだった。**
+  実測すると**沈む**（1 フレーム分の落下距離、恒久的に）。
+  順序が load-bearing だという結論は正しく、症状の記述だけが逆だった。P-3 に訂正を置いた。
+- **`isRestingOn` は片側だけの述語だった。** `penetrationY` は離れていると負になるので、
+  上空を落下中の物体も「接地」を満たしていた。既存テストは全て面の上に物体を置いていたので
+  1 本も落ちなかった。リゾルバが接地判定に使い始めたところで露見した（P-6）。
 - **`CONTACT_EPSILON` はプロパティテストが見つけた問題への対処である。**
   `(foot + h) - h` は IEEE-754 で正確に `foot` にならない
   （反例: `surfaceY = 1`, `halfHeight = 0.05` で 2 ulp 下にずれる）。
@@ -155,9 +174,11 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 - **`FootY` / `CentreY` は mc-kernel に上げるべきかもしれない。**
   区別が mc-physics の中だけで有効なら価値は半分である。mc-sim も同じ区別を必要とする。
   mc-kernel の界面が固まったときの検討事項。
-- **エネルギー非増加・めり込みゼロのプロパティテストは未着手。**
-  リゾルバが無いと書けない。参照実装にもこれらのテストは 1 つも存在しない
+- **エネルギー非増加・めり込みゼロ・決定論のプロパティテストは 3 つとも入った**
+  （`test/resolve.test.ts`）。参照実装にはこれらのテストが 1 つも存在しない
   （plan.md §3.4 のこの行は参照実装の記述ではなく、新リポジトリへの要求である）。
+  **エネルギーを増やす経路は step-up ただ 1 つ**であり、それはゲーム的な行為なので
+  注入で既定 0 にしてある。テストがその例外も明示している。
 - **可変形状は `FULL_BLOCK_SHAPE` と `SLAB_SHAPE` のみ。**
   参照実装にはサボテン・感圧板の形状もある。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。

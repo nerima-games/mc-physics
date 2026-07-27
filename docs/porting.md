@@ -165,12 +165,17 @@ plan.md §6 Step 2 は「各 Step で参照実装の対応テスト・fixture・
 | `packages/game/test/physics-world-service.test.ts` | 171 | **トンネリング不変条件**（:115-122）、static/kinematic 不変、終端速度 | **移植済み**（`test/integrate.test.ts`） |
 | `packages/world/domain/voxel-raycast.test.ts` | 83 | 原点セル非対象、maxDistance 境界（2.4 vs 2.6）、入射面法線、退化入力 | **移植済み**（`test/integrate.test.ts`） |
 | `packages/game/domain/aabb-collision.test.ts` | 187 | 形状定数の固定、`FALL_VELOCITY_THRESHOLD`、`clampSneakEdge` | **一部**。形状定数のみ |
-| `packages/game/test/aabb-collision.test.ts` | 329 | 接地判定、落下スナップ、2 段重ねで上面、step-height 0.6 境界、天井、X/Z 壁、可変形状、壁登り回帰 | **未**。リゾルバ実装と同時 |
-| `packages/game/test/aabb-collision-edge-cases.test.ts` | 273 | 静止浮遊、めり込みからの押し出し、斜め、巨大座標、**Y を X より先に解決**、可変半径 | **未**。同上。特に「Y 先行」は必須 |
+| `packages/game/test/aabb-collision.test.ts` | 329 | 接地判定、落下スナップ、2 段重ねで上面、step-height 0.6 境界、天井、X/Z 壁、可変形状、壁登り回帰 | **移植済み**（`test/resolve.test.ts`）。ただし step-height は定数ではなく注入値の境界として（`design-notes.md` P-9-3） |
+| `packages/game/test/aabb-collision-edge-cases.test.ts` | 273 | 静止浮遊、めり込みからの押し出し、斜め、巨大座標、**Y を X より先に解決**、可変半径 | **一部**。「Y 先行」（`:220`）は移植したが、**このシナリオは本リポジトリでは順序を区別しない**（face-span ガードが先に効く。P-9-1）。順序の根拠は継ぎ目歩行と step-up の 2 本にある。**「めり込みからの押し出し」は移植しない** —— リゾルバは非めり込みを**維持**するのであって**確立**しない（P-9-7） |
 | `packages/game/test/block-collision-predicates.test.ts` | 455 | `PASSABLE_BLOCK_IDS` の中身 | **移植しない**。能力フラグに置き換えるため |
 | `packages/game/domain/player-physics.test.ts` | 311 | プレイヤー固有 | mc-sim 寄り |
 | `packages/game/test/physics-service.test.ts` ほか | 803 | Service / Layer | 消費側の責務 |
 
 **参照実装にプロパティテスト・fuzz・決定論テスト・エネルギーテストは 1 つも無い。**
 plan.md §3.4 の「プロパティテスト（エネルギー非増加、めり込みゼロ、決定論）」は
-新リポジトリで**新規に作る資産**である。本リポジトリは決定論と座標不変条件を先に作った。
+新リポジトリで**新規に作る資産**である。本リポジトリは決定論と座標不変条件を先に作り、
+リゾルバの実装と同時に**エネルギー非増加・めり込みゼロ**を足した（`test/resolve.test.ts`）。
+参照実装のテストを移植しただけでは書けないもの —— たとえば
+「解決は固定点である」「どのフェーズも正当化できる距離以上に体を動かさない」——
+がここに含まれており、実際に mutation を 3 件、参照実装由来のシナリオテストではなく
+これらの不変条件のほうが捕まえている（`testing.md` §7）。

@@ -200,15 +200,52 @@ export const penetrationY = (a: AABB, b: AABB): number =>
 export const CONTACT_EPSILON = 1e-9
 
 /**
- * Is the entity resting on the surface rather than embedded in it?
+ * Overlap deep enough on EVERY axis to be a collision rather than contact.
  *
- * True when the boxes overlap horizontally and the vertical overlap is within
- * the contact skin. This is the predicate a resolver should use to decide "do
- * nothing", as opposed to `intersects`, which decides "something must move".
+ * This is the predicate the resolver acts on: `intersects` decides whether the
+ * boxes touch at all, this decides whether something must move. The difference
+ * is exactly `CONTACT_EPSILON`, and it is load-bearing in a way that is easy to
+ * miss — a body standing still on a floor overlaps it by ~2e-16 (see the
+ * constant above), and if that counted as a collision the resolver would push
+ * it up every frame forever, and the HORIZONTAL phase would read the next floor
+ * block along as a wall and refuse to let the body walk across the seam between
+ * two floor blocks. Both symptoms have the same cause and this one predicate
+ * removes both.
+ *
+ * NOTE WHERE THE EPSILON IS. It is in the test for what counts as a collision.
+ * It is NOT added to any position the resolver writes: `domain/resolve.ts`
+ * lands a body at exactly `floorTop + halfHeight`, with no fudge. Nudging
+ * positions instead would make the resting state depend on how many frames the
+ * body has been resting, which is the bug this repository already has a test
+ * for (test/coordinates.test.ts, `the documented counterexample`).
+ */
+export const collidesWith = (a: AABB, b: AABB): boolean =>
+  Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX) > CONTACT_EPSILON &&
+  Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY) > CONTACT_EPSILON &&
+  Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ) > CONTACT_EPSILON
+
+/**
+ * Are the entity's FEET on top of this surface, within the contact skin?
+ *
+ * True when the boxes overlap horizontally and the body's underside is within
+ * `CONTACT_EPSILON` of the surface's top face — above it or below it, because
+ * `(foot + h) - h` lands on either side of the exact value and the resolver's
+ * `floorTop + halfHeight` inherits the same rounding. This is what "grounded"
+ * means, and `domain/resolve.ts` answers the grounded question by asking it of
+ * the cells under the feet.
+ *
+ * CORRECTED. This predicate used to read `penetrationY(body, surface) <=
+ * CONTACT_EPSILON`, which is one-sided: `penetrationY` goes NEGATIVE when the
+ * boxes are apart, so a body in free fall five blocks above a floor satisfied
+ * it, and so did a body pressing its head against a ceiling. Every existing
+ * test still passes because they all place the body exactly on the surface,
+ * where the two readings agree — the difference only shows up somewhere no test
+ * had gone yet, which is precisely where a resolver has to go. See
+ * docs/design-notes.md P-6.
  */
 export const isRestingOn = (body: AABB, surface: AABB): boolean =>
   body.minX < surface.maxX &&
   body.maxX > surface.minX &&
   body.minZ < surface.maxZ &&
   body.maxZ > surface.minZ &&
-  penetrationY(body, surface) <= CONTACT_EPSILON
+  Math.abs(body.minY - surface.maxY) <= CONTACT_EPSILON

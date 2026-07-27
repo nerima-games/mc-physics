@@ -30,6 +30,7 @@ describe('public API surface', () => {
         'SLAB_SHAPE',
         'intersects',
         'penetrationY',
+        'collidesWith',
         'isRestingOn',
         'CONTACT_EPSILON',
         // delta-time
@@ -46,6 +47,12 @@ describe('public API surface', () => {
         'integrate',
         'integrateBody',
         'maxFallPerStep',
+        // resolve
+        'resolveBody',
+        'resolveWorld',
+        'stepBody',
+        'stepWorld',
+        'maxSpeedWithoutTunnelling',
         // dda
         'voxelRaycast',
       ]

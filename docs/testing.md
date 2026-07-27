@@ -96,16 +96,29 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 したがって mc-physics の完成条件は:
 
 - **プロパティテスト**（エネルギー非増加、めり込みゼロ、決定論）—— plan.md §3.4 の要求。
-  現在あるのは決定論と座標不変条件。**エネルギー非増加とめり込みゼロはリゾルバ実装後**
-- **参照実装で発見された不変条件の回帰テスト** —— `design-notes.md` の P-1〜P-8 がそれであり、
-  リゾルバに依存しないものは既に書いてある
-- **AABB 衝突リゾルバの実装** —— これがこのリポジトリの本体であり、まだ無い。
-  現在あるのは積分・座標規約・DDA。リゾルバは以下を満たすこと:
-  - ground clamp を内部に持ち、`step()` の後に走る（`design-notes.md` P-3）
-  - Y 軸を X より先に解決する（参照実装の
-    `aabb-collision-edge-cases.test.ts` が「player falling onto a ledge does not embed sideways」で保持）
-  - `CONTACT_EPSILON` 以内のめり込みは「接地」として何もしない
-- **`isBlockSolid` を能力フラグ経由にする** —— mc-kernel が publish されてから
+  **3 つとも `test/resolve.test.ts` にある**（§6 の表）
+- **参照実装で発見された不変条件の回帰テスト** —— `design-notes.md` の P-1〜P-8。
+  リゾルバ待ちだった P-3 の 2 本と P-6 のリゾルバ側 3 本が埋まり、**全項目にテストがある**
+- **AABB 衝突リゾルバの実装** —— **実装済み**（`domain/resolve.ts`）。満たしている条件:
+  - ground clamp を内部に持ち、`step()` の後に走る（`design-notes.md` P-3）。
+    `stepBody` / `stepWorld` が「積分 → 解決」の合成に名前を与えており、逆順は diff に現れる
+  - Y 軸を X より先に解決する。**根拠は実測**（`design-notes.md` P-9-1）——
+    X 先で落ちるのは「平地の継ぎ目に引っかかる」と「step-up が効かなくなる」の 2 本で、
+    参照実装が順序テストの題材にしている ledge のケースは
+    本リポジトリでは別の機構（face-span ガード）が先に効くため順序を区別しない
+  - `CONTACT_EPSILON` 以内のめり込みは「接地」として何もしない。
+    **epsilon は述語（`collidesWith`）にあり、リゾルバが書く位置には 1 ulp も足さない**
+  - discrete（swept ではない）。破綻する速度は `maxSpeedWithoutTunnelling` が名前で持っており、
+    ゲームの最速の約 4.8 倍離れていることをテストが不等式で押さえている（P-9-2）
+- **`isBlockSolid` を能力フラグ経由にする** —— mc-kernel が publish されてから。
+  現状は `IsBlockSolid` / `BlockShapeAt` として**注入**されており、
+  `domain/` にブロック ID の語彙は 1 つも無い。repoint は mc-sim 側の 1 行になる（P-8）
+
+**残っているもの**: step-up の「水平フェーズ再実行」（参照実装 `aabb-collision.ts:303-318`）は
+入れていない。Y フェーズの reach 上限だけで slab への step-up は成立する（P-9-3）ので、
+再実行が要るのは「水平フェーズが先に体を止めてしまい Y が持ち上げる機会を失う」ケースだけである。
+そのケースを再現するテストが書けたときに入れる。sneak-edge（`clampSneakEdge`）も同様に未着手で、
+`responsibility.md` §3 の表がこれを「機構はここ、値は mc-sim」に分類している。
 
 到達時に行うこと:
 
@@ -136,7 +149,8 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 
 | ファイル | 内容 |
 | --- | --- |
-| `test/coordinates.test.ts` | foot/centre のラウンドトリップ、半分と全体の取り違え検出、ブロック占有 `[y,y+1]`、`surfaceY+1`、接地が衝突と読まれないこと、**浮動小数誤差の大きさの固定**、文書化された反例、AABB の対称性 |
+| `test/coordinates.test.ts` | foot/centre のラウンドトリップ、半分と全体の取り違え検出、ブロック占有 `[y,y+1]`、`surfaceY+1`、接地が衝突と読まれないこと、**浮動小数誤差の大きさの固定**、文書化された反例、`collidesWith` と `intersects` が食い違う唯一の場所、**`isRestingOn` が両側であること**、AABB の対称性 |
+| `test/resolve.test.ts` | **軸順序（継ぎ目・ledge・step-up・壁ずり・入隅）**、ground clamp とその順序（**逆順のコストを `g·dt²` で固定**）、天井、壁が床にならないこと、**着地状態が P-6 の反例と一致すること**、1000 フレームの無ドリフト、固定点、**めり込みゼロ**（起伏地形 / 任意高度からの落下 / 終端速度）、**エネルギー非増加**（および step-up がその唯一の例外であること）、**補正量の上限**、決定論と順序非依存、**問い合わせセルが箱の中に収まること**、形状注入 |
 | `test/integrate.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、**`DeltaTimeSecs` ブランドが kernel の refinement であること**（有限・非負。ゼロも 30 も通る）、**`clampDeltaTime` の出力が常に安全域に入ること**（プロパティテスト）、semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、DDA（原点セル除外・法線・maxDistance・退化入力・訪問順・決定論） |
 | `test/public-api.test.ts` | barrel の export、実測定数の固定、**ブランドが kernel 準拠でクランプが境界にあること**、終端速度と delta 上限の導出関係、`CONTACT_EPSILON` の桁 |
 
@@ -145,6 +159,37 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 > [public-api.md](./public-api.md) §2-1）。代わりに、ブランドが**何を通すか**と
 > クランプが**何を返すか**を別々のテストが主張している。
 | `test/check-dependency-whitelist.test.ts` | 16 リポジトリ roster の完全性、非循環、体験モジュール間エッジ 0、kit の devDependency 専用性、推移閉包の拒否、`Date.now()` 禁止、import 抽出 |
+
+## 7. リゾルバのテストは mutation で確かめてある
+
+「落ちるはずのテストが実際に落ちるか」を、対象のコードを壊して確認した。
+**102 本 → 133 本**（`test/resolve.test.ts` が 29 本、`test/coordinates.test.ts` が +2 本）。
+
+| # | 壊した箇所 | 落ちたテスト |
+| --: | --- | --: |
+| 1 | 水平フェーズを Y の**前**に動かす | 4 |
+| 2 | `collidesWith` から contact skin を外す（`> CONTACT_EPSILON` → `> 0`） | 3 |
+| 3 | ground clamp の**位置**に epsilon を足す（`floorTop + halfHeight + CONTACT_EPSILON`） | **16** |
+| 4 | 床判定の reach 上限を外す（重なっている全ブロックを床とみなす） | 6 |
+| 5 | `isRestingOn` を旧・片側実装に戻す | 2 |
+| 6 | `clampAxis` の face-span ガードを外す | 2 |
+| 7 | `stepBody` を「解決 → 積分」の順にする | 16 |
+| 8 | `isGrounded` をプローブでなく Y フェーズのフラグにする | 2 |
+| 9 | ground clamp で `vy = 0` をやめる | 6 |
+| 10 | Z フェーズを X 補正**前**の箱に対して走らせる | 1 |
+
+**6・8・10 は最初 1 本以下しか落とせず、テストのほうを直した。**
+
+- 6 と 10 は当初どちらも「入隅」の 1 シナリオに相乗りしていた。
+  6 には不変条件そのもの（`no phase moves a body further than that phase can justify`）を書き、
+  10 には**壁ずり**という別シナリオ（`a body slides along a wall`）を用意した。
+  入隅のケースは X 補正の有無で答えが変わらないので、10 を区別できていなかった。
+- 8 は固定点のプロパティテストが**空中の body ばかり生成していた**ため素通りしていた。
+  接地フラグの新旧が分かれるのは「実際に着地した body をもう一度解決したとき」だけなので、
+  生成器に積分を 1 回挟むよう直した。
+
+mutation が 1 本しか落とせないときは、テストが**シナリオを**押さえていて
+**不変条件を**押さえていない兆候である、というのが今回の教訓である。
 
 ## 直前のカバレッジ拡張について — コミットメッセージの数字が誤っている
 
@@ -162,3 +207,9 @@ mc-meshing の HashSet 主張、`setDayLength → setTimeOfDay` の作業例に�
 しかも**テストカバレッジを説明する文章の中で**やっている。
 default branch は `non_fast_forward` で保護されているため履歴は書き換えられない。
 書き換えられないこと自体は正しい設計であり、だから訂正はここに置く。
+
+> **6 例目が出た。** `design-notes.md` P-3 が「積分と解決の順序を崩すと物体は床の上に**浮く**」と
+> 書いていたが、リゾルバを実装して測ると**沈む**（1 フレーム分の落下距離ぶん、恒久的に）。
+> 順序が load-bearing だという結論は正しく、症状の記述だけが逆だった。
+> 「浮く」は P-1 のバグクラス名からの引き写しと思われる。訂正は P-3 の中に置き、
+> 実測した側（沈む、`g·dt²`）を回帰テストが assert している。

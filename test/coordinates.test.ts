@@ -24,6 +24,7 @@ import {
   SLAB_SHAPE,
   blockAABB,
   centreOfFoot,
+  collidesWith,
   entityAABB,
   footOfCentre,
   intersects,
@@ -199,6 +200,77 @@ describe('resting contact', () => {
       expect(isRestingOn(body, block)).toBe(true)
       expect(penetrationY(body, block)).toBeLessThan(1e-15)
       expect(penetrationY(body, block)).toBeGreaterThan(0)
+    }),
+  )
+
+  it.effect('the resting contact intersects but is not a collision — the predicates differ exactly there', () =>
+    Effect.sync(() => {
+      // `collidesWith` is what the resolver acts on and `intersects` is the
+      // exact question. They agree everywhere except inside the contact skin,
+      // which is the whole reason both exist: at the documented counterexample
+      // the boxes DO overlap and nothing should move.
+      const halfHeight = HalfHeight(0.05)
+      const centre = centreOfFoot(standingPlaneAbove(1), halfHeight)
+      const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, halfHeight)
+      const block = blockAABB(0, 1, 0)
+
+      expect(intersects(body, block)).toBe(true)
+      expect(collidesWith(body, block)).toBe(false)
+
+      // A body sunk a millimetre in is a collision by both readings.
+      const sunk = entityAABB(0.5, CentreY(centre - 0.001), 0.5, PLAYER_HALF_WIDTH, halfHeight)
+      expect(intersects(sunk, block)).toBe(true)
+      expect(collidesWith(sunk, block)).toBe(true)
+
+      // Collision implies intersection, never the other way round.
+      FastCheck.assert(
+        FastCheck.property(arbitraryY, arbitraryY, (a, b) => {
+          const left = entityAABB(0, CentreY(a), 0, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+          const right = entityAABB(0.1, CentreY(b), 0.1, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+          return !collidesWith(left, right) || intersects(left, right)
+        }),
+        { numRuns: 300 },
+      )
+    }),
+  )
+
+  it.effect('REGRESSION: a body nowhere near a block is not resting on it', () =>
+    Effect.sync(() => {
+      // `isRestingOn` used to ask `penetrationY(body, surface) <= CONTACT_EPSILON`,
+      // and `penetrationY` goes NEGATIVE when the boxes are apart — so a body in
+      // free fall five blocks up satisfied it, as did one pressing its head on a
+      // ceiling. Every test above still passed, because they all place the body
+      // exactly on the surface, where the old reading and the new one agree.
+      // The gap only mattered once something asked the question somewhere else:
+      // domain/resolve.ts answers "am I grounded?" by asking this of the cells
+      // under the feet, and with the old predicate every airborne body was
+      // grounded. Now it compares the feet to the top face, both sides.
+      const block = blockAABB(0, 64, 0)
+      const above = entityAABB(0.5, CentreY(70), 0.5, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+      const below = entityAABB(0.5, CentreY(60), 0.5, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
+      const headOnTheCeiling = entityAABB(
+        0.5,
+        CentreY(64 - Number(PLAYER_HALF_HEIGHT)),
+        0.5,
+        PLAYER_HALF_WIDTH,
+        PLAYER_HALF_HEIGHT,
+      )
+
+      expect(isRestingOn(above, block)).toBe(false)
+      expect(isRestingOn(below, block)).toBe(false)
+      // Touching, but with the head, not the feet. Not the same thing.
+      expect(isRestingOn(headOnTheCeiling, block)).toBe(false)
+      expect(penetrationY(headOnTheCeiling, block)).toBeLessThanOrEqual(CONTACT_EPSILON)
+
+      // And the case it is for still reads as resting.
+      const standing = entityAABB(
+        0.5,
+        centreOfFoot(standingPlaneAbove(64), PLAYER_HALF_HEIGHT),
+        0.5,
+        PLAYER_HALF_WIDTH,
+        PLAYER_HALF_HEIGHT,
+      )
+      expect(isRestingOn(standing, block)).toBe(true)
     }),
   )
 

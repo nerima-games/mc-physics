@@ -162,19 +162,44 @@ Mob も別経路で同順（`packages/entity/application/mob/entity-manager-phys
 重力＋Euler を `_candVel`/`_candPos` に入れてから `resolveCollision(...)`。
 リゾルバの束縛は `packages/app/application/frame/stages/entity-update-stage.ts:219`）。
 
-### 順序を崩すとどうなるか
+### 順序を崩すとどうなるか —— **訂正: 符号が逆だった**
 
-クランプの**後**に重力を適用すると、すべての物体が 1 フレーム分の落下距離だけ床の上に浮く。
-恒久的に。これが「物が浮く」バグのもう一つの顔である。
+本書はここに「クランプの**後**に重力を適用すると、すべての物体が 1 フレーム分の落下距離だけ
+床の上に**浮く**」と書いていた。**リゾルバを実装して実測した結果、これは誤りである。**
+正しくは **1 フレーム分の落下距離だけ床に沈む**。
+
+固定点を計算すれば一意に決まる。床上面 `F`、半身 `h`、静止中心 `C = F + h` として:
+
+| 順序 | 1 フレームの結果 | 固定点 |
+| --- | --- | --- |
+| `resolve(integrate(s))`（正） | 積分で `C - g·dt²` へ沈み、クランプが `C` へ戻す | `C`。足が床にぴったり乗る |
+| `integrate(resolve(s))`（誤） | クランプが `C` へ戻し、そのあと積分が `C - g·dt²` へ沈める | `C - g·dt²`。**沈んだまま** |
+
+誤った順序では、フレームの**最後に走るのが落下**であり、それを補正するものが次のフレームまで無い。
+観測される位置は常に沈んだ側である。
+
+**不変条件そのものは無傷である** —— 順序は依然として load-bearing であり、
+崩せば恒久的に位置がずれる。誤っていたのは**症状の記述**だけである。
+「浮く」は P-1 のバグクラス名（足元原点 vs 中心）から引き写されたものと思われる。
+`testing.md` 末尾が数え上げている「結論は正しく、証拠が間違っている」の系列に本項も加わる。
+
+回帰テストは実測した側を assert する（`REGRESSION: reversing the order leaves the body sunk
+one frame’s fall INTO the floor`）。`g·dt²` との一致まで見ており、
+誤った順序が**固定点**であること（過渡ではないこと）も同じテストが押さえている。
 
 ### 回帰テスト
 
-**リゾルバ未実装のため、この不変条件はまだテストできない。**
-リゾルバを書くときに必ず追加すること:
+`test/resolve.test.ts`（リゾルバ実装により、ようやく書けるようになったもの）:
 
-- `ground clamp lives inside the resolver and runs after integrate`
-- `integrating after clamping leaves the body hovering one frame's fall above the floor`
-  （誤った順序が実際に浮きを生むことを示すテスト）
+- `a body falling onto a floor is clamped to it, with its downward velocity zeroed`
+  —— ground clamp が `y = floorTop + halfHeight` としてリゾルバ**内部**にあること
+- `REGRESSION: reversing the order leaves the body sunk one frame’s fall INTO the floor`
+  —— 上記の訂正。誤った順序のコストを数値で固定する
+- `a body pushed up into a ceiling stops there and is not grounded`
+
+`stepBody` / `stepWorld` が「積分 → 解決」の合成に**名前を与えている**。
+手で 2 行書くこともできるが、そのとき逆順は diff に現れない。
+`clampDeltaTime` が delta の唯一の正規の入口であるのと同じ役割である。
 
 現時点で書けている関連テスト（`test/integrate.test.ts`）:
 
@@ -356,6 +381,32 @@ export const isClampedDelta = (deltaSecs: number): boolean
 
 **テストを緩めて済ませてはいけなかった。** そうしていたら同じバグがリゾルバの中に移動していただけである。
 
+### リゾルバ側の帰結（実装後に判明したこと 2 件）
+
+**1. epsilon は述語に入り、位置には入らない。**
+`collidesWith`（新設）が「動かすべきか」を答え、`intersects` は「触れているか」を答える。
+リゾルバが書く位置は `floorTop + halfHeight` **ちょうど**であり、1 ulp も足していない。
+位置側に epsilon を足す実装（`floorTop + halfHeight + CONTACT_EPSILON`）を試すと
+**16 本のテストが落ちる** —— 本書が固定している着地状態そのものが壊れるからである。
+
+さらに `collidesWith` の epsilon は、Y だけでなく**水平フェーズでも** load-bearing である。
+epsilon を 0 にすると、平地を歩く物体が毎フレーム床に 3.9 mm 沈んでいるせいで
+**進行方向の床ブロックが壁として読まれ、`x = 1` を越えられなくなる**。
+P-6 が Y 軸の話として発見した問題は、実際には全軸の話だった。
+
+**2. `isRestingOn` は片側だけだった —— 訂正済み。**
+旧実装は `penetrationY(body, surface) <= CONTACT_EPSILON` であり、
+`penetrationY` は**離れていると負になる**。したがって上空 5 ブロックを自由落下中の物体も、
+天井に頭をつけている物体も、この述語を満たしていた。
+既存のテストは全て「面にぴったり乗せた物体」しか渡していなかったため、1 本も落ちなかった。
+
+差が出るのはリゾルバが接地判定に使い始めた瞬間である
+（`isSupported` が足元のセルにこれを問う）。旧述語では**空中の全物体が接地**になる。
+現在は `Math.abs(body.minY - surface.maxY) <= CONTACT_EPSILON` ——
+「足の裏が上面の contact skin 内にあるか」を両側で見る。
+既存テストは全て通ったままであり、追加した
+`REGRESSION: a body nowhere near a block is not resting on it` だけが新旧を区別する。
+
 ### 回帰テスト
 
 `test/coordinates.test.ts`:
@@ -365,7 +416,23 @@ export const isClampedDelta = (deltaSecs: number): boolean
   —— 誤差を**許容する**のではなく**大きさを固定する**。変換が変わって誤差が育てば、
   epsilon が覆えなくなるずっと前に落ちる。
 - `the documented counterexample is exactly as documented`
+- `the resting contact intersects but is not a collision — the predicates differ exactly there`
+  —— `collidesWith` と `intersects` が食い違う唯一の場所を固定し、
+  「衝突ならば交差」を 300 runs のプロパティテストで検査する
+- `REGRESSION: a body nowhere near a block is not resting on it` —— 上記 2 の訂正
 - `an entity one epsilon BELOW the surface does intersect — the boundary is where it is claimed`
+
+`test/resolve.test.ts`:
+
+- `a body lands in exactly the state test/coordinates.test.ts documents`
+  —— 落下させた物体が `surfaceY = 1`, `halfHeight = 0.05` の**文書化された反例そのもの**に着地する
+  （`intersects` は true、`isRestingOn` は true、`0 < penetrationY < 1e-15`）。
+  `floorTop + halfHeight` のあと呼び出し側が `- halfHeight` する往復が
+  `centreOfFoot` / `footOfCentre` と同じ丸めを踏むので、これは偶然ではない
+- `a resting body does not drift by one ulp per frame, for a thousand frames`
+  —— 1000 フレーム、`toBe`（厳密一致）。1 フレーム 1 ulp のドリフトは
+  どんな許容誤差にも引っかからず、1 時間後のセーブデータには現れる
+- `resolving is a fixed point: a resolved body resolves to itself, bit for bit`
 
 ---
 
@@ -497,13 +564,167 @@ export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 
 能力フラグを解決するのは呼び出し側（mc-sim）である。
 
+### リゾルバでの形
+
+```typescript
+export type IsBlockSolid = (bx: number, by: number, bz: number) => boolean
+export type BlockShapeAt = (bx: number, by: number, bz: number) => AABB | null
+```
+
+`BlockShapeAt` が `null` を返すと `IsBlockSolid` に落ちる。
+これは参照実装の合成そのままである（`aabb-collision.ts:54-61`）——
+形状関数は「立方体でない少数のブロック」についてだけ発言し、残りには何も言わない。
+
+`IsTargetable`（`domain/dda.ts`）と**構造的に同一の型を、あえて別宣言にしている**。
+「狙えるか」と「ぶつかるか」は別の問いであり、答えも違う
+（水は狙えるが solid ではない。未ロードチャンクは Mob には solid、プレイヤーには空気 —— §3.3）。
+TypeScript には区別できないので、これは**強制ではなく文書化**である。
+そう書いておくほうが、実際には無い保証を匂わせる名前より安い。
+
 ### 回帰テスト
 
 型レベルで保証される（`domain/` のどこにもブロック ID の語彙が無い）。
 `pnpm check:deps` が mc-kernel 以外の import を禁じているのも間接的な保証である。
 
-リゾルバ実装時に追加すべき: `isBlockSolid` コールバックが呼ばれる座標が
-問い合わせ対象の AABB の範囲に収まっていること。
+`test/resolve.test.ts`（本項が要求していたテスト）:
+
+- `only asks about cells the body could touch`
+  —— コールバックに渡る座標を全件記録し、body の箱の範囲内に収まることを検査する。
+  足元 1 セル下だけは範囲外だが、これは**接地プローブ**であり緩みではない。
+  チャンクを走査する実装や固定半径を探る実装はここで落ちる
+- `a block shape overrides the unit cube, and null defers to the solidity predicate`
+- `the same geometry with a different predicate gives a different answer, and no ids are involved`
+
+---
+
+## P-9 `physics-resolve-y-before-x` ほか（リゾルバの設計判断。本リポジトリで決定）
+
+`domain/resolve.ts` を書くにあたって決めたことと、その根拠。
+ファイル冒頭のコメントと同じ内容だが、こちらには**実測の手続き**を残す。
+
+### 9-1 軸の順序: Y → X → Z
+
+参照実装と同じ（`aabb-collision.ts:1-3` が 1 行目から宣言している）。
+**「X を先にすると何が壊れるか」は推測せず、実際に水平フェーズを Y の前に動かして測った。**
+
+| 症状 | X 先で落ちるか | テスト |
+| --- | :-: | --- |
+| 平地を歩くとブロックの継ぎ目に引っかかる | **落ちる** | `a body walking along flat ground crosses the seam between two floor blocks` |
+| step-up が全く効かなくなる | **落ちる** | `Y before X is what makes step-up work without a second horizontal pass` |
+| 段差に落ちたとき横にめり込む | **落ちない** | `Y before X: a body falling onto a ledge does not embed sideways` |
+
+**3 番目は参照実装が順序テストの題材に選んでいるシナリオだが、本リポジトリでは順序を区別しない。**
+`clampAxis` の face-span ガード（9-4）が先に効いてしまうためである。
+機構が 2 つ重なっている。テストは**振る舞いを固定する価値がある**ので残すが、
+順序の根拠としては数えない。
+
+継ぎ目の症状の機構は P-6 と地続きである。平地で静止している物体は、
+リゾルバが走る瞬間には静止していない —— 積分器が 1 フレーム分（50 Hz で約 3.9 mm）沈めた直後である。
+X を先に解決すると、**進行方向の床ブロック**がその 3.9 mm ぶん全軸で重なるので壁として読まれ、
+体は `blockMinX - halfWidth` に clamp される。`x = 1` を永久に越えられない。
+Y を先に解決すれば、水平フェーズが見るときには体は床から出ており、重なりは contact skin の内側に戻っている。
+
+Z を X の後にしたことに根拠は無い（対称である）。
+意味があるのは「2 番目のフェーズが 1 番目の補正後の位置に対して走る」ことだけで、
+これは `a body slides along a wall` が固定している（壁に貼りつく症状で落ちる）。
+
+### 9-2 discrete か swept か: **discrete**
+
+DDA があるので swept も書けるが、採らなかった。理由は**本リポジトリの他の記述との整合**である。
+P-5 は delta 上限 0.05 s を「リゾルバは step 後にボディの箱の中に入った床しか捕まえられない」で
+正当化しており、`TERMINAL_VELOCITY_Y = -32` はそこから導かれている。
+swept にするとこの論拠が「最も厳しい説明」ではなくなり、0.05 の根拠が静かに口伝になる。
+
+**しかも discrete のこの実装では、P-5 の文言がちょうど厳密に正しい。**
+床候補の条件は `collidesWith`（箱の中にあること）であり、
+落下距離が身長 1.8 を超えると床上面が頭より上に出て候補から外れる。1.8 は身長そのものである。
+
+discrete の代金は速度上限であり、それを名前にした:
+
+```typescript
+export const maxSpeedWithoutTunnelling = (halfExtent, blockThickness, maxDeltaSecs) =>
+  (blockThickness + 2 * halfExtent) / maxDeltaSecs
+```
+
+プレイヤー（halfWidth 0.3）が 1 ブロック厚の壁に対して 0.05 s 上限で **32 m/s**。
+参照実装の最速はスプリントジャンプで `5.612 × 1.2 = 6.73 m/s`
+（`packages/entity/application/movement-service.ts:25-32`）。**約 4.8 倍の余裕**がある。
+テストは数値ではなく不等式を assert するので、delta 上限・体の幅・移動速度のどれを触っても落ちる。
+
+残る代償は discrete が原理的に解けない曖昧さである:
+**速く落下しながら横に壁へ突っ込むと、「壁の上に落ちた」と「壁に走り込んだ」が同じ状態になる**。
+参照実装も同じ穴を持ち、`FALL_VELOCITY_THRESHOLD = 8` で近似している（`aabb-collision.ts:20-33`）。
+
+### 9-3 床の判定は「このステップで実際に落ちた距離」。MAX_STEP_UP は注入する
+
+参照実装は 2 つのチューニング定数を使う（`MAX_STEP_UP = 0.6`、`FALL_VELOCITY_THRESHOLD = 8`）。
+**本リポジトリは両方とも使わない。**
+ブロック上面が床とみなされる条件は「このステップで足がそこを通り得たか」であり、
+その距離は `-vy * dt` で**厳密に**求まる。
+
+厳密である理由は P-4 である。semi-implicit Euler は**新しい**速度で位置を動かすので、
+リゾルバが受け取る速度がそのまま変位を復元する。
+explicit Euler なら変位は**古い**速度から出ており、リゾルバはそれを見られない。
+**積分器の 2 行を入れ替えられない理由がもう 1 つ増えたことになる。**
+
+判定が無いと何が起きるかは参照実装のコメントが正確である（`aabb-collision.ts:20-25`）:
+**すべての壁が登れるようになる。** 壁ブロックの上面は足元の 1.0 上にあり、
+重なっている中で最も高い「床」なので、体はその上へ飛ばされる。
+実測でもこの mutation は 6 本のテストを落とし、そこには**エネルギー非増加のプロパティテストが含まれる**
+（壁を登るのは無からの位置エネルギーである）。
+
+`stepHeight` は `MAX_STEP_UP` と同じ概念だが、**注入で、既定値 0** である。
+0.6 はゲーム的なチューニング値であり `responsibility.md` §3 が mc-sim に置いている。
+既定 0 なら「落ちた先以外に体を持ち上げることは決してない」。
+
+**そして step-up は本ファイルで唯一エネルギーを増やす経路である。**
+段差を上がるのは無償のリフトであり、衝突応答ではなくゲーム的な行為だからである。
+opt-in にしてある 2 つ目の理由がこれで、既定の 0 でのみ「エネルギー非増加」が定理になる。
+
+### 9-4 face-span ガード: 体の**後ろ**にある面では押し返さない
+
+水平フェーズが候補にする面は、体の span の中にあるものだけである
+（参照実装の `face >= x - halfW`、`aabb-collision.ts:114` と `:141`）。
+これは見た目より働いている。**入隅に斜めに歩き込むと、対角のブロックが水平 2 軸の両方で重なる**
+—— 片方は深く、もう片方は浅く。深いほうの軸の近い面はすでに体の後ろにあるので、
+その軸で解決すると体は**ブロック 1 個ぶん後ろへ飛ぶ**（実測: `x = 0.93` から `x = -0.3`）。
+
+後ろにある面は「そこから入ってきた面」ではない。だから重なりはもう一方の軸の担当であり、
+その軸は補正後の位置に対して次に走って浅いほうで解決する。
+
+ガードは**同時に境界でもある**: `face >= bodyMin` なので補正量は必ず体の幅以下になる。
+プロパティテスト `no phase moves a body further than that phase can justify` が
+水平は体の幅、垂直は実際の移動距離＋ step height で押さえている。
+
+### 9-5 `isGrounded` はフラグではなくプローブ
+
+参照実装は ground clamp の隣で `isGrounded = true` を立てる（`aabb-collision.ts:281-285`）。
+本リポジトリは解決後の位置から**世界に問い直す**（`isSupported`）。
+
+差が出るのはリゾルバを 2 回走らせたときである。フラグ版は 1 回目 true・2 回目 false になる
+（2 回目には clamp すべきめり込みが残っていないため）。
+プローブ版は位置についての事実なので安定し、**`resolveBody` が固定点になる**。
+固定点であることが resting jitter を排除する主張そのものである。
+
+`isGrounded` は静的・キネマティック body についても答える。動かさないことと、
+問いに答えないことは別である。
+
+### 9-6 返り値に入れなかったもの
+
+`Resolution` は `{ body, isGrounded }` だけである。参照実装も同じ
+（`{ position, velocity, isGrounded }`）。
+「壁に当たったか」「天井に当たったか」は速度が 0 になったことから消費側で導けるので、
+実需が現れるまで界面に足さない。
+
+### 9-7 前提条件: **ステップ前にめり込んでいないこと**
+
+リゾルバは不変条件を**維持**するのであって**確立**しない。
+地形の中にスポーンした body や、体の中にブロックを置かれた body は「unstick」という別の問題であり、
+別の関数の仕事である。参照実装はこれを `overCenter` 特例で混ぜており
+（`aabb-collision.ts:264-272`）、体の中心の下にある最も高いブロックの上へ無条件に飛ばす。
+
+めり込みゼロのプロパティテストはこの前提を明示的に扱う: 空中から始めて**毎ステップ**検査する
+（`a body walking over broken terrain never ends a step inside a block`）。
 
 ---
 
