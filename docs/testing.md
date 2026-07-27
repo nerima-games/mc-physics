@@ -145,3 +145,20 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 > [public-api.md](./public-api.md) §2-1）。代わりに、ブランドが**何を通すか**と
 > クランプが**何を返すか**を別々のテストが主張している。
 | `test/check-dependency-whitelist.test.ts` | 16 リポジトリ roster の完全性、非循環、体験モジュール間エッジ 0、kit の devDependency 専用性、推移閉包の拒否、`Date.now()` 禁止、import 抽出 |
+
+## 直前のカバレッジ拡張について — コミットメッセージの数字が誤っている
+
+`test: cover the code the suites were walking past` のコミットメッセージは
+「added 107 tests」と書いているが、**正しくは 27 本**である
+(mc-noise 8 + mc-meshing 13 + mc-physics 6)。本リポジトリの実測は **96 → 102**。
+
+107 は 1 日古いレビューの baseline (53/53/68) から引いた差であり、
+その時点から 3 リポジトリはすでに 79/79/96 まで育っていた。
+16 リポジトリ合計も 2,771 → 2,798 で、差は 27 と一致する。
+
+**この誤りをここに残すのは、それが本プロジェクトで最も多く記録されている欠陥だからである** ——
+「結論は正しく、証拠が間違っている」。`CONTINENTALNESS_CONTRAST`、`SETTLE_TICK_LIMIT`、
+mc-meshing の HashSet 主張、`setDayLength → setTimeOfDay` の作業例に続く 5 例目で、
+しかも**テストカバレッジを説明する文章の中で**やっている。
+default branch は `non_fast_forward` で保護されているため履歴は書き換えられない。
+書き換えられないこと自体は正しい設計であり、だから訂正はここに置く。
