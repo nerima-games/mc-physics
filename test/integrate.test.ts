@@ -267,6 +267,167 @@ describe('voxel DDA', () => {
     }),
   )
 
+  /**
+   * The origin for every negative-direction case below.
+   *
+   * DELIBERATELY NOT THE CELL MIDPOINT. At 0.5 the two first-crossing formulas
+   * `origin - cell` and `cell + 1 - origin` produce the SAME number, so a
+   * negative arm that mistakenly uses the positive formula is invisible from
+   * there — every cell is still visited, in order, at plausible distances. At
+   * 0.75 the two disagree by half a cell and the mistake has somewhere to show.
+   * This is the whole reason these tests exist, so it must not be tidied to 0.5.
+   */
+  const OFF_CENTRE = 0.75
+
+  /**
+   * The three negative axes, with the cell reached after `n` crossings from
+   * `OFF_CENTRE`, the face the ray enters through, and the exact point on it.
+   *
+   * A negative step takes its first crossing distance from `origin - cell`
+   * rather than from `cell + 1 - origin` (domain/dda.ts). Only these tests run
+   * that arm: every other DDA test in this file walks +X, and the determinism
+   * property that does reach it asserts nothing about the ANSWER — two runs of
+   * a wrong traversal agree with each other perfectly.
+   */
+  const NEGATIVE_AXES = [
+    {
+      direction: vec3(-1, 0, 0),
+      cellAfter: (crossings: number) => [-crossings, 0, 0] as const,
+      normal: { x: 1, y: 0, z: 0 },
+      entryPoint: { x: -2, y: OFF_CENTRE, z: OFF_CENTRE },
+    },
+    {
+      direction: vec3(0, -1, 0),
+      cellAfter: (crossings: number) => [0, -crossings, 0] as const,
+      normal: { x: 0, y: 1, z: 0 },
+      entryPoint: { x: OFF_CENTRE, y: -2, z: OFF_CENTRE },
+    },
+    {
+      direction: vec3(0, 0, -1),
+      cellAfter: (crossings: number) => [0, 0, -crossings] as const,
+      normal: { x: 0, y: 0, z: 1 },
+      entryPoint: { x: OFF_CENTRE, y: OFF_CENTRE, z: -2 },
+    },
+  ] as const
+
+  const offCentreOrigin = vec3(OFF_CENTRE, OFF_CENTRE, OFF_CENTRE)
+
+  it.effect('walks the NEGATIVE direction on all three axes, one cell at a time', () =>
+    Effect.sync(() => {
+      // Looking down or backwards is not an exotic case — it is half of all
+      // play. A negative traversal that skips or repeats a cell is a block the
+      // player cannot mine while looking straight at it.
+      for (const axis of NEGATIVE_AXES) {
+        const visited: Array<string> = []
+        voxelRaycast(offCentreOrigin, axis.direction, 5, (bx, by, bz) => {
+          visited.push(`${bx},${by},${bz}`)
+          return false
+        })
+        expect(visited).toStrictEqual([1, 2, 3, 4, 5].map((crossings) => axis.cellAfter(crossings).join(',')))
+      }
+    }),
+  )
+
+  it.effect('reports the entered face, distance and point for a negative-direction hit', () =>
+    Effect.sync(() => {
+      // The +X case is asserted above. Mirroring it on the negative side is
+      // what pins the two things the negative arm computes differently: the
+      // first crossing distance, and the sign of the normal.
+      for (const axis of NEGATIVE_AXES) {
+        const target = axis.cellAfter(3)
+        const hit = voxelRaycast(offCentreOrigin, axis.direction, 8, solidAt(target))
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) {
+          expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([...target])
+          // Points BACK at the ray, so it is the positive unit vector here.
+          expect(hit.value.normal).toStrictEqual(axis.normal)
+          // 0.75 to leave the origin cell, then two whole cells. Reading 2.25
+          // here means the positive-direction formula is being used: the ray
+          // would be measuring its distance to the boundary it is moving AWAY
+          // from, and every reach check downstream would be off by half a cell.
+          expect(hit.value.distance).toBeCloseTo(OFF_CENTRE + 2, 12)
+          expect(hit.value.point).toStrictEqual(axis.entryPoint)
+        }
+      }
+    }),
+  )
+
+  it.effect('a ray starting exactly ON a boundary and going negative enters the cell behind it', () =>
+    Effect.sync(() => {
+      // The degenerate input for the negative first-crossing distance: at an
+      // exact boundary `origin - cell` is 0, so the ray leaves its cell
+      // immediately. Computed with the positive-direction formula it would be a
+      // full cell instead, and the traversal would start one cell too far along
+      // — a block you can stand against and not be able to hit.
+      const visited: Array<string> = []
+      voxelRaycast(vec3(3, 0.5, 0.5), vec3(-1, 0, 0), 3, (bx, by, bz) => {
+        visited.push(`${bx},${by},${bz}`)
+        return false
+      })
+      expect(visited).toStrictEqual(['2,0,0', '1,0,0', '0,0,0', '-1,0,0'])
+    }),
+  )
+
+  it.effect('steps the correct axis when the direction mixes signs', () =>
+    Effect.sync(() => {
+      // The sign choice is PER AXIS. A negative formula applied globally, or a
+      // positive one left in place on one axis, still produces a monotone walk
+      // — just the wrong staircase. Asserting the staircase is what tells them
+      // apart.
+      //
+      // The ray leaves +X first because it starts closer to its +X boundary
+      // (0.25 away) than to its -Y one (0.75 away), and thereafter the two
+      // alternate. Get the -Y arm wrong and it starts 0.25 away instead, so the
+      // very first cell is (0,-1,0) rather than (1,0,0).
+      const visited: Array<string> = []
+      voxelRaycast(vec3(0.5, OFF_CENTRE, 0.5), vec3(1, -1, 0), 4, (bx, by, bz) => {
+        visited.push(`${bx},${by},${bz}`)
+        return false
+      })
+      expect(visited).toStrictEqual(['1,0,0', '1,-1,0', '2,-1,0', '2,-2,0', '3,-2,0', '3,-3,0'])
+    }),
+  )
+
+  it.effect('an all-negative diagonal arrives at the right cell through the right face', () =>
+    Effect.sync(() => {
+      // All three negative arms at once, plus the tie-break between them. The
+      // three tMax values are equal at every step here, so the order in which
+      // the axes are consulted is fully exposed: X, then Y, then Z.
+      const hit = voxelRaycast(offCentreOrigin, vec3(-1, -1, -1), 16, solidAt([-2, -2, -2]))
+      expect(Option.isSome(hit)).toBe(true)
+      if (Option.isSome(hit)) {
+        // Z was the last axis stepped, so Z is the face that was entered. Get
+        // any one of the three arms wrong and that axis falls out of step with
+        // the other two, which changes WHICH face the hit is attributed to —
+        // and the face normal is what decides where a placed block goes.
+        expect(hit.value.normal).toStrictEqual({ x: 0, y: 0, z: 1 })
+        // 1.75 cells along each axis, i.e. 1.75 * sqrt(3) along a unit diagonal.
+        expect(hit.value.distance).toBeCloseTo((OFF_CENTRE + 1) * Math.sqrt(3), 12)
+        expect(hit.value.point.x).toBeCloseTo(-1, 12)
+        expect(hit.value.point.y).toBeCloseTo(-1, 12)
+        expect(hit.value.point.z).toBeCloseTo(-1, 12)
+      }
+    }),
+  )
+
+  it.effect('measures maxDistance in blocks in the negative direction too', () =>
+    Effect.sync(() => {
+      // The +X form of this is asserted above. Repeated on the negative side
+      // because the distances it compares come out of the negative first-
+      // crossing formula, so a bug there shifts reach without changing which
+      // cells are visited — a player whose range is silently short by one.
+      // The fifth cell back is entered at 0.75 + 4 blocks, so 4.7 falls short
+      // and 4.8 reaches. Under the positive-direction formula it would be
+      // entered at 4.25 and 4.7 would reach it, which is the assertion below
+      // that fails first.
+      for (const axis of NEGATIVE_AXES) {
+        const target = solidAt(axis.cellAfter(5))
+        expect(Option.isNone(voxelRaycast(offCentreOrigin, axis.direction, 4.7, target))).toBe(true)
+        expect(Option.isSome(voxelRaycast(offCentreOrigin, axis.direction, 4.8, target))).toBe(true)
+      }
+    }),
+  )
+
   it.effect('is deterministic: the same ray against the same world always gives the same hit', () =>
     Effect.sync(() => {
       FastCheck.assert(
