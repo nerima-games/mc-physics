@@ -192,6 +192,19 @@ describe('semi-implicit Euler', () => {
       expect(integrate(bodies, delta)).toStrictEqual(integrate(bodies, delta))
       const reversed = integrate([...bodies].reverse(), delta)
       expect([...reversed].reverse()).toStrictEqual(integrate(bodies, delta))
+
+      // The two lines above probe with `reverse()` and compare a reversed
+      // answer, so a `reverse()` INSIDE `integrate` cancels itself out and they
+      // stay green — the single permutation they cannot see is the one they use
+      // to look. The positional claim is asked directly instead: entry `index`
+      // is the integration of the body at `index`, which is what makes
+      // `integrate` a map rather than merely a bag of the right bodies, and it
+      // is what a caller writing the answers back onto its own list relies on.
+      // `resolve.test.ts` states the same property for `resolveWorld`.
+      const together = integrate(bodies, delta)
+      bodies.forEach((body, index) => {
+        expect(together[index]).toStrictEqual(integrateBody(body, delta))
+      })
     }),
   )
 

@@ -707,9 +707,22 @@ describe('determinism', () => {
         FastCheck.property(FastCheck.shuffledSubarray([0, 1, 2, 3, 4], { minLength: 5 }), (order) => {
           const permuted = order.map((index) => crowd[index]!)
           const resolvedTogether = resolveWorld(permuted, DT, world)
+          // `stepWorld` is checked here rather than only above because the
+          // reversal test cannot see it. That test probes with `reverse()` and
+          // compares a reversed answer, so a `reverse()` INSIDE the map cancels
+          // out and it stays green — the one permutation it is blind to is the
+          // one it uses. This asks the positional question directly: entry
+          // `position` is the answer for the body at that position and for no
+          // other, which is what "is a map" means and what a caller pairing
+          // resolutions back to its own body list depends on.
+          const steppedTogether = stepWorld(permuted, DT, world)
           return order.every((index, position) => {
             const alone = resolveWorld([crowd[index]!], DT, world)[0]!
-            return JSON.stringify(resolvedTogether[position]) === JSON.stringify(alone)
+            const steppedAlone = stepWorld([crowd[index]!], DT, world)[0]!
+            return (
+              JSON.stringify(resolvedTogether[position]) === JSON.stringify(alone) &&
+              JSON.stringify(steppedTogether[position]) === JSON.stringify(steppedAlone)
+            )
           })
         }),
         { numRuns: 100 },
