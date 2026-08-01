@@ -18,7 +18,14 @@
 
 ## 2. なぜ今は publish しないのか（plan.md §6 Step 0-2）
 
-> **npm公開・バージョンbump運用は界面安定（4週間APIロック無変更）まで開始しない**
+**旧方針(廃止済み)**: かつては「npm公開・バージョンbump運用は界面安定（4週間APIロック無変更）まで
+開始しない」という、`api-lock.md` の最終更新日からの経過日数を起点にした freeze-clock 方式だった。
+`api-lock.md` / `scripts/api-lock.ts` は org 標準から全廃され(API_STANDARD.md §4)、この日数計測
+ベースの自動ゲートも合わせて廃止した。
+
+**現行方針**: 1.0.0 への昇格に代替の自動ゲート(日数・利用実績などの定量基準)は設けず、
+maintainer(take)による裁量判断のみで行う(RELEASE_STANDARD.md §4.2)。0.x の間 publish
+しない理由そのもの(下記)は変わらない。
 
 16 リポジトリが互いを pin したバージョンで参照し合っている状態で界面が動くと、
 1 つの変更が bump の連鎖を引き起こす。初期は全界面が高 churn なので、これは常時起きる。
@@ -30,7 +37,7 @@
 したがって現在の `package.json` は:
 
 - `dependencies` に `effect` だけを宣言する。`@nerima-games/*` は 1 つも入っていない。
-- `exports` は **TypeScript ソースを直接指す**（`./index.ts`）。ビルド成果物ではない。
+- `exports` は **TypeScript ソースを直接指す**（`./src/index.ts`）。ビルド成果物ではない。
 - ビルド / publish パイプラインは存在しない。
 
 ## 3. ビルドと publish は完成条件到達時に追加する
@@ -43,8 +50,11 @@
 1. `tsconfig.build.json` の `noEmit` を外し、`dist/` に `.js` + `.d.ts` + source map を出す
 2. `package.json` の `exports` を `dist/` に向ける（`files` も同様）
 3. `prepublishOnly` で `pnpm verify` を強制
-4. CI に publish job を追加（`.github/workflows/ci.yaml` は現在 typecheck / lint / check:deps / api:check / test / coverage のみ）
-5. changesets 運用に切り替え（plan.md §6 Step 3）
+4. CI に publish job を追加（`.github/workflows/ci.yaml` は現在 typecheck / lint / test / coverage /
+   changeset status のみ。publish ジョブの設計は RELEASE_STANDARD.md §3 を参照）
+
+`@changesets/cli` はバージョニング・CHANGELOG 生成の入り口として既に導入済みである
+（`.changeset/config.json`、RELEASE_STANDARD.md §1）。残っているのはビルド/publish パイプラインのみ。
 
 ## 4. 公開先: GitHub Packages
 
@@ -119,42 +129,28 @@ plan.md §5.1-3 が「クロック注入による決定論。全シミュレー�
 - ドキュメント、コメント、テスト
 - 観測可能な出力を変えない内部リファクタ
 
-## 6. API ロックファイル
+## 6. API ロックファイル(廃止)
 
-plan.md §6 Step 0-3 は「初回コミットに ... APIロックファイル（公開APIのレポートを diff レビュー）」を求める。
+plan.md §6 Step 0-3 は「初回コミットに ... APIロックファイル（公開APIのレポートを diff レビュー）」を
+求めており、かつては `api-lock.md`(生成器 `scripts/api-lock.ts`)としてリポジトリ直下に実装されていた。
 
-**実装済みである。** リポジトリ直下の `api-lock.md`（公開宣言 40 件）が公開面の正本で、
-生成器は `scripts/api-lock.ts`。16 リポジトリに byte-identical で vendor する方式は
-`scripts/check-dependency-whitelist.ts` と同じで、編集してよいのは `REPOSITORY_POLICY` だけである。
+**この仕組みは org 標準として全廃された。** `api-lock.md` / `scripts/api-lock.ts` /
+`test/api-lock.test.ts` は削除済みで、`pnpm api:check` / `pnpm api:update` も
+`package.json#scripts` から削除済みである。理由と経緯は API_STANDARD.md §4 が正本であり、
+ここでは繰り返さない。要点だけ書くと:
 
-| 項目 | 内容 |
-| --- | --- |
-| 検査 | `pnpm api:check` — `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了 |
-| 更新 | `pnpm api:update` |
-| 配線 | `pnpm verify` の `check:deps` と `test` の間、および CI の独立ステップ |
-| 追加依存 | **なし**（`typescript` は既に devDependency） |
-
-plan.md §9 の未決事項「API ロックファイルのツール選定（api-extractor 相当の Effect-TS 互換手段）」は
-これで決着した。`@microsoft/api-extractor` は mc-kernel の実コードで試したうえで却下してある
-（決め手は `Context.Tag` のサービスクラスが写らないこと）。理由と実測は
-mc-kernel の `docs/versioning.md` §7 が正本なので、ここでは繰り返さない。
-
-**mc-physics でいちばん効くのは定数のリテラルが写ることである。** 上の §5 が MAJOR に分類している
-`GRAVITY_Y` / `TERMINAL_VELOCITY_Y` の変更は、`api-lock.md` に
-
-```ts
-const GRAVITY_Y = -9.82;
-```
-
-と値ごと記録されているので、書き換えれば必ず diff になる。ブランド型も
-`type CentreY = number & Brand.Brand<'CentreY'>` の形で写るため、
-`CentreY` / `FootY` / `HalfHeight` の取り違えや改名がレポートに出る。
-mc-sim がこのリポジトリを pin する以上、この粒度が要る。
+- 「公開 API」とは `src/index.ts` が re-export するものそのものであり、それ以上でもそれ以下でもない
+  (API_STANDARD.md §1)。
+- 破壊的変更かどうかの判定は、自動スナップショット/diff ツールではなく、API_STANDARD.md §3 の基準に
+  基づく**人間のレビュー**で行う。上の §5 の MAJOR/MINOR/PATCH 分類がその判断材料である。
+- `@microsoft/api-extractor` を含む新しいスナップショット/diff ツールの再導入は、
+  `Context.Tag` のサービスクラスが「forgotten export」として写らない欠陥が実測されていたため、
+  org として不採用と決定済みである(API_STANDARD.md §4 の歴史的経緯)。
 
 `test/public-api.test.ts` は残っているし、消す理由もない。あれは barrel の export 名を
-明示的に列挙してピン留めし、**名前の消失**を実行時に落とすテストである。
-シグネチャの変更を捕まえるのは `api-lock.md` の側で、両者は補完関係にある。
+明示的に列挙してピン留めし、**名前の消失**を実行時に落とすテストである。`GRAVITY_Y` /
+`TERMINAL_VELOCITY_Y` のような §5 で MAJOR に分類した定数のリテラル値は、このテストと
+`test/integrate.test.ts` のアサーションが直接固定している。
 
 捕まえないものも書いておく。**挙動**は写らない（`integrate` の返り値が変わってもこのファイルは動かない。
 それは §5 の言うリプレイの契約であり、テストの仕事である）。
-interface / 型リテラルのメンバ順はソース順のまま保たれるので、並べ替えは API 変更でなくても diff になる。
