@@ -100,7 +100,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
 ```typescript
 import {
   centreOfFoot, standingPlaneAbove, PLAYER_HALF_HEIGHT, PLAYER_HALF_WIDTH,
-  clampDeltaTime, stepBody, voxelRaycast, vec3,
+  clampDeltaTime, clampSneakEdge, stepBody, voxelRaycast, vec3,
 } from '@nerima-games/mc-physics'
 
 // スポーン: surfaceY の上に立つ。+1 でブロック上面、+halfHeight で体の中心。
@@ -123,6 +123,10 @@ const { body: next, isGrounded } = stepBody(body, dt, {
 
 // ブロック狙撃は DDA。原点セルは決して返さない。
 const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
+
+// sneak/grounded の判定と support の深さはゲーム側の責務。
+// 物理層は X/Z を独立に止めるため、崖の縁に沿った移動は残る。
+const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)
 ```
 
 **時刻は読まない。** `Date.now()` / `new Date()` / `performance.now()` は方針として

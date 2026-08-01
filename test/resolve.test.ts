@@ -35,6 +35,7 @@ import {
 import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../src/domain/delta-time'
 import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
 import {
+  clampSneakEdge,
   maxSpeedWithoutTunnelling,
   resolveBody,
   resolveWorld,
@@ -107,6 +108,76 @@ const penetratesSomething = (body: Body, options: ResolveOptions): boolean => {
 /** Kinetic plus gravitational potential energy, per unit mass. */
 const energyOf = (body: Body): number =>
   0.5 * (body.vx * body.vx + body.vy * body.vy + body.vz * body.vz) + Math.abs(GRAVITY_Y) * body.y
+
+describe('sneak edge prevention', () => {
+  const insideSupport = 0.75
+  const outsideSupport = 1.25
+  const supportLimit = 1
+  const supported = (positionX: number, positionZ: number): boolean =>
+    positionX <= supportLimit && positionZ <= supportLimit
+
+  it.effect('keeps movement on supported ground unchanged', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: insideSupport, z: supportLimit },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: supportLimit,
+      })
+    }),
+  )
+
+  it.effect('clamps only the axis that would cross an unsupported edge', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: outsideSupport, z: supportLimit },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: supportLimit,
+      })
+    }),
+  )
+
+  it.effect('clamps both axes when each independent move loses support', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: outsideSupport, z: outsideSupport },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: insideSupport,
+      })
+    }),
+  )
+
+  it.effect('does not query support for an axis that did not move', () =>
+    Effect.sync(() => {
+      const queries: Array<readonly [number, number]> = []
+      const result = clampSneakEdge(
+        { x: insideSupport, z: insideSupport },
+        { x: insideSupport, z: supportLimit },
+        (positionX, positionZ) => {
+          queries.push([positionX, positionZ])
+          return true
+        },
+      )
+
+      expect(result).toStrictEqual({ x: insideSupport, z: supportLimit })
+      expect(queries).toStrictEqual([[insideSupport, supportLimit]])
+    }),
+  )
+})
 
 describe('standard non-cubic block shapes', () => {
   it.effect('lands on the pressure plate top face rather than the cell top', () =>

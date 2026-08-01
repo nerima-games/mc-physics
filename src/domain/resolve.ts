@@ -175,6 +175,38 @@ export type Resolution = {
   readonly isGrounded: boolean
 }
 
+export type HorizontalPosition = {
+  readonly x: number
+  readonly z: number
+}
+
+export type HasGroundSupport = (positionX: number, positionZ: number) => boolean
+
+/**
+ * Keep a sneaking body over supported ground while still allowing edge slides.
+ *
+ * The caller owns both the sneaking/grounded state and the support depth: those
+ * are gameplay policy. Testing the axes independently is intentional. It lets
+ * movement along an edge continue even when movement across it is rejected.
+ */
+export const clampSneakEdge = (
+  previous: HorizontalPosition,
+  next: HorizontalPosition,
+  hasGroundSupport: HasGroundSupport,
+): HorizontalPosition => {
+  let nextX = next.x
+  let nextZ = next.z
+
+  if (next.x !== previous.x && !hasGroundSupport(next.x, previous.z)) {
+    nextX = previous.x
+  }
+  if (next.z !== previous.z && !hasGroundSupport(previous.x, next.z)) {
+    nextZ = previous.z
+  }
+
+  return { x: nextX, z: nextZ }
+}
+
 const shapeAt = (options: ResolveOptions, bx: number, by: number, bz: number): AABB | null =>
   options.blockShapeAt?.(bx, by, bz) ?? (options.isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null)
 

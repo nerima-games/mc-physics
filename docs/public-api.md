@@ -384,7 +384,7 @@ export const voxelRaycast = (
 | --- | --- | --- | --- |
 | ~~**AABB 衝突リゾルバ本体**~~ | `packages/game/domain/aabb-collision.ts` | 361 | **実装済み**（`domain/resolve.ts`）。§3-2 |
 | `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | **移植しない（今は）**。純粋版が定義であり、in-place 版はベンチマークができてから。`integrate.ts` と同じ方針 |
-| `clampSneakEdge` | `aabb-collision.ts:352-360` | — | 未着手。機構はここ・値は mc-sim（`responsibility.md` §3） |
+| `clampSneakEdge` | `aabb-collision.ts:352-360` | — | **実装済み**。X/Z を独立に clamp して edge 沿いの移動を保つ。スニーク状態と足場探索深度は mc-sim（`responsibility.md` §3） |
 | step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | 未着手。Y フェーズの reach 上限だけで slab への step-up は成立するので、再実行が要るケースを再現するテストが書けてから（`testing.md` §4） |
 | `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `CACTUS_SHAPE` / `PRESSURE_PLATE_SHAPE` として移植済み。ID との対応付けは `BlockShapeAt` を実装する呼び出し側の責務 |
 | ~~step-up（`MAX_STEP_UP = 0.6`）~~ | `aabb-collision.ts:32` | — | **定数としては移植しない**。`ResolveOptions.stepHeight`（既定 0）として注入する |
