@@ -88,7 +88,7 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json` と `tsconfig.test.json` の両方を型検査 |
-| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
+| `pnpm lint` | oxlint（このリポジトリ唯一の lint / format 設定）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 40 ルールが `warn`、`error` は 2 つだけ。このフラグが無かった頃は実質その 2 つしかゲートになっていなかった） |
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API） |
 | `pnpm test:watch` | vitest watch |
@@ -130,7 +130,7 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 が機械的に検出していたが、そのスクリプトは org 標準から全廃された
 (PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts` の廃止」)。
 現時点でこの禁止を自動検出する仕組みはなく、レビューで担保する
-(oxlint がこの種のチェックを実装した時点で `oxlint.json` に移す予定。同ファイルの先頭コメント参照)。
+(oxlint がこの種のチェックを実装した時点で `.oxlintrc.json` に移す予定。同ファイルの先頭コメント参照)。
 `deltaTimeBetween` はクロックではなく**読み取り値**を受け取る。
 
 ## 現状

@@ -79,38 +79,26 @@
     "no-sync": "warn",
 
     // Style
-    "array-bracket-spacing": "warn",
-    "block-spacing": "warn",
-    "brace-style": ["warn", "1tbs", { "allowSingleLine": true }],
-    "camelcase": "warn",
-    "comma-dangle": ["warn", "always-multiline"],
-    "comma-spacing": "warn",
-    "comma-style": "warn",
-    "computed-property-spacing": "warn",
-    "eol-last": "warn",
-    "func-call-spacing": "warn",
-    "indent": "off",
-    "key-spacing": "warn",
-    "keyword-spacing": "warn",
-    "linebreak-style": ["warn", "unix"],
-    "lines-between-class-members": "warn",
+    // NOTE on formatting rules: this block previously also carried
+    // array-bracket-spacing, block-spacing, brace-style, camelcase,
+    // comma-dangle, comma-spacing, comma-style, computed-property-spacing,
+    // eol-last, func-call-spacing, indent, key-spacing, keyword-spacing,
+    // linebreak-style, lines-between-class-members, no-mixed-spaces-and-tabs,
+    // no-new-object, no-tabs, no-trailing-spaces, no-whitespace-before-property,
+    // object-curly-spacing, one-var, operator-linebreak, padded-blocks,
+    // quote-props, semi-spacing, space-before-blocks, space-infix-ops,
+    // space-unary-ops and spaced-comment. Those were written for oxlint 0.12
+    // (see the `Date.now()` NOTE above) but this repo's `oxlint.json` was
+    // never actually loaded by oxlint until it was renamed to `.oxlintrc.json`
+    // (oxlint only auto-discovers the latter; verified empirically). Loading
+    // it for real against oxlint 1.76.0 fails `--print-config` with
+    // `Rule '<name>' not found in plugin 'eslint'` for every rule in the list
+    // above: oxc removed these pure-formatting rules from oxlint (they are
+    // now the domain of the separate `oxfmt` formatter, not in scope here).
+    // Left out rather than re-added; re-introduce only if/when oxlint
+    // reinstates an equivalent rule.
     "no-array-method-this-argument": "warn",
     "no-bitwise": "warn",
-    "no-mixed-spaces-and-tabs": "error",
-    "no-new-object": "warn",
-    "no-tabs": "error",
-    "no-trailing-spaces": "warn",
-    "no-whitespace-before-property": "warn",
-    "object-curly-spacing": ["warn", "always"],
-    "one-var": ["warn", "never"],
-    "operator-linebreak": "warn",
-    "padded-blocks": ["warn", "never"],
-    "quote-props": ["warn", "as-needed"],
-    "semi-spacing": "warn",
-    "space-before-blocks": "warn",
-    "space-infix-ops": "warn",
-    "space-unary-ops": "warn",
-    "spaced-comment": "warn",
 
     // Restriction
     "default-case": "warn",
@@ -121,17 +109,29 @@
     // enforcement, has been removed org-wide (see the NOTE above this rules
     // block).
     "no-restricted-globals": ["warn", "name", "open", "close", "event"],
+    // The mc-kernel exemption used to be written as a `regex` with a negative
+    // lookahead (`^@nerima-games/(?!mc-kernel\b).+`). Verified empirically
+    // against oxlint 1.76.0 that this NEVER matches anything (lookaround is
+    // not supported by oxlint's regex engine, and it fails silently rather
+    // than erroring): a file importing `@nerima-games/mc-worldgen` produced 0
+    // diagnostics under that pattern. Switched to the gitignore-style `group`
+    // form instead, which does support negation and was verified to (a) flag
+    // disallowed packages like `@nerima-games/mc-worldgen` (root and
+    // subpaths), (b) exempt `@nerima-games/mc-kernel` (root and subpaths),
+    // and (c) still flag look-alikes such as `@nerima-games/mc-kernel-evil`.
     "no-restricted-imports": [
       "warn",
       {
-        "name": "effect",
-        "message": "Please use named imports from 'effect' package",
-        "importNames": ["default"]
-      },
-      {
+        "paths": [
+          {
+            "name": "effect",
+            "message": "Please use named imports from 'effect' package",
+            "importNames": ["default"]
+          }
+        ],
         "patterns": [
           {
-            "regex": "^@nerima-games/(?!mc-kernel\\b).+",
+            "group": ["@nerima-games/**", "!@nerima-games/mc-kernel", "!@nerima-games/mc-kernel/**"],
             "message": "mc-physics is a Tier1 library (DEPENDENCY_POLICY.md) and must not depend on any other @nerima-games/* package. mc-kernel is universally importable and exempt."
           }
         ]

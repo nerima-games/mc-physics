@@ -7,7 +7,7 @@
 | コマンド | 内容 |
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）と `tsconfig.test.json`（テスト・ツール）の両方 |
-| `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
+| `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 40 ルールが `warn`、`error` は 2 つだけ。このフラグが無かった頃は実質その 2 つしかゲートになっていなかった） |
 | `pnpm test` | vitest。`@effect/vitest` の `it.effect` が主 API |
 | `pnpm test:coverage` | カバレッジ計測。4 指標 99% のしきい値を強制する(§3 参照) |
 | `pnpm verify` | `typecheck` / `lint` / `test` を直列実行。**CI と同じ内容**。カバレッジは別ゲート |
@@ -15,7 +15,7 @@
 `pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)と `pnpm api:check` / `pnpm api:update`
 (`api-lock.md` + `scripts/api-lock.ts`)は org 標準への移行に伴い全廃された
 (PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts` の廃止」、API_STANDARD.md §4)。
-依存の許可グラフは `oxlint.json` の `no-restricted-imports` が(DEPENDENCY_POLICY.md)、
+依存の許可グラフは `.oxlintrc.json` の `no-restricted-imports` が(DEPENDENCY_POLICY.md)、
 破壊的変更の判定は人間のレビュー([versioning.md](./versioning.md) §5-6)がそれぞれ引き継ぐ。
 
 セットアップ:
@@ -209,7 +209,7 @@ org 標準への移行で全廃されたため、CI から削除済みである�
 
 `test/check-dependency-whitelist.test.ts`(16 リポジトリ roster の完全性・非循環・推移閉包の拒否
 などを検査していたテスト)は、裏付けの `scripts/check-dependency-whitelist.ts` が org 標準への
-移行で全廃されたため、同時に削除した。代替は `oxlint.json` の `no-restricted-imports`
+移行で全廃されたため、同時に削除した。代替は `.oxlintrc.json` の `no-restricted-imports`
 (DEPENDENCY_POLICY.md)で、これはテストコードではなく lint 設定なのでこの一覧には現れない。
 
 ## 7. リゾルバのテストは mutation で確かめてある
