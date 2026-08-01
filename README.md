@@ -180,8 +180,8 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
   （plan.md §3.4 のこの行は参照実装の記述ではなく、新リポジトリへの要求である）。
   **エネルギーを増やす経路は step-up ただ 1 つ**であり、それはゲーム的な行為なので
   注入で既定 0 にしてある。テストがその例外も明示している。
-- **可変形状は `FULL_BLOCK_SHAPE` と `SLAB_SHAPE` のみ。**
-  参照実装にはサボテン・感圧板の形状もある。
+- **標準形状は full block / slab / cactus / pressure plate を提供する。**
+  ブロック ID との対応付けは `blockShapeAt` を実装する呼び出し側の責務である。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
   `version` は mc-sim が実際に消費して契約を確認するまで `0.x` に留める。
 - **カバレッジ閾値は有効化済み。** 4 指標(statements/branches/functions/lines)すべてで 99%

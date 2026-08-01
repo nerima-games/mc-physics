@@ -14,6 +14,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck } from 'effect'
 import {
+  CACTUS_SHAPE,
   CONTACT_EPSILON,
   CentreY,
   FULL_BLOCK_SHAPE,
@@ -21,6 +22,7 @@ import {
   HalfHeight,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
+  PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
   blockAABB,
   centreOfFoot,
@@ -116,6 +118,26 @@ describe('block occupancy', () => {
       const box = blockAABB(0, 64, 0, SLAB_SHAPE)
       expect(box.minY).toBe(64)
       expect(box.maxY).toBe(64.5)
+    }),
+  )
+
+  it.effect('a pressure plate occupies exactly the bottom sixteenth of its cell', () =>
+    Effect.sync(() => {
+      const box = blockAABB(-3, 64, 7, PRESSURE_PLATE_SHAPE)
+      expect(box).toStrictEqual({ minX: -3, minY: 64, minZ: 7, maxX: -2, maxY: 64 + 1 / 16, maxZ: 8 })
+    }),
+  )
+
+  it.effect('a cactus is inset one sixteenth on X and Z but remains full height', () =>
+    Effect.sync(() => {
+      expect(blockAABB(-3, 64, 7, CACTUS_SHAPE)).toStrictEqual({
+        minX: -3 + 1 / 16,
+        minY: 64,
+        minZ: 7 + 1 / 16,
+        maxX: -3 + 15 / 16,
+        maxY: 65,
+        maxZ: 7 + 15 / 16,
+      })
     }),
   )
 

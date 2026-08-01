@@ -15,11 +15,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck } from 'effect'
 import {
+  CACTUS_SHAPE,
   CONTACT_EPSILON,
   CentreY,
   HalfHeight,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
+  PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
   blockAABB,
   centreOfFoot,
@@ -105,6 +107,52 @@ const penetratesSomething = (body: Body, options: ResolveOptions): boolean => {
 /** Kinetic plus gravitational potential energy, per unit mass. */
 const energyOf = (body: Body): number =>
   0.5 * (body.vx * body.vx + body.vy * body.vy + body.vz * body.vz) + Math.abs(GRAVITY_Y) * body.y
+
+describe('standard non-cubic block shapes', () => {
+  it.effect('lands on the pressure plate top face rather than the cell top', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 0 && by === 0 && bz === 0 ? PRESSURE_PLATE_SHAPE : null),
+      })
+      const falling: Body = { ...standingOn(0), y: Number(HALF_H) + 1 / 16 + 0.01, vy: -1 }
+
+      const stepped = stepBody(falling, DT, options, 0)
+
+      expect(stepped.body.y).toBe(Number(HALF_H) + 1 / 16)
+      expect(stepped.body.vy).toBe(0)
+      expect(stepped.isGrounded).toBe(true)
+    }),
+  )
+
+  it.effect('allows movement before the cactus inset and clamps exactly at it', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
+      })
+      const before: Body = { ...standingOn(0), x: 0.74, y: 1.5, vx: 1 }
+      const crossing: Body = { ...before, x: 0.75 }
+
+      const unobstructed = stepBody(before, DT, options, 0)
+      const blocked = stepBody(crossing, DT, options, 0)
+
+      expect(unobstructed.body.x).toBe(0.74 + DT)
+      expect(unobstructed.body.vx).toBe(1)
+      expect(blocked.body.x).toBe(1 + 1 / 16 - HALF_W)
+      expect(blocked.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('resolves the same shaped-block input deterministically', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
+      })
+      const body: Body = { ...standingOn(0), x: 0.75, y: 1.5, vx: 1 }
+
+      expect(stepBody(body, DT, options, 0)).toStrictEqual(stepBody(body, DT, options, 0))
+    }),
+  )
+})
 
 // ---------------------------------------------------------------------------
 // AXIS ORDER — physics-resolve-y-before-x

@@ -173,6 +173,8 @@ export const entityAABB = (x: number, centreY: CentreY, z: number, halfWidth: nu
 export const blockAABB = (bx: number, by: number, bz: number, shape?: AABB): AABB
 export const FULL_BLOCK_SHAPE: AABB
 export const SLAB_SHAPE: AABB
+export const PRESSURE_PLATE_SHAPE: AABB
+export const CACTUS_SHAPE: AABB
 
 export const intersects = (a: AABB, b: AABB): boolean
 export const penetrationY = (a: AABB, b: AABB): number
@@ -384,7 +386,7 @@ export const voxelRaycast = (
 | `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | **移植しない（今は）**。純粋版が定義であり、in-place 版はベンチマークができてから。`integrate.ts` と同じ方針 |
 | `clampSneakEdge` | `aabb-collision.ts:352-360` | — | 未着手。機構はここ・値は mc-sim（`responsibility.md` §3） |
 | step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | 未着手。Y フェーズの reach 上限だけで slab への step-up は成立するので、再実行が要るケースを再現するテストが書けてから（`testing.md` §4） |
-| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `FULL_BLOCK_SHAPE` / `SLAB_SHAPE` のみ。任意形状は `BlockShapeAt` で注入できるので、定数を持つかどうかだけの話になった |
+| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `CACTUS_SHAPE` / `PRESSURE_PLATE_SHAPE` として移植済み。ID との対応付けは `BlockShapeAt` を実装する呼び出し側の責務 |
 | ~~step-up（`MAX_STEP_UP = 0.6`）~~ | `aabb-collision.ts:32` | — | **定数としては移植しない**。`ResolveOptions.stepHeight`（既定 0）として注入する |
 | プレイヤー物理の高レベル層 | `player-physics.ts` | 310 | mc-sim 寄り。切り分け要検討 |
 | `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。能力フラグに置き換える（`responsibility.md` §3.1） |

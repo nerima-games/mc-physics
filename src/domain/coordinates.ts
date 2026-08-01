@@ -138,6 +138,18 @@ export const FULL_BLOCK_SHAPE: AABB = {
 /** A slab: the bottom half of its cell. */
 export const SLAB_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: 0.5 }
 
+/** A pressure plate: the bottom sixteenth of its cell. */
+export const PRESSURE_PLATE_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: 1 / 16 }
+
+/** A cactus: a full-height block inset one sixteenth on both horizontal axes. */
+export const CACTUS_SHAPE: AABB = {
+  ...FULL_BLOCK_SHAPE,
+  minX: 1 / 16,
+  maxX: 15 / 16,
+  minZ: 1 / 16,
+  maxZ: 15 / 16,
+}
+
 /** The world-space AABB of the block at integer cell (bx, by, bz), given its shape. */
 export const blockAABB = (bx: number, by: number, bz: number, shape: AABB = FULL_BLOCK_SHAPE): AABB => ({
   minX: bx + shape.minX,
