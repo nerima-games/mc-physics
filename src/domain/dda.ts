@@ -39,6 +39,7 @@
  * See docs/design-notes.md, regressions `physics-dda-skips-origin-cell` and
  * `physics-dda-respects-max-distance`.
  */
+import type { BlockFace } from '@nerima-games/mc-kernel'
 import { Option } from 'effect'
 import type { Vec3 } from './coordinates'
 
@@ -49,6 +50,8 @@ export type VoxelHit = {
   readonly bz: number
   /** Unit normal of the face the ray entered through. Points back at the ray. */
   readonly normal: Vec3
+  /** Canonical Minecraft face the ray entered through. */
+  readonly face: BlockFace
   /** Distance from the origin along the normalised direction, in blocks. */
   readonly distance: number
   /** The exact point on the entered face. */
@@ -119,22 +122,26 @@ export const voxelRaycast = (
     let normalX = 0
     let normalY = 0
     let normalZ = 0
+    let face: BlockFace
 
     if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
       travelled = tMaxX
       cellX += stepX
       tMaxX += tDeltaX
       normalX = -stepX
+      face = stepX > 0 ? 'west' : 'east'
     } else if (tMaxY <= tMaxZ) {
       travelled = tMaxY
       cellY += stepY
       tMaxY += tDeltaY
       normalY = -stepY
+      face = stepY > 0 ? 'down' : 'up'
     } else {
       travelled = tMaxZ
       cellZ += stepZ
       tMaxZ += tDeltaZ
       normalZ = -stepZ
+      face = stepZ > 0 ? 'north' : 'south'
     }
 
     if (travelled > maxDistance) {
@@ -149,6 +156,7 @@ export const voxelRaycast = (
       by: cellY,
       bz: cellZ,
       normal: { x: normalX, y: normalY, z: normalZ },
+      face,
       distance: travelled,
       point: {
         x: origin.x + dx * travelled,

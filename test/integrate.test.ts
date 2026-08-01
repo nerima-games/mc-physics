@@ -236,8 +236,30 @@ describe('voxel DDA', () => {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([3, 0, 0])
         // Entered through the -X face, so the normal points back at the ray.
         expect(hit.value.normal).toStrictEqual({ x: -1, y: 0, z: 0 })
+        expect(hit.value.face).toBe('west')
         expect(hit.value.distance).toBeCloseTo(2.5, 10)
         expect(hit.value.point.x).toBeCloseTo(3, 10)
+      }
+    }),
+  )
+
+  it.effect('uses the canonical block face for every traversal direction', () =>
+    Effect.sync(() => {
+      const cases = [
+        { direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+      ] as const
+
+      for (const testCase of cases) {
+        const hit = voxelRaycast(vec3(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) {
+          expect(hit.value.face).toBe(testCase.face)
+        }
       }
     }),
   )
@@ -307,18 +329,21 @@ describe('voxel DDA', () => {
       direction: vec3(-1, 0, 0),
       cellAfter: (crossings: number) => [-crossings, 0, 0] as const,
       normal: { x: 1, y: 0, z: 0 },
+      face: 'east',
       entryPoint: { x: -2, y: OFF_CENTRE, z: OFF_CENTRE },
     },
     {
       direction: vec3(0, -1, 0),
       cellAfter: (crossings: number) => [0, -crossings, 0] as const,
       normal: { x: 0, y: 1, z: 0 },
+      face: 'up',
       entryPoint: { x: OFF_CENTRE, y: -2, z: OFF_CENTRE },
     },
     {
       direction: vec3(0, 0, -1),
       cellAfter: (crossings: number) => [0, 0, -crossings] as const,
       normal: { x: 0, y: 0, z: 1 },
+      face: 'south',
       entryPoint: { x: OFF_CENTRE, y: OFF_CENTRE, z: -2 },
     },
   ] as const
@@ -354,6 +379,7 @@ describe('voxel DDA', () => {
           expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([...target])
           // Points BACK at the ray, so it is the positive unit vector here.
           expect(hit.value.normal).toStrictEqual(axis.normal)
+          expect(hit.value.face).toBe(axis.face)
           // 0.75 to leave the origin cell, then two whole cells. Reading 2.25
           // here means the positive-direction formula is being used: the ray
           // would be measuring its distance to the boundary it is moving AWAY
@@ -414,6 +440,7 @@ describe('voxel DDA', () => {
         // the other two, which changes WHICH face the hit is attributed to —
         // and the face normal is what decides where a placed block goes.
         expect(hit.value.normal).toStrictEqual({ x: 0, y: 0, z: 1 })
+        expect(hit.value.face).toBe('south')
         // 1.75 cells along each axis, i.e. 1.75 * sqrt(3) along a unit diagonal.
         expect(hit.value.distance).toBeCloseTo((OFF_CENTRE + 1) * Math.sqrt(3), 12)
         expect(hit.value.point.x).toBeCloseTo(-1, 12)
