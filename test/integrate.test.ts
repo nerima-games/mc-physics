@@ -11,7 +11,14 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck, Option } from 'effect'
-import { PLAYER_HALF_HEIGHT, vec3 } from '../src/domain/coordinates'
+import {
+  CACTUS_SHAPE,
+  PLAYER_HALF_HEIGHT,
+  PRESSURE_PLATE_SHAPE,
+  SLAB_SHAPE,
+  type AABB,
+  vec3,
+} from '../src/domain/coordinates'
 import { voxelRaycast } from '../src/domain/dda'
 import {
   DeltaTimeSecs,
@@ -261,6 +268,78 @@ describe('voxel DDA', () => {
           expect(hit.value.face).toBe(testCase.face)
         }
       }
+    }),
+  )
+
+  it.effect('continues through the empty part of a non-cubic targetable cell', () =>
+    Effect.sync(() => {
+      const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
+      const shapeAt = (bx: number) => (bx === 1 ? SLAB_SHAPE : null)
+      const hit = voxelRaycast(vec3(0.5, 0.75, 0.5), vec3(1, 0, 0), 4, targetable, shapeAt)
+      expect(Option.isSome(hit)).toBe(true)
+      if (Option.isSome(hit)) {
+        expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([2, 0, 0])
+        expect(hit.value.distance).toBeCloseTo(1.5, 12)
+      }
+    }),
+  )
+
+  it.effect('hits slab, cactus and pressure-plate geometry at their actual surface', () =>
+    Effect.sync(() => {
+      const cases = [
+        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: SLAB_SHAPE, distance: 0.5 },
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), shape: CACTUS_SHAPE, distance: 1 + 1 / 16 },
+        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: PRESSURE_PLATE_SHAPE, distance: 15 / 16 },
+      ] as const
+      for (const testCase of cases) {
+        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt([1, 0, 0]), () => testCase.shape)
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) expect(hit.value.distance).toBeCloseTo(testCase.distance, 12)
+      }
+    }),
+  )
+
+  it.effect('reports all six faces from the shape narrow phase', () =>
+    Effect.sync(() => {
+      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
+      const cases = [
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+      ] as const
+      for (const testCase of cases) {
+        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt(testCase.target), () => shape)
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) expect(hit.value.face).toBe(testCase.face)
+      }
+    }),
+  )
+
+  it.effect('applies maxDistance to the shape surface and stays deterministic', () =>
+    Effect.sync(() => {
+      const ray = () => voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      expect(Option.isNone(ray())).toBe(true)
+      const first = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const second = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      expect(first).toStrictEqual(second)
+    }),
+  )
+
+  it.effect('treats an invalid out-of-cell shape as a miss', () =>
+    Effect.sync(() => {
+      const invalid: AABB = { minX: -1, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
+      expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
+    }),
+  )
+
+  it.effect('rejects a diagonal ray whose per-axis shape intervals do not overlap', () =>
+    Effect.sync(() => {
+      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
+      const hit = voxelRaycast(vec3(0, 0.9, 0.5), vec3(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
+      expect(Option.isNone(hit)).toBe(true)
     }),
   )
 

@@ -72,6 +72,9 @@ mc-physics で最も価値が高いのは**座標と AABB の不変条件**で�
 ## 3. カバレッジ閾値は有効化済み(org 標準、TEST_STANDARD.md §3)
 
 branches / functions / lines / statements の4指標すべてに **99%** のしきい値を、
+voxel raycastはunit cube互換経路に加え、slab/cactus/pressure plateの実形状、空隙通過、
+6面、実形状面でのmaxDistance、反復決定性を固定している。
+
 org の即時・全リポジトリ一律ロールアウト方針(TEST_STANDARD.md §3)に従い有効化している。
 猶予期間・段階ロールアウトはない。
 

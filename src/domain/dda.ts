@@ -41,7 +41,7 @@
  */
 import type { BlockFace } from '@nerima-games/mc-kernel'
 import { Option } from 'effect'
-import type { Vec3 } from './coordinates'
+import { blockAABB, FULL_BLOCK_SHAPE, type AABB, type Vec3 } from './coordinates'
 
 export type VoxelHit = {
   /** Integer cell coordinates of the block that was hit. */
@@ -61,7 +61,63 @@ export type VoxelHit = {
 /** Asked once per candidate cell. Physics never sees a block id. */
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 
+/**
+ * The targetable block's AABB within its own cell. `null` means a full cube.
+ * Invalid or out-of-cell shapes are ignored rather than extending the raycast
+ * into a neighbouring voxel owned by another DDA step.
+ */
+export type RaycastShapeAt = (bx: number, by: number, bz: number) => AABB | null
+
 const EPSILON = 1e-12
+
+type ShapeHit = Pick<VoxelHit, 'distance' | 'face' | 'normal'>
+
+const isCellShape = (shape: AABB): boolean =>
+  [shape.minX, shape.minY, shape.minZ, shape.maxX, shape.maxY, shape.maxZ].every(Number.isFinite) &&
+  shape.minX >= 0 &&
+  shape.minY >= 0 &&
+  shape.minZ >= 0 &&
+  shape.maxX <= 1 &&
+  shape.maxY <= 1 &&
+  shape.maxZ <= 1 &&
+  shape.minX < shape.maxX &&
+  shape.minY < shape.maxY &&
+  shape.minZ < shape.maxZ
+
+/** Ray/AABB slab intersection. Axis order is the deterministic X -> Y -> Z tie-break. */
+const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | null => {
+  let nearDistance = -Infinity
+  let farDistance = Infinity
+  let face: BlockFace = 'west'
+  let normal: Vec3 = { x: -1, y: 0, z: 0 }
+
+  const axes = [
+    { origin: origin.x, direction: direction.x, min: box.minX, max: box.maxX, lowFace: 'west', highFace: 'east', lowNormal: { x: -1, y: 0, z: 0 }, highNormal: { x: 1, y: 0, z: 0 } },
+    { origin: origin.y, direction: direction.y, min: box.minY, max: box.maxY, lowFace: 'down', highFace: 'up', lowNormal: { x: 0, y: -1, z: 0 }, highNormal: { x: 0, y: 1, z: 0 } },
+    { origin: origin.z, direction: direction.z, min: box.minZ, max: box.maxZ, lowFace: 'north', highFace: 'south', lowNormal: { x: 0, y: 0, z: -1 }, highNormal: { x: 0, y: 0, z: 1 } },
+  ] as const
+
+  for (const axis of axes) {
+    if (axis.direction === 0) {
+      if (axis.origin < axis.min || axis.origin > axis.max) return null
+      continue
+    }
+    const lowDistance = (axis.min - axis.origin) / axis.direction
+    const highDistance = (axis.max - axis.origin) / axis.direction
+    const enteringDistance = Math.min(lowDistance, highDistance)
+    const leavingDistance = Math.max(lowDistance, highDistance)
+    if (enteringDistance > nearDistance) {
+      nearDistance = enteringDistance
+      const entersLowFace = axis.direction > 0
+      face = entersLowFace ? axis.lowFace : axis.highFace
+      normal = entersLowFace ? axis.lowNormal : axis.highNormal
+    }
+    farDistance = Math.min(farDistance, leavingDistance)
+    if (nearDistance > farDistance) return null
+  }
+
+  return { distance: nearDistance, face, normal }
+}
 
 /**
  * Walk the voxel grid from `origin` along `direction` and return the first
@@ -80,6 +136,7 @@ export const voxelRaycast = (
   direction: Vec3,
   maxDistance: number,
   isTargetable: IsTargetable,
+  shapeAt?: RaycastShapeAt,
 ): Option.Option<VoxelHit> => {
   const length = Math.hypot(direction.x, direction.y, direction.z)
   if (!Number.isFinite(length) || length < EPSILON || !(maxDistance > 0)) {
@@ -151,17 +208,28 @@ export const voxelRaycast = (
       continue
     }
 
+    const shape = shapeAt?.(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
+    if (!isCellShape(shape)) {
+      continue
+    }
+    const shapeHit = shapeAt === undefined
+      ? { distance: travelled, normal: { x: normalX, y: normalY, z: normalZ }, face }
+      : intersectShape(origin, { x: dx, y: dy, z: dz }, blockAABB(cellX, cellY, cellZ, shape))
+    if (shapeHit === null || shapeHit.distance > maxDistance) {
+      continue
+    }
+
     return Option.some({
       bx: cellX,
       by: cellY,
       bz: cellZ,
-      normal: { x: normalX, y: normalY, z: normalZ },
-      face,
-      distance: travelled,
+      normal: shapeHit.normal,
+      face: shapeHit.face,
+      distance: shapeHit.distance,
       point: {
-        x: origin.x + dx * travelled,
-        y: origin.y + dy * travelled,
-        z: origin.z + dz * travelled,
+        x: origin.x + dx * shapeHit.distance,
+        y: origin.y + dy * shapeHit.distance,
+        z: origin.z + dz * shapeHit.distance,
       },
     })
   }

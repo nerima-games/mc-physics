@@ -124,6 +124,10 @@ const { body: next, isGrounded } = stepBody(body, dt, {
 // ブロック狙撃は DDA。原点セルは決して返さない。
 const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 
+// slab/cactus/pressure plate などは第5引数でcell-local AABBを返す。
+// nullはfull cube。空隙ならDDAは次のcellへ進む。
+const shapedHit = voxelRaycast(eye, forward, 5, isTargetable, blockShapeAt)
+
 // sneak/grounded の判定と support の深さはゲーム側の責務。
 // 物理層は X/Z を独立に止めるため、崖の縁に沿った移動は残る。
 const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)

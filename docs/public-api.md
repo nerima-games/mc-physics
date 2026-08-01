@@ -353,10 +353,17 @@ export type VoxelHit = {
   readonly point: Vec3
 }
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
+export type RaycastShapeAt = (bx: number, by: number, bz: number) => AABB | null
 export const voxelRaycast = (
   origin: Vec3, direction: Vec3, maxDistance: number, isTargetable: IsTargetable,
+  shapeAt?: RaycastShapeAt,
 ): Option.Option<VoxelHit>
 ```
+
+第5引数を省略した既存呼び出しは従来どおりtargetable cell全体をunit cubeとして扱う。
+指定時はDDAで候補cellを列挙した後、cell-local AABBとのslab intersectionで実際の面を求める。
+空隙を通った場合は次のcellへ進む。`null` はfull cubeであり、targetableかどうかは第4引数だけが決める。
+shapeは有限・正体積かつunit cell内でなければならず、不正値はhitにせず無視する。
 
 ### 参照実装への訂正 2 点
 

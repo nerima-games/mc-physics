@@ -84,7 +84,7 @@ plan.md の 1,453 も、参照実装自身の
 
 | ファイル | LOC | 扱い |
 | --- | --- | --- |
-| `packages/world/domain/voxel-raycast.ts` | 89 | **移植済み**（`domain/dda.ts`）。名前に physics/aabb/collision を含まないのでフィルタから漏れる |
+| `packages/world/domain/voxel-raycast.ts` | 89 | **移植済み**（`domain/dda.ts`）。名前に physics/aabb/collision を含まないのでフィルタから漏れる。任意のshape narrow phaseを追加し、非立方blockの空隙も正しく通過する |
 | `packages/core/domain/physics.ts` | 12 | 定数のみ |
 | `packages/rendering/infrastructure/raycasting/raycasting-service.ts` | 89 | Three.js の Raycaster。DDA が置き換えた相手。mc-render の責務 |
 | `packages/entity/application/mob/entity-manager-physics-frame.ts` | 97 | Mob の毎フレーム処理。mc-sim の責務。ただし P-3 の呼び出し順の証拠として重要 |
