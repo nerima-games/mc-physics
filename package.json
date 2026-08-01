@@ -1,6 +1,6 @@
 {
   "name": "@nerima-games/mc-physics",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "description": "Euler integration and AABB collision resolution for the nerima-games Minecraft-clone rebuild, with the foot-origin/body-centre Y convention made explicit in the type system. No external physics engine.",
   "homepage": "https://github.com/nerima-games/mc-physics#readme",
