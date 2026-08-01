@@ -306,14 +306,16 @@ export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: nu
 ```
 
 **`stepBody` が plan.md §3.4 の `step(state, world, dt)` である。**
-中身は `resolveBody(integrateBody(body, dt), dt, options)` の 1 行でしかないが、
-その 1 行が P-3 の順序であり、名前が付いていることで逆順が diff に現れる。
+中身は「積分 → 必要なら swept AABB → endpoint 解決」である。
+高速移動は経路上の最初の面で止まり、短い移動と終点の重なりは既存の Y → X → Z 解決へ渡す。
+名前が付いていることで P-3 の順序と連続判定の欠落が diff に現れる。
 
 参照実装との差分（詳細は `design-notes.md` P-9）:
 
 | 項目 | 参照実装 | 本リポジトリ |
 | --- | --- | --- |
 | 軸順序 | Y → X → Z | 同じ。ただし**根拠は実測**（P-9-1） |
+| 高速移動 | endpoint のみ | `stepBody` が swept AABB で最初の衝突を解決し、残りの軸を滑らせる（P-9-2） |
 | 床とみなす条件 | `MAX_STEP_UP = 0.6` **または** `|vy| >= 8` **または** 中心セル直下 | `-vy * dt`（このステップの実変位）**＋注入された `stepHeight`**。定数なし |
 | 水平フェーズ | X と Z を別々に書き下し（約 100 行の重複） | `clampAxis` 1 つを両軸で共有 |
 | 面の採用条件 | `face >= x - halfW && face < x + halfW` | 同じ（face-span ガード）。**同時に補正量の上限でもある**（P-9-4） |

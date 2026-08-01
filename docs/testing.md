@@ -112,8 +112,9 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
     本リポジトリでは別の機構（face-span ガード）が先に効くため順序を区別しない
   - `CONTACT_EPSILON` 以内のめり込みは「接地」として何もしない。
     **epsilon は述語（`collidesWith`）にあり、リゾルバが書く位置には 1 ulp も足さない**
-  - discrete（swept ではない）。破綻する速度は `maxSpeedWithoutTunnelling` が名前で持っており、
-    ゲームの最速の約 4.8 倍離れていることをテストが不等式で押さえている（P-9-2）
+  - `stepBody` は body span を超える変位を swept AABB で連続判定する。
+    高速な水平・垂直・斜め移動、薄い collision shape、接触状態からの内向き／外向き移動、
+    既存のめり込みからの離脱を回帰テストで固定している（P-9-2）
 - **`isBlockSolid` を能力フラグ経由にする** —— mc-kernel が publish されてから。
   現状は `IsBlockSolid` / `BlockShapeAt` として**注入**されており、
   `domain/` にブロック ID の語彙は 1 つも無い。repoint は mc-sim 側の 1 行になる（P-8）

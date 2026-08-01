@@ -56,42 +56,20 @@
  * the first one corrected, which is why `boxAfterX` is rebuilt below.
  *
  * ---------------------------------------------------------------------------
- * DISCRETE, NOT SWEPT — and the exact speed at which that fails
+ * CONTINUOUS MOTION FOR LONG STEPS
  * ---------------------------------------------------------------------------
  *
- * This resolver looks only at where the body ENDED UP. It does not sweep the
- * path it took, even though `domain/dda.ts` shows this repository can. That is
- * a deliberate choice and it is the one the rest of the repository is already
- * built on: `design-notes.md` P-5 justifies the 0.05 s delta cap by "the
- * resolver only catches a floor that lands inside the body's box after a step",
- * and `TERMINAL_VELOCITY_Y = -32` is derived from it. A swept resolver would
- * make that argument no longer the tightest description of the guard, so the
- * cap's justification would quietly become folklore.
+ * `stepBody` sweeps dynamic bodies when a single displacement exceeds the
+ * body's smallest span. Candidate blocks come from a centre-line grid walk
+ * expanded by the body's extents, so work grows with travel distance rather
+ * than the volume of the swept prism. Minkowski-expanded block AABBs then give
+ * the first time of impact. At equal times the stable priority is Y, X, Z; the
+ * remaining axes continue, producing wall sliding without tunnelling.
  *
- * The trade has an exact price, so here it is. Discrete resolution misses a
- * block when the body's displacement in one step carries it clean past:
- *
- *     tunnels when  speed * maxDeltaSecs  >  blockThickness + 2 * halfExtent
- *
- * `maxSpeedWithoutTunnelling` below is that inequality, named. For the player
- * (halfWidth 0.3) against a one-block wall at the 0.05 s cap it is 32 m/s. The
- * reference's fastest horizontal speed is a sprint jump: 5.612 m/s times the
- * 1.2 sprint-jump multiplier, so 6.73 m/s
- * (`packages/entity/application/movement-service.ts:25-32`). The game runs at
- * under a quarter of the speed that breaks this, and the test asserts the
- * inequality rather than either number. Vertically the guard is stricter and
- * already tested: a fall of more than one body height would put the floor's top
- * face above the body's head, and `maxFallPerStep(MAX_DELTA_SECS) = 1.6` is
- * below the 1.8 body height.
- *
- * The remaining cost of discrete is an ambiguity it cannot resolve, and the
- * reference has it too: a body moving fast DOWNWARD and sideways into a wall
- * may end the step below that wall's top face, at which point "I fell onto it"
- * and "I ran into it" are the same state and it is treated as a floor. The
- * reference approximates the same rule with two tuned constants (MAX_STEP_UP
- * 0.6 and FALL_VELOCITY_THRESHOLD 8, `aabb-collision.ts:20-33`). This
- * resolver replaces both with the step's ACTUAL displacement, which is exact
- * and needs no tuning — see the Y phase.
+ * Short steps and endpoint overlaps still use the established Y -> X -> Z
+ * resolver below. That preserves step-up, grounding, and overlap behaviour.
+ * `resolveBody` remains available as that endpoint resolver; callers that need
+ * continuous collision should use the public composition `stepBody`.
  *
  * ---------------------------------------------------------------------------
  * WHAT COUNTS AS A FLOOR: the step's own displacement, not a tuned constant
@@ -451,6 +429,177 @@ export const resolveWorld = (
   options: ResolveOptions,
 ): ReadonlyArray<Resolution> => bodies.map((body) => resolveBody(body, deltaTime, options))
 
+type SweepAxis = 'x' | 'y' | 'z'
+
+type SweepHit = {
+  readonly time: number
+  readonly axis: SweepAxis
+}
+
+const axisPriority = (axis: SweepAxis): number => (axis === 'y' ? 0 : axis === 'x' ? 1 : 2)
+
+/**
+ * Cells near the centre-line grid walk. Unlike scanning the swept bounding
+ * box, this grows with distance travelled rather than the volume of a long
+ * diagonal prism.
+ */
+const sweptCandidates = (
+  start: Body,
+  end: Body,
+  options: ResolveOptions,
+): ReadonlyArray<AABB> => {
+  const found: Array<AABB> = []
+  const asked = new Set<string>()
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const dz = end.z - start.z
+  const crossings = Math.abs(Math.floor(end.x) - Math.floor(start.x))
+    + Math.abs(Math.floor(end.y) - Math.floor(start.y))
+    + Math.abs(Math.floor(end.z) - Math.floor(start.z))
+  const steps = Math.max(1, crossings + 1)
+  const radiusX = Math.ceil(options.halfWidth)
+  const radiusY = Math.ceil(Number(options.halfHeight))
+
+  for (let index = 0; index <= steps; index += 1) {
+    const time = index / steps
+    const cx = Math.floor(start.x + dx * time)
+    const cy = Math.floor(start.y + dy * time)
+    const cz = Math.floor(start.z + dz * time)
+    for (let bx = cx - radiusX; bx <= cx + radiusX; bx += 1) {
+      for (let by = cy - radiusY; by <= cy + radiusY; by += 1) {
+        for (let bz = cz - radiusX; bz <= cz + radiusX; bz += 1) {
+          const key = `${bx},${by},${bz}`
+          if (asked.has(key)) {
+            continue
+          }
+          asked.add(key)
+          const shape = shapeAt(options, bx, by, bz)
+          if (shape !== null) {
+            found.push(blockAABB(bx, by, bz, shape))
+          }
+        }
+      }
+    }
+  }
+  return found
+}
+
+const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | null => {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const dz = end.z - start.z
+  const startBox = boxAt(options, start.x, start.y, start.z)
+  const endBox = boxAt(options, end.x, end.y, end.z)
+  let nearest: SweepHit | null = null
+
+  for (const block of sweptCandidates(start, end, options)) {
+    const touchesVerticalFace =
+      Math.abs(startBox.minY - block.maxY) <= CONTACT_EPSILON
+      || Math.abs(startBox.maxY - block.minY) <= CONTACT_EPSILON
+    if (Math.abs(dy) <= CONTACT_EPSILON && touchesVerticalFace) {
+      continue
+    }
+    // Endpoint overlaps remain the discrete resolver's responsibility. This
+    // keeps its step-up and established low-speed face selection unchanged.
+    if (collidesWith(endBox, block)) {
+      continue
+    }
+    const expanded = {
+      minX: block.minX - options.halfWidth,
+      maxX: block.maxX + options.halfWidth,
+      minY: block.minY - Number(options.halfHeight),
+      maxY: block.maxY + Number(options.halfHeight),
+      minZ: block.minZ - options.halfWidth,
+      maxZ: block.maxZ + options.halfWidth,
+    }
+    const strictlyInside =
+      start.x > expanded.minX + CONTACT_EPSILON && start.x < expanded.maxX - CONTACT_EPSILON
+      && start.y > expanded.minY + CONTACT_EPSILON && start.y < expanded.maxY - CONTACT_EPSILON
+      && start.z > expanded.minZ + CONTACT_EPSILON && start.z < expanded.maxZ - CONTACT_EPSILON
+    if (strictlyInside) {
+      continue
+    }
+
+    let entry = Number.NEGATIVE_INFINITY
+    let exit = Number.POSITIVE_INFINITY
+    let entryAxis: SweepAxis = 'y'
+    const axes = [
+      ['y', start.y, dy, expanded.minY, expanded.maxY],
+      ['x', start.x, dx, expanded.minX, expanded.maxX],
+      ['z', start.z, dz, expanded.minZ, expanded.maxZ],
+    ] as const
+    let misses = false
+    for (const [axis, origin, delta, min, max] of axes) {
+      if (Math.abs(delta) <= CONTACT_EPSILON) {
+        if (origin < min - CONTACT_EPSILON || origin > max + CONTACT_EPSILON) {
+          misses = true
+          break
+        }
+        continue
+      }
+      const first = (min - origin) / delta
+      const second = (max - origin) / delta
+      const axisEntry = Math.min(first, second)
+      const axisExit = Math.max(first, second)
+      if (axisEntry > entry + CONTACT_EPSILON) {
+        entry = axisEntry
+        entryAxis = axis
+      }
+      exit = Math.min(exit, axisExit)
+    }
+    if (misses || entry > exit + CONTACT_EPSILON || exit < 0 || entry < -CONTACT_EPSILON || entry >= 1 - CONTACT_EPSILON) {
+      continue
+    }
+    const hit = { time: Math.max(0, entry), axis: entryAxis }
+    if (
+      nearest === null
+      || hit.time < nearest.time - CONTACT_EPSILON
+      || (Math.abs(hit.time - nearest.time) <= CONTACT_EPSILON && axisPriority(hit.axis) < axisPriority(nearest.axis))
+    ) {
+      nearest = hit
+    }
+  }
+  return nearest
+}
+
+const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptions): Body => {
+  const minimumBodySpan = Math.min(2 * options.halfWidth, 2 * Number(options.halfHeight))
+  if (
+    Math.abs(integrated.x - start.x) <= minimumBodySpan
+    && Math.abs(integrated.y - start.y) <= minimumBodySpan
+    && Math.abs(integrated.z - start.z) <= minimumBodySpan
+  ) {
+    return integrated
+  }
+
+  let from = start
+  let target = integrated
+  for (let collision = 0; collision < 3; collision += 1) {
+    const hit = sweptHit(from, target, options)
+    if (hit === null) {
+      break
+    }
+    const dx = target.x - from.x
+    const dy = target.y - from.y
+    const dz = target.z - from.z
+    const contact: Body = {
+      ...target,
+      x: from.x + dx * hit.time,
+      y: from.y + dy * hit.time,
+      z: from.z + dz * hit.time,
+    }
+    if (hit.axis === 'x') {
+      target = { ...target, x: contact.x, vx: 0 }
+    } else if (hit.axis === 'y') {
+      target = { ...target, y: contact.y, vy: 0 }
+    } else {
+      target = { ...target, z: contact.z, vz: 0 }
+    }
+    from = contact
+  }
+  return target
+}
+
 /**
  * One step: integrate, THEN resolve. plan.md §3.4's `step(state, world, dt)`.
  *
@@ -466,7 +615,11 @@ export const stepBody = (
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
   gravityY: number = GRAVITY_Y,
-): Resolution => resolveBody(integrateBody(body, deltaTime, gravityY), deltaTime, options)
+): Resolution => {
+  const integrated = integrateBody(body, deltaTime, gravityY)
+  const collisionSafe = body.kind === 'dynamic' ? resolveSweptMotion(body, integrated, options) : integrated
+  return resolveBody(collisionSafe, deltaTime, options)
+}
 
 export const stepWorld = (
   bodies: ReadonlyArray<Body>,
@@ -476,14 +629,14 @@ export const stepWorld = (
 ): ReadonlyArray<Resolution> => bodies.map((body) => stepBody(body, deltaTime, options, gravityY))
 
 /**
- * The speed above which discrete resolution starts to miss things.
+ * The speed above which endpoint-only resolution starts to miss things.
  *
  * A body tunnels when one step carries it clean past an obstacle: its
  * displacement exceeds the obstacle's thickness plus the body's own extent on
  * both sides. Exposed so the guard can be asserted as an inequality between
  * named quantities — the same shape as `maxFallPerStep` in integrate.ts, and
- * for the same reason: tuning either the delta cap or the body size then fails
- * a test instead of silently opening a hole.
+ * for the same reason. `stepBody` now sweeps above the corresponding body-span
+ * threshold; this helper remains useful to callers of `resolveBody` directly.
  */
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number =>
   (blockThickness + 2 * halfExtent) / maxDeltaSecs

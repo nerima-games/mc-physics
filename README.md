@@ -149,9 +149,9 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
   - **軸順序 Y → X → Z**。根拠は実測である。X を先にすると「平地の継ぎ目に引っかかる」と
     「step-up が効かなくなる」の 2 つが壊れる。参照実装が順序テストの題材にしている
     ledge のケースは、本リポジトリでは別の機構が先に効くので順序を区別しない（P-9-1）
-  - **discrete（swept ではない）**。P-5 の delta 上限の論拠がちょうど厳密に成立する形であり、
-    破綻する速度 32 m/s は `maxSpeedWithoutTunnelling` が名前で持っている
-    （ゲームの最速 6.73 m/s の約 4.8 倍）（P-9-2）
+  - **`stepBody` は高速移動を swept AABB で連続判定する**。長い水平・垂直・斜め移動でも
+    最初の solid 面で停止し、残りの軸では滑る。短い移動と終点の重なりは既存の
+    Y → X → Z resolver に渡すため、step-up と接地の挙動は維持される（P-9-2）
   - **参照実装の `MAX_STEP_UP` / `FALL_VELOCITY_THRESHOLD` を両方とも使わない。**
     床の判定は「このステップで実際に落ちた距離」`-vy * dt` で厳密に決まる。
     これが厳密なのは semi-implicit Euler だから（P-4）である（P-9-3）

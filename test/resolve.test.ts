@@ -269,6 +269,121 @@ describe('the axis order is Y, then X, then Z', () => {
   )
 })
 
+describe('continuous collision for high-speed steps', () => {
+  const FAST_DT = clampDeltaTime(MAX_DELTA_SECS)
+
+  it.effect('stops at the first wall crossed, even after crossing several empty voxels', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => by === 0 || (bx === 2 && by === 1 && bz === 0))
+      const fast = standingOn(0, { vx: 100 })
+
+      const stepped = stepBody(fast, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+      expect(stepped.body.y).toBe(fast.y)
+    }),
+  )
+
+  it.effect('does not tunnel through a thin collision shape', () =>
+    Effect.sync(() => {
+      const thin = { minX: 0.45, maxX: 0.55, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 2 && by === 1 && bz === 0 ? thin : null),
+      })
+      const fast = standingOn(0, { vx: 100 })
+
+      const stepped = stepBody(fast, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2.45 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('catches a ceiling crossed by a high-speed vertical launch', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 0 && by === 4 && bz === 0)
+      const rising: Body = { ...standingOn(0), y: 1.5, vy: 100 }
+
+      const stepped = stepBody(rising, FAST_DT, options, 0)
+
+      expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
+      expect(stepped.body.vy).toBe(0)
+    }),
+  )
+
+  it.effect('resolves a diagonal corner deterministically on both horizontal axes', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 2 && by === 1 && bz === 2)
+      const diagonal = standingOn(0, { vx: 100, vz: 100 })
+
+      const first = stepBody(diagonal, FAST_DT, options, 0)
+      const second = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(first).toStrictEqual(second)
+      expect(first.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(first.body.z).toBeCloseTo(2 - HALF_W, 12)
+      expect(first.body.vx).toBe(0)
+      expect(first.body.vz).toBe(0)
+    }),
+  )
+
+  it.effect('selects the earliest hit rather than the first candidate returned by the world', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) =>
+        (bx === 1 && by === 5 && bz === 0) || (bx === 2 && by === 3 && bz === 0),
+      )
+      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 50, vy: 100 }
+
+      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('uses Y before X when two swept faces are reached simultaneously', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) =>
+        (bx === 1 && by === 4 && bz === 0) || (bx === 2 && by === 2 && bz === 0),
+      )
+      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 75, vy: 100 }
+
+      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
+      expect(stepped.body.vy).toBe(0)
+    }),
+  )
+
+  it.effect('blocks motion into an initial contact but permits motion away from it', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
+      const touching = standingOn(0, { x: 1 - HALF_W })
+
+      const inward = stepBody({ ...touching, vx: 100 }, FAST_DT, options, 0)
+      const outward = stepBody({ ...touching, vx: -100 }, FAST_DT, options, 0)
+
+      expect(inward.body.x).toBe(touching.x)
+      expect(inward.body.vx).toBe(0)
+      expect(outward.body.x).toBeCloseTo(touching.x - 5, 12)
+      expect(outward.body.vx).toBe(-100)
+    }),
+  )
+
+  it.effect('does not turn a pre-existing overlap into a trap', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
+      const overlapping = standingOn(0, { x: 1.5, vx: -100 })
+
+      const escaped = stepBody(overlapping, FAST_DT, options, 0)
+
+      expect(escaped.body.x).toBeCloseTo(-3.5, 12)
+      expect(escaped.body.vx).toBe(-100)
+    }),
+  )
+})
+
 // ---------------------------------------------------------------------------
 // THE GROUND CLAMP AND ITS ORDER — physics-resolve-runs-after-integrate (P-3)
 // ---------------------------------------------------------------------------

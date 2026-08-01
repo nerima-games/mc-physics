@@ -630,18 +630,18 @@ Z を X の後にしたことに根拠は無い（対称である）。
 意味があるのは「2 番目のフェーズが 1 番目の補正後の位置に対して走る」ことだけで、
 これは `a body slides along a wall` が固定している（壁に貼りつく症状で落ちる）。
 
-### 9-2 discrete か swept か: **discrete**
+### 9-2 高速移動は swept AABB、短い移動は endpoint 解決
 
-DDA があるので swept も書けるが、採らなかった。理由は**本リポジトリの他の記述との整合**である。
-P-5 は delta 上限 0.05 s を「リゾルバは step 後にボディの箱の中に入った床しか捕まえられない」で
-正当化しており、`TERMINAL_VELOCITY_Y = -32` はそこから導かれている。
-swept にするとこの論拠が「最も厳しい説明」ではなくなり、0.05 の根拠が静かに口伝になる。
+`stepBody` は、いずれかの軸の変位が body の最小 span を超えたとき swept AABB を使う。
+中心線の grid walk を body の extents だけ広げて候補セルを集めるため、探索量は長い斜め移動が作る
+直方体の体積ではなく移動距離に比例する。各ブロックを Minkowski 拡張して segment の最初の
+衝突時刻を求め、同時なら Y → X → Z の順で決定する。衝突軸だけ速度を 0 にし、残りの軸は滑る。
 
-**しかも discrete のこの実装では、P-5 の文言がちょうど厳密に正しい。**
-床候補の条件は `collidesWith`（箱の中にあること）であり、
-落下距離が身長 1.8 を超えると床上面が頭より上に出て候補から外れる。1.8 は身長そのものである。
+短い移動と終点ですでに重なるケースは従来の endpoint resolver に任せる。
+これにより step-up、接地 probe、既存 overlap の扱いを変えずに tunnelling だけを防ぐ。
+開始時に面接触している場合は内向き移動だけを衝突とし、外向き移動は許可する。
 
-discrete の代金は速度上限であり、それを名前にした:
+直接 `resolveBody` を使う endpoint-only 呼び出しの限界は、引き続き名前で表せる:
 
 ```typescript
 export const maxSpeedWithoutTunnelling = (halfExtent, blockThickness, maxDeltaSecs) =>
@@ -649,13 +649,8 @@ export const maxSpeedWithoutTunnelling = (halfExtent, blockThickness, maxDeltaSe
 ```
 
 プレイヤー（halfWidth 0.3）が 1 ブロック厚の壁に対して 0.05 s 上限で **32 m/s**。
-参照実装の最速はスプリントジャンプで `5.612 × 1.2 = 6.73 m/s`
-（`packages/entity/application/movement-service.ts:25-32`）。**約 4.8 倍の余裕**がある。
-テストは数値ではなく不等式を assert するので、delta 上限・体の幅・移動速度のどれを触っても落ちる。
-
-残る代償は discrete が原理的に解けない曖昧さである:
-**速く落下しながら横に壁へ突っ込むと、「壁の上に落ちた」と「壁に走り込んだ」が同じ状態になる**。
-参照実装も同じ穴を持ち、`FALL_VELOCITY_THRESHOLD = 8` で近似している（`aabb-collision.ts:20-33`）。
+この helper は `resolveBody` を直接使うコードの安全域を示す。通常の公開ステップである
+`stepBody` はこの範囲を越える移動も経路上で検出する。
 
 ### 9-3 床の判定は「このステップで実際に落ちた距離」。MAX_STEP_UP は注入する
 
