@@ -8,12 +8,15 @@
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）と `tsconfig.test.json`（テスト・ツール）の両方 |
 | `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`oxlint.json` は 5 カテゴリすべてと個別 67 ルールが `warn`、`error` は 4 つだけ。このフラグが無かった頃は実質その 4 つしかゲートになっていなかった） |
-| `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止 |
-| `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[versioning.md](./versioning.md) §6） |
-| `pnpm api:update` | `api-lock.md` を書き直す |
 | `pnpm test` | vitest。`@effect/vitest` の `it.effect` が主 API |
-| `pnpm test:coverage` | カバレッジ計測（閾値は未設定。§3 参照） |
-| `pnpm verify` | `typecheck` / `lint` / `check:deps` / `api:check` / `test` を直列実行。**CI と同じ内容** |
+| `pnpm test:coverage` | カバレッジ計測。4 指標 99% のしきい値を強制する(§3 参照) |
+| `pnpm verify` | `typecheck` / `lint` / `test` を直列実行。**CI と同じ内容**。カバレッジは別ゲート |
+
+`pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)と `pnpm api:check` / `pnpm api:update`
+(`api-lock.md` + `scripts/api-lock.ts`)は org 標準への移行に伴い全廃された
+(PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts` の廃止」、API_STANDARD.md §4)。
+依存の許可グラフは `oxlint.json` の `no-restricted-imports` が(DEPENDENCY_POLICY.md)、
+破壊的変更の判定は人間のレビュー([versioning.md](./versioning.md) §5-6)がそれぞれ引き継ぐ。
 
 セットアップ:
 
@@ -66,21 +69,22 @@ mc-physics で最も価値が高いのは**座標と AABB の不変条件**で�
 `design-notes.md` の各項目には**回帰テスト名**が振ってあり、ソースのコメントからも
 同じ名前で参照している。テストを消すときは design-notes 側も同時に更新すること。
 
-## 3. カバレッジ閾値は**まだ**有効化していない
+## 3. カバレッジ閾値は有効化済み(org 標準、TEST_STANDARD.md §3)
 
-参照実装は branches / functions / lines / statements すべてに **99%** を強制している。
-本リポジトリは計測とレポートは常に動かしているが、**閾値は設定していない**。
+branches / functions / lines / statements の4指標すべてに **99%** のしきい値を、
+org の即時・全リポジトリ一律ロールアウト方針(TEST_STANDARD.md §3)に従い有効化している。
+猶予期間・段階ロールアウトはない。
 
-理由（`vitest.config.ts` のコメントにも記載）:
-スケルトンに閾値を課しても意味がない。第一版のモジュール数個で自明に満たされてしまい、
-実装の質については何も言わない数字になる。
-
-**99% ゲートは完成条件（§4）に到達した時点で、`vitest.config.ts` と CI の両方で有効化する。**
+`vitest.config.ts`:
 
 ```typescript
-// vitest.config.ts に追加する行
 thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
 ```
+
+org 標準への移行時点の実測: statements 99.41%、branches 99.35%、functions 100%、
+lines 99.41%(`src/domain/dda.ts` の raycast ループ末尾、実質到達不能なフォールバックの
+`Option.none()` 1 行のみ未到達)。4 指標とも 99% を上回っており、この移行時点で
+CI が赤くなる側の3リポジトリ(MIGRATION_RUNBOOK.md 手順7)には含まれない。
 
 ## 4. 完成条件
 
@@ -140,34 +144,26 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 **再び検討すべきなのは軸の順序が変わったときだけである。** そのとき上記テストが落ち、
 この節に導かれる。順序が立っている限り、ここに残作業は無い。
 
-#### (b) sneak-edge（`clampSneakEdge`） —— **未着手。保留の理由は公開面の凍結クロック**
+#### (b) sneak-edge（`clampSneakEdge`） —— **未着手**
 
 `responsibility.md` §3 の表がこれを「機構はここ、値は mc-sim」に分類している。
 **現状 `clampSneakEdge` という識別子はリポジトリに 1 つも無い**ので、
 (a) と違って「テストが書けるか」以前に**テスト対象が無い**。
 
-書けない理由は環境でも設計でもなく、費用である:
+**旧来の判断根拠(現在は無効)**: かつてはここに「独立関数か `ResolveOptions` のフラグかで
+`api-lock.md` への影響が変わり、4 週間の凍結クロックが振り出しに戻る」という費用計算があった。
+`api-lock.md` とその凍結クロック機構は org 標準から全廃されたため(§1 冒頭、API_STANDARD.md §4)、
+この計算はもう成立しない。1.0.0 への昇格は自動クロックではなく maintainer の裁量判断
+(RELEASE_STANDARD.md §4.2)であり、公開面が動くタイミング自体を気にする理由が無くなった。
 
-- 機構をどう足しても公開面が動く。独立関数なら `api-lock.md` に**新規エントリ**が 1 つ、
-  `ResolveOptions` のフラグ（`sneakEdge?: boolean` など）なら**既存エントリの書き換え**になる
-  （現在 50 エントリ、`ResolveOptions` はそのうちの 1 つ）。
-- [versioning.md](./versioning.md) の 4 週間ロックの起点は `git log -1 -- api-lock.md` なので、
-  どちらでもクロックが振り出しに戻る。
-
-**そのうえでコストは今もっとも安い。** 2026-07-28 時点で `api-lock.md` が最後に動いたのは
-**2026-07-27** —— クロックはまだ 1 日しか進んでいない。
-引き直しの実費は「28 日ぶんの進捗」ではなく **1 日**である。
-
-したがってこれは技術判断ではなく**タイミングの決定**であり、
-本文書は決定できる立場に無い。決めるときに必要な情報は 2 つで、どちらも未取得である:
+未着手のまま残っている理由は、費用ではなく**設計が未決である**ことに絞られる:
 
 1. **どちらの形にするか。** 独立関数か `ResolveOptions` のフラグか。
    後者なら `resolveBody` の水平フェーズが sneak 中だけ「支えのある位置」に clamp することになり、
    9-4 の face-span ガードとの相互作用を測る必要がある。
 2. **値の所有者は mc-sim である。** 「しゃがんでいるか」は状態であり、ここには無い。
-   機構だけ先に入れると、既定 `false` の未使用フラグが凍結対象に入る ——
-   mc-kernel の §3-5 が「誰も読まないフィールドを凍結対象 API に入れるのは、
-   凍結を最も安く間違える方法」と呼んでいる形そのものである。
+   機構だけ先に入れると、誰も読まない既定 `false` の未使用フラグが公開面に入る
+   (mc-kernel の docs/versioning.md §3-5 が指摘する、破壊的変更の判定を誤りやすい形そのもの)。
 
 到達時に行うこと:
 
@@ -177,22 +173,25 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 
 ## 5. CI
 
-`.github/workflows/ci.yaml` は `pnpm verify` と同じ内容を job のステップに展開したものである
-（失敗箇所が step 名で分かるようにするため）:
+`.github/workflows/ci.yaml` は `pnpm verify` の3ゲート(typecheck/lint/test)に加え、
+カバレッジと changeset の付け忘れ検出を独立したステップとして job に展開したものである
+（失敗箇所が step 名で分かるようにするため。TEST_STANDARD.md §1・§3）:
 
-1. Checkout
-2. Setup pnpm（`pnpm/action-setup@v4`）
-3. Setup Node.js 22（pnpm キャッシュ有効）
-4. `pnpm install --frozen-lockfile`
+1. Checkout(`actions/checkout`、commit SHA 固定。SUPPLY_CHAIN.md)
+2. Setup pnpm（`pnpm/action-setup`、commit SHA 固定）
+3. Setup Node.js 24（`actions/setup-node`、commit SHA 固定。pnpm キャッシュ有効）
+4. `pnpm install --frozen-lockfile --ignore-scripts`
 5. `pnpm typecheck`
 6. `pnpm lint`
-7. `pnpm check:deps` —— **ハードゲート**。参照実装の `check-package-dag.ts` と違い、
-   違反があれば必ず非ゼロ終了する
-8. `pnpm api:check`（step 名は `API lock`）—— **ハードゲート**。`api-lock.md` が
-   現在の公開 API と食い違えば非ゼロ終了する（[versioning.md](./versioning.md) §6）
-9. `pnpm test`
-10. `pnpm test:coverage`（閾値なし。§3）
-11. カバレッジレポートを artifact に upload（7 日保持）
+7. `pnpm test`
+8. `pnpm changeset status --since=main` —— ユーザー向け変更に changeset の付け忘れがないか検出する
+   (RELEASE_STANDARD.md §1.2)
+9. `pnpm test:coverage` —— **ハードゲート**。4 指標 99% のしきい値を下回れば非ゼロ終了する（§3）
+10. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定。7 日保持）
+
+`pnpm check:deps` と `pnpm api:check` の2ステップは、それぞれの裏付けとなる
+`scripts/check-dependency-whitelist.ts` と `api-lock.md` / `scripts/api-lock.ts` が
+org 標準への移行で全廃されたため、CI から削除済みである。
 
 ## 6. 現時点のテスト一覧
 
@@ -207,7 +206,11 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 > ——要求しても意味が無かったからである（[design-notes.md](./design-notes.md) P-5、
 > [public-api.md](./public-api.md) §2-1）。代わりに、ブランドが**何を通すか**と
 > クランプが**何を返すか**を別々のテストが主張している。
-| `test/check-dependency-whitelist.test.ts` | 16 リポジトリ roster の完全性、非循環、体験モジュール間エッジ 0、kit の devDependency 専用性、推移閉包の拒否、`Date.now()` 禁止、import 抽出 |
+
+`test/check-dependency-whitelist.test.ts`(16 リポジトリ roster の完全性・非循環・推移閉包の拒否
+などを検査していたテスト)は、裏付けの `scripts/check-dependency-whitelist.ts` が org 標準への
+移行で全廃されたため、同時に削除した。代替は `oxlint.json` の `no-restricted-imports`
+(DEPENDENCY_POLICY.md)で、これはテストコードではなく lint 設定なのでこの一覧には現れない。
 
 ## 7. リゾルバのテストは mutation で確かめてある
 

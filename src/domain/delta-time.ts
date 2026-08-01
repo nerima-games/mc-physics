@@ -116,8 +116,10 @@ export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
  * seconds. `previousSecs === undefined` means "first frame".
  *
  * Takes readings rather than reading a clock: `Date.now()` and
- * `performance.now()` are banned repository-wide and `pnpm check:deps` enforces
- * it. Time is injected, so a replay produces the same simulation.
+ * `performance.now()` are banned repository-wide as a matter of policy (see
+ * docs/responsibility.md §3.2; there is currently no automated check for this
+ * ban — `pnpm check:deps`, which used to enforce it, was removed org-wide).
+ * Time is injected, so a replay produces the same simulation.
  */
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs =>
   previousSecs === undefined

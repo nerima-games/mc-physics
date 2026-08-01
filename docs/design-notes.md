@@ -583,8 +583,10 @@ TypeScript には区別できないので、これは**強制ではなく文書�
 
 ### 回帰テスト
 
-型レベルで保証される（`domain/` のどこにもブロック ID の語彙が無い）。
-`pnpm check:deps` が mc-kernel 以外の import を禁じているのも間接的な保証である。
+型レベルで保証される（`src/domain/` のどこにもブロック ID の語彙が無い）。
+`oxlint.json` の `no-restricted-imports`(mc-kernel 以外の `@nerima-games/*` import を禁じる、
+DEPENDENCY_POLICY.md)も間接的な保証である。かつては `pnpm check:deps` が同じ役割を担っていたが、
+このスクリプトは org 標準への移行で全廃された。
 
 `test/resolve.test.ts`（本項が要求していたテスト）:
 

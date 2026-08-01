@@ -29,9 +29,9 @@ import {
   isRestingOn,
   penetrationY,
   standingPlaneAbove,
-} from '../domain/coordinates'
-import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../domain/delta-time'
-import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody, maxFallPerStep, type Body } from '../domain/integrate'
+} from '../src/domain/coordinates'
+import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../src/domain/delta-time'
+import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
 import {
   maxSpeedWithoutTunnelling,
   resolveBody,
@@ -40,7 +40,7 @@ import {
   stepWorld,
   type IsBlockSolid,
   type ResolveOptions,
-} from '../domain/resolve'
+} from '../src/domain/resolve'
 
 const HALF_W = PLAYER_HALF_WIDTH
 const HALF_H = PLAYER_HALF_HEIGHT

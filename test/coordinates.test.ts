@@ -31,7 +31,7 @@ import {
   isRestingOn,
   penetrationY,
   standingPlaneAbove,
-} from '../domain/coordinates'
+} from '../src/domain/coordinates'
 
 const arbitraryY = FastCheck.double({ min: -1024, max: 1024, noNaN: true, noDefaultInfinity: true })
 const arbitraryHalfHeight = FastCheck.double({

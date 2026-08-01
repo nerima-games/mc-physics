@@ -92,11 +92,8 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
 | `pnpm lint:fix` | oxlint の自動修正 |
 | `pnpm test` | vitest（`@effect/vitest` の `it.effect` が主 API） |
 | `pnpm test:watch` | vitest watch |
-| `pnpm test:coverage` | カバレッジ計測（閾値は未設定。後述） |
-| `pnpm check:deps` | 依存ホワイトリスト + 循環検査 + `Date.now()` 禁止の検査 |
-| `pnpm api:check` | `api-lock.md` が実際の公開 API と食い違えば非ゼロ終了（[`docs/versioning.md`](./docs/versioning.md) §6） |
-| `pnpm api:update` | `api-lock.md` を書き直す。公開面を変える PR は結果を同じ PR に含める |
-| `pnpm verify` | `typecheck && lint && check:deps && api:check && test`。CI と同じ内容 |
+| `pnpm test:coverage` | カバレッジ計測。4 指標(statements/branches/functions/lines)とも 99% のしきい値を強制する(後述) |
+| `pnpm verify` | `typecheck && lint && test`。CI と同じ内容。カバレッジは別ゲート(`pnpm test:coverage`)として実行し、`verify` には含めない |
 
 ## 使い方
 
@@ -128,8 +125,12 @@ const { body: next, isGrounded } = stepBody(body, dt, {
 const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 ```
 
-**時刻は読まない。** `Date.now()` / `new Date()` / `performance.now()` は
-リポジトリ全体で禁止され、`pnpm check:deps` が強制する。
+**時刻は読まない。** `Date.now()` / `new Date()` / `performance.now()` は方針として
+このリポジトリ全体で禁止する。かつては `pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)
+が機械的に検出していたが、そのスクリプトは org 標準から全廃された
+(PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts` の廃止」)。
+現時点でこの禁止を自動検出する仕組みはなく、レビューで担保する
+(oxlint がこの種のチェックを実装した時点で `oxlint.json` に移す予定。同ファイルの先頭コメント参照)。
 `deltaTimeBetween` はクロックではなく**読み取り値**を受け取る。
 
 ## 現状
@@ -143,7 +144,7 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
   狭いブランドが買っていたのは安全ではなく偽の保証だった。
   クランプは `clampDeltaTime` として境界に残り、`isClampedDelta` が不変条件を assert 可能にしている
   （[`docs/design-notes.md`](./docs/design-notes.md) P-5、[`docs/public-api.md`](./docs/public-api.md) §2-1）。
-- **AABB 衝突リゾルバは実装済み**（`domain/resolve.ts`）。判断とその根拠は
+- **AABB 衝突リゾルバは実装済み**（`src/domain/resolve.ts`）。判断とその根拠は
   [`docs/design-notes.md`](./docs/design-notes.md) P-9 にある。要点:
   - **軸順序 Y → X → Z**。根拠は実測である。X を先にすると「平地の継ぎ目に引っかかる」と
     「step-up が効かなくなる」の 2 つが壊れる。参照実装が順序テストの題材にしている
@@ -183,8 +184,10 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
   参照実装にはサボテン・感圧板の形状もある。
 - **ビルド／publish はまだない。** `exports` は TypeScript ソースを直接指している。
   `version` は mc-sim が実際に消費して契約を確認するまで `0.x` に留める。
-- **カバレッジ閾値は未設定。** 参照実装は 99% を強制しているが、スケルトンに閾値を課しても意味がない。
-  計測とレポートは常に動かしており、99% ゲートは完成条件到達時に有効化する。
+- **カバレッジ閾値は有効化済み。** 4 指標(statements/branches/functions/lines)すべてで 99%
+  (TEST_STANDARD.md §3、org 全体の即時ロールアウト方針)。org 標準への移行時点の実測は
+  statements 99.41%・branches 99.35%・functions 100%・lines 99.41%
+  (`src/domain/dda.ts` の到達しにくいフォールバック分岐 1 本のみ未到達)。
 
 ## License
 
