@@ -90,8 +90,10 @@ mc-physics は boolean と形状しか見ない。能力フラグを解決する
 
 ### 3.2 時刻を読まない
 
-`Date.now()` / `new Date()` / `performance.now()` はリポジトリ全体で禁止され、
-`pnpm check:deps` が強制する。したがって:
+`Date.now()` / `new Date()` / `performance.now()` はリポジトリ全体で禁止という方針である。
+かつては `pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)が機械的に強制していたが、
+このスクリプトは org 標準への移行で全廃された(PACKAGE_STANDARD.md)。現時点でこの禁止を
+自動検出する仕組みはなく、レビューで担保する。したがって:
 
 ```typescript
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs

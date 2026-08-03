@@ -11,8 +11,8 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck, Option } from 'effect'
-import { PLAYER_HALF_HEIGHT, vec3 } from '../domain/coordinates'
-import { voxelRaycast } from '../domain/dda'
+import { PLAYER_HALF_HEIGHT, vec3 } from '../src/domain/coordinates'
+import { voxelRaycast } from '../src/domain/dda'
 import {
   DeltaTimeSecs,
   FIRST_FRAME_DELTA_SECS,
@@ -21,8 +21,8 @@ import {
   clampDeltaTime,
   deltaTimeBetween,
   isClampedDelta,
-} from '../domain/delta-time'
-import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrate, integrateBody, maxFallPerStep, type Body } from '../domain/integrate'
+} from '../src/domain/delta-time'
+import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrate, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
 
 const dynamicBody = (over: Partial<Body> = {}): Body => ({
   kind: 'dynamic',

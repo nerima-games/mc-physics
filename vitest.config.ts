@@ -28,25 +28,19 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       enabled: false,
-      include: ['index.ts', 'domain/**/*.ts'],
+      include: ['src/index.ts', 'src/domain/**/*.ts'],
       exclude: ['**/*.d.ts', '**/*.config.ts', '**/*.test.ts', '**/*.spec.ts'],
       all: true,
       reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
-      // NO THRESHOLD YET — deliberate.
-      //
-      // The reference repository (takeokunn/ts-minecraft) enforces 99% on
-      // branches/functions/lines/statements. A threshold on a skeleton would be
-      // meaningless: it would be trivially satisfied by a first-cut module and
-      // would say nothing about the real implementation.
-      //
-      // See docs/testing.md for the completion criteria this gate is tied to.
-      //
-      // Coverage is collected and reported (`pnpm test:coverage`) so the number
-      // is always visible. The 99% gate is turned on — here and in the CI
-      // workflow — when this repository reaches its completion criteria.
-      //
-      //   thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
+      // Org-wide gate (TEST_STANDARD.md §3): 99% on all four v8 metrics,
+      // enabled immediately and unconditionally, no staged rollout. Measured
+      // at rollout time (this migration): statements 99.41%, branches 99.35%,
+      // functions 100%, lines 99.41% (src/domain/dda.ts:161 is the sole
+      // uncovered line, an unreachable-in-practice fallback `Option.none()`
+      // after the raycast step loop). All four metrics already clear 99%, so
+      // this repository is not one of the known-red repositories at rollout.
+      thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
     },
   },
   esbuild: {

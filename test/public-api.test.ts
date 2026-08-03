@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
-import * as physics from '../index'
+import * as physics from '../src/index'
 
 describe('public API surface', () => {
   it.effect('re-exports every value mc-sim is expected to import', () =>
