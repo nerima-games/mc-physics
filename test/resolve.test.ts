@@ -15,11 +15,13 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck } from 'effect'
 import {
+  CACTUS_SHAPE,
   CONTACT_EPSILON,
   CentreY,
   HalfHeight,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
+  PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
   blockAABB,
   centreOfFoot,
@@ -33,6 +35,7 @@ import {
 import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../src/domain/delta-time'
 import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
 import {
+  clampSneakEdge,
   maxSpeedWithoutTunnelling,
   resolveBody,
   resolveWorld,
@@ -105,6 +108,122 @@ const penetratesSomething = (body: Body, options: ResolveOptions): boolean => {
 /** Kinetic plus gravitational potential energy, per unit mass. */
 const energyOf = (body: Body): number =>
   0.5 * (body.vx * body.vx + body.vy * body.vy + body.vz * body.vz) + Math.abs(GRAVITY_Y) * body.y
+
+describe('sneak edge prevention', () => {
+  const insideSupport = 0.75
+  const outsideSupport = 1.25
+  const supportLimit = 1
+  const supported = (positionX: number, positionZ: number): boolean =>
+    positionX <= supportLimit && positionZ <= supportLimit
+
+  it.effect('keeps movement on supported ground unchanged', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: insideSupport, z: supportLimit },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: supportLimit,
+      })
+    }),
+  )
+
+  it.effect('clamps only the axis that would cross an unsupported edge', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: outsideSupport, z: supportLimit },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: supportLimit,
+      })
+    }),
+  )
+
+  it.effect('clamps both axes when each independent move loses support', () =>
+    Effect.sync(() => {
+      expect(
+        clampSneakEdge(
+          { x: insideSupport, z: insideSupport },
+          { x: outsideSupport, z: outsideSupport },
+          supported,
+        ),
+      ).toStrictEqual({
+        x: insideSupport,
+        z: insideSupport,
+      })
+    }),
+  )
+
+  it.effect('does not query support for an axis that did not move', () =>
+    Effect.sync(() => {
+      const queries: Array<readonly [number, number]> = []
+      const result = clampSneakEdge(
+        { x: insideSupport, z: insideSupport },
+        { x: insideSupport, z: supportLimit },
+        (positionX, positionZ) => {
+          queries.push([positionX, positionZ])
+          return true
+        },
+      )
+
+      expect(result).toStrictEqual({ x: insideSupport, z: supportLimit })
+      expect(queries).toStrictEqual([[insideSupport, supportLimit]])
+    }),
+  )
+})
+
+describe('standard non-cubic block shapes', () => {
+  it.effect('lands on the pressure plate top face rather than the cell top', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 0 && by === 0 && bz === 0 ? PRESSURE_PLATE_SHAPE : null),
+      })
+      const falling: Body = { ...standingOn(0), y: Number(HALF_H) + 1 / 16 + 0.01, vy: -1 }
+
+      const stepped = stepBody(falling, DT, options, 0)
+
+      expect(stepped.body.y).toBe(Number(HALF_H) + 1 / 16)
+      expect(stepped.body.vy).toBe(0)
+      expect(stepped.isGrounded).toBe(true)
+    }),
+  )
+
+  it.effect('allows movement before the cactus inset and clamps exactly at it', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
+      })
+      const before: Body = { ...standingOn(0), x: 0.74, y: 1.5, vx: 1 }
+      const crossing: Body = { ...before, x: 0.75 }
+
+      const unobstructed = stepBody(before, DT, options, 0)
+      const blocked = stepBody(crossing, DT, options, 0)
+
+      expect(unobstructed.body.x).toBe(0.74 + DT)
+      expect(unobstructed.body.vx).toBe(1)
+      expect(blocked.body.x).toBe(1 + 1 / 16 - HALF_W)
+      expect(blocked.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('resolves the same shaped-block input deterministically', () =>
+    Effect.sync(() => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
+      })
+      const body: Body = { ...standingOn(0), x: 0.75, y: 1.5, vx: 1 }
+
+      expect(stepBody(body, DT, options, 0)).toStrictEqual(stepBody(body, DT, options, 0))
+    }),
+  )
+})
 
 // ---------------------------------------------------------------------------
 // AXIS ORDER — physics-resolve-y-before-x
@@ -265,6 +384,121 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.vx).toBe(0)
       expect(stepped.body.vz).toBe(0)
       expect(stepped.isGrounded).toBe(true)
+    }),
+  )
+})
+
+describe('continuous collision for high-speed steps', () => {
+  const FAST_DT = clampDeltaTime(MAX_DELTA_SECS)
+
+  it.effect('stops at the first wall crossed, even after crossing several empty voxels', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => by === 0 || (bx === 2 && by === 1 && bz === 0))
+      const fast = standingOn(0, { vx: 100 })
+
+      const stepped = stepBody(fast, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+      expect(stepped.body.y).toBe(fast.y)
+    }),
+  )
+
+  it.effect('does not tunnel through a thin collision shape', () =>
+    Effect.sync(() => {
+      const thin = { minX: 0.45, maxX: 0.55, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 2 && by === 1 && bz === 0 ? thin : null),
+      })
+      const fast = standingOn(0, { vx: 100 })
+
+      const stepped = stepBody(fast, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2.45 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('catches a ceiling crossed by a high-speed vertical launch', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 0 && by === 4 && bz === 0)
+      const rising: Body = { ...standingOn(0), y: 1.5, vy: 100 }
+
+      const stepped = stepBody(rising, FAST_DT, options, 0)
+
+      expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
+      expect(stepped.body.vy).toBe(0)
+    }),
+  )
+
+  it.effect('resolves a diagonal corner deterministically on both horizontal axes', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 2 && by === 1 && bz === 2)
+      const diagonal = standingOn(0, { vx: 100, vz: 100 })
+
+      const first = stepBody(diagonal, FAST_DT, options, 0)
+      const second = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(first).toStrictEqual(second)
+      expect(first.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(first.body.z).toBeCloseTo(2 - HALF_W, 12)
+      expect(first.body.vx).toBe(0)
+      expect(first.body.vz).toBe(0)
+    }),
+  )
+
+  it.effect('selects the earliest hit rather than the first candidate returned by the world', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) =>
+        (bx === 1 && by === 5 && bz === 0) || (bx === 2 && by === 3 && bz === 0),
+      )
+      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 50, vy: 100 }
+
+      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+    }),
+  )
+
+  it.effect('uses Y before X when two swept faces are reached simultaneously', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) =>
+        (bx === 1 && by === 4 && bz === 0) || (bx === 2 && by === 2 && bz === 0),
+      )
+      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 75, vy: 100 }
+
+      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
+      expect(stepped.body.vy).toBe(0)
+    }),
+  )
+
+  it.effect('blocks motion into an initial contact but permits motion away from it', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
+      const touching = standingOn(0, { x: 1 - HALF_W })
+
+      const inward = stepBody({ ...touching, vx: 100 }, FAST_DT, options, 0)
+      const outward = stepBody({ ...touching, vx: -100 }, FAST_DT, options, 0)
+
+      expect(inward.body.x).toBe(touching.x)
+      expect(inward.body.vx).toBe(0)
+      expect(outward.body.x).toBeCloseTo(touching.x - 5, 12)
+      expect(outward.body.vx).toBe(-100)
+    }),
+  )
+
+  it.effect('does not turn a pre-existing overlap into a trap', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
+      const overlapping = standingOn(0, { x: 1.5, vx: -100 })
+
+      const escaped = stepBody(overlapping, FAST_DT, options, 0)
+
+      expect(escaped.body.x).toBeCloseTo(-3.5, 12)
+      expect(escaped.body.vx).toBe(-100)
     }),
   )
 })

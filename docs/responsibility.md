@@ -42,7 +42,7 @@
 | クロック（時刻の取得） | mc-kernel（Clock Port）+ 呼び出し側 | `deltaTimeBetween` は**読み取り値**を受け取る。§3.2 |
 | 落下ブロック（砂・砂利）のルール | mx-gameplay | plan.md §3.11。イベント駆動であることも含めて gameplay の責務 |
 | 流体伝播 | mx-gameplay | plan.md §3.11 |
-| step-up / sneak-edge の**ゲーム的な値** | mc-sim | 高さ 0.6 などのチューニング値。リゾルバの機構はここ。**実装済み**: `ResolveOptions.stepHeight`（既定 0）。参照実装の `MAX_STEP_UP = 0.6` に相当するが定数ではなく引数である。エネルギーを増やす唯一の経路でもあるため既定は「step-up 無し」（`design-notes.md` P-9-3） |
+| step-up / sneak-edge の**ゲーム的な値** | mc-sim | 高さ 0.6 や足場探索深度などのチューニング値。機構はここ。**実装済み**: `ResolveOptions.stepHeight`（既定 0）と `clampSneakEdge`（足場判定 callback を注入）。参照実装の定数は持ち込まない |
 | 乗り物（ボート / トロッコ）の物理 | mx-gameplay | plan.md §3.11 |
 | 外部物理ライブラリ | 使わない | plan.md §3.4 が明示 |
 | Mob 用の「未ロード = solid」規約 | mc-sim | §3.3 |

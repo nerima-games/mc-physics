@@ -72,6 +72,9 @@ mc-physics で最も価値が高いのは**座標と AABB の不変条件**で�
 ## 3. カバレッジ閾値は有効化済み(org 標準、TEST_STANDARD.md §3)
 
 branches / functions / lines / statements の4指標すべてに **99%** のしきい値を、
+voxel raycastはunit cube互換経路に加え、slab/cactus/pressure plateの実形状、空隙通過、
+6面、実形状面でのmaxDistance、反復決定性を固定している。
+
 org の即時・全リポジトリ一律ロールアウト方針(TEST_STANDARD.md §3)に従い有効化している。
 猶予期間・段階ロールアウトはない。
 
@@ -112,8 +115,9 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
     本リポジトリでは別の機構（face-span ガード）が先に効くため順序を区別しない
   - `CONTACT_EPSILON` 以内のめり込みは「接地」として何もしない。
     **epsilon は述語（`collidesWith`）にあり、リゾルバが書く位置には 1 ulp も足さない**
-  - discrete（swept ではない）。破綻する速度は `maxSpeedWithoutTunnelling` が名前で持っており、
-    ゲームの最速の約 4.8 倍離れていることをテストが不等式で押さえている（P-9-2）
+  - `stepBody` は body span を超える変位を swept AABB で連続判定する。
+    高速な水平・垂直・斜め移動、薄い collision shape、接触状態からの内向き／外向き移動、
+    既存のめり込みからの離脱を回帰テストで固定している（P-9-2）
 - **`isBlockSolid` を能力フラグ経由にする** —— mc-kernel が publish されてから。
   現状は `IsBlockSolid` / `BlockShapeAt` として**注入**されており、
   `domain/` にブロック ID の語彙は 1 つも無い。repoint は mc-sim 側の 1 行になる（P-8）
@@ -144,26 +148,15 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 **再び検討すべきなのは軸の順序が変わったときだけである。** そのとき上記テストが落ち、
 この節に導かれる。順序が立っている限り、ここに残作業は無い。
 
-#### (b) sneak-edge（`clampSneakEdge`） —— **未着手**
+#### (b) sneak-edge（`clampSneakEdge`） —— **実装済み**
 
-`responsibility.md` §3 の表がこれを「機構はここ、値は mc-sim」に分類している。
-**現状 `clampSneakEdge` という識別子はリポジトリに 1 つも無い**ので、
-(a) と違って「テストが書けるか」以前に**テスト対象が無い**。
+`responsibility.md` §3 の表どおり、機構を独立した純関数として実装した。
+`test/resolve.test.ts` は平地で不変、片軸だけの clamp、両軸の clamp、停止軸では
+足場 query を行わないことを固定している。スニーク状態と足場探索深度は mc-sim が所有する。
 
-**旧来の判断根拠(現在は無効)**: かつてはここに「独立関数か `ResolveOptions` のフラグかで
-`api-lock.md` への影響が変わり、4 週間の凍結クロックが振り出しに戻る」という費用計算があった。
-`api-lock.md` とその凍結クロック機構は org 標準から全廃されたため(§1 冒頭、API_STANDARD.md §4)、
-この計算はもう成立しない。1.0.0 への昇格は自動クロックではなく maintainer の裁量判断
-(RELEASE_STANDARD.md §4.2)であり、公開面が動くタイミング自体を気にする理由が無くなった。
-
-未着手のまま残っている理由は、費用ではなく**設計が未決である**ことに絞られる:
-
-1. **どちらの形にするか。** 独立関数か `ResolveOptions` のフラグか。
-   後者なら `resolveBody` の水平フェーズが sneak 中だけ「支えのある位置」に clamp することになり、
-   9-4 の face-span ガードとの相互作用を測る必要がある。
-2. **値の所有者は mc-sim である。** 「しゃがんでいるか」は状態であり、ここには無い。
-   機構だけ先に入れると、誰も読まない既定 `false` の未使用フラグが公開面に入る
-   (mc-kernel の docs/versioning.md §3-5 が指摘する、破壊的変更の判定を誤りやすい形そのもの)。
+`ResolveOptions` のフラグにしなかったのは、スニーク状態を物理機構へ持ち込まず、通常の
+`resolveBody` / `stepBody` の結果を変えないためである。呼び出し側は grounded かつ sneaking の
+ときだけ適用し、`hasGroundSupport` callback 内でゲーム値の探索深度を使う。
 
 到達時に行うこと:
 

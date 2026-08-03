@@ -173,6 +173,8 @@ export const entityAABB = (x: number, centreY: CentreY, z: number, halfWidth: nu
 export const blockAABB = (bx: number, by: number, bz: number, shape?: AABB): AABB
 export const FULL_BLOCK_SHAPE: AABB
 export const SLAB_SHAPE: AABB
+export const PRESSURE_PLATE_SHAPE: AABB
+export const CACTUS_SHAPE: AABB
 
 export const intersects = (a: AABB, b: AABB): boolean
 export const penetrationY = (a: AABB, b: AABB): number
@@ -306,14 +308,16 @@ export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: nu
 ```
 
 **`stepBody` が plan.md §3.4 の `step(state, world, dt)` である。**
-中身は `resolveBody(integrateBody(body, dt), dt, options)` の 1 行でしかないが、
-その 1 行が P-3 の順序であり、名前が付いていることで逆順が diff に現れる。
+中身は「積分 → 必要なら swept AABB → endpoint 解決」である。
+高速移動は経路上の最初の面で止まり、短い移動と終点の重なりは既存の Y → X → Z 解決へ渡す。
+名前が付いていることで P-3 の順序と連続判定の欠落が diff に現れる。
 
 参照実装との差分（詳細は `design-notes.md` P-9）:
 
 | 項目 | 参照実装 | 本リポジトリ |
 | --- | --- | --- |
 | 軸順序 | Y → X → Z | 同じ。ただし**根拠は実測**（P-9-1） |
+| 高速移動 | endpoint のみ | `stepBody` が swept AABB で最初の衝突を解決し、残りの軸を滑らせる（P-9-2） |
 | 床とみなす条件 | `MAX_STEP_UP = 0.6` **または** `|vy| >= 8` **または** 中心セル直下 | `-vy * dt`（このステップの実変位）**＋注入された `stepHeight`**。定数なし |
 | 水平フェーズ | X と Z を別々に書き下し（約 100 行の重複） | `clampAxis` 1 つを両軸で共有 |
 | 面の採用条件 | `face >= x - halfW && face < x + halfW` | 同じ（face-span ガード）。**同時に補正量の上限でもある**（P-9-4） |
@@ -349,10 +353,17 @@ export type VoxelHit = {
   readonly point: Vec3
 }
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
+export type RaycastShapeAt = (bx: number, by: number, bz: number) => AABB | null
 export const voxelRaycast = (
   origin: Vec3, direction: Vec3, maxDistance: number, isTargetable: IsTargetable,
+  shapeAt?: RaycastShapeAt,
 ): Option.Option<VoxelHit>
 ```
+
+第5引数を省略した既存呼び出しは従来どおりtargetable cell全体をunit cubeとして扱う。
+指定時はDDAで候補cellを列挙した後、cell-local AABBとのslab intersectionで実際の面を求める。
+空隙を通った場合は次のcellへ進む。`null` はfull cubeであり、targetableかどうかは第4引数だけが決める。
+shapeは有限・正体積かつunit cell内でなければならず、不正値はhitにせず無視する。
 
 ### 参照実装への訂正 2 点
 
@@ -380,9 +391,9 @@ export const voxelRaycast = (
 | --- | --- | --- | --- |
 | ~~**AABB 衝突リゾルバ本体**~~ | `packages/game/domain/aabb-collision.ts` | 361 | **実装済み**（`domain/resolve.ts`）。§3-2 |
 | `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | **移植しない（今は）**。純粋版が定義であり、in-place 版はベンチマークができてから。`integrate.ts` と同じ方針 |
-| `clampSneakEdge` | `aabb-collision.ts:352-360` | — | 未着手。機構はここ・値は mc-sim（`responsibility.md` §3） |
+| `clampSneakEdge` | `aabb-collision.ts:352-360` | — | **実装済み**。X/Z を独立に clamp して edge 沿いの移動を保つ。スニーク状態と足場探索深度は mc-sim（`responsibility.md` §3） |
 | step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | 未着手。Y フェーズの reach 上限だけで slab への step-up は成立するので、再実行が要るケースを再現するテストが書けてから（`testing.md` §4） |
-| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `FULL_BLOCK_SHAPE` / `SLAB_SHAPE` のみ。任意形状は `BlockShapeAt` で注入できるので、定数を持つかどうかだけの話になった |
+| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `CACTUS_SHAPE` / `PRESSURE_PLATE_SHAPE` として移植済み。ID との対応付けは `BlockShapeAt` を実装する呼び出し側の責務 |
 | ~~step-up（`MAX_STEP_UP = 0.6`）~~ | `aabb-collision.ts:32` | — | **定数としては移植しない**。`ResolveOptions.stepHeight`（既定 0）として注入する |
 | プレイヤー物理の高レベル層 | `player-physics.ts` | 310 | mc-sim 寄り。切り分け要検討 |
 | `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。能力フラグに置き換える（`responsibility.md` §3.1） |

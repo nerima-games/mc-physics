@@ -11,7 +11,14 @@
  */
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck, Option } from 'effect'
-import { PLAYER_HALF_HEIGHT, vec3 } from '../src/domain/coordinates'
+import {
+  CACTUS_SHAPE,
+  PLAYER_HALF_HEIGHT,
+  PRESSURE_PLATE_SHAPE,
+  SLAB_SHAPE,
+  type AABB,
+  vec3,
+} from '../src/domain/coordinates'
 import { voxelRaycast } from '../src/domain/dda'
 import {
   DeltaTimeSecs,
@@ -236,9 +243,103 @@ describe('voxel DDA', () => {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([3, 0, 0])
         // Entered through the -X face, so the normal points back at the ray.
         expect(hit.value.normal).toStrictEqual({ x: -1, y: 0, z: 0 })
+        expect(hit.value.face).toBe('west')
         expect(hit.value.distance).toBeCloseTo(2.5, 10)
         expect(hit.value.point.x).toBeCloseTo(3, 10)
       }
+    }),
+  )
+
+  it.effect('uses the canonical block face for every traversal direction', () =>
+    Effect.sync(() => {
+      const cases = [
+        { direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+      ] as const
+
+      for (const testCase of cases) {
+        const hit = voxelRaycast(vec3(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) {
+          expect(hit.value.face).toBe(testCase.face)
+        }
+      }
+    }),
+  )
+
+  it.effect('continues through the empty part of a non-cubic targetable cell', () =>
+    Effect.sync(() => {
+      const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
+      const shapeAt = (bx: number) => (bx === 1 ? SLAB_SHAPE : null)
+      const hit = voxelRaycast(vec3(0.5, 0.75, 0.5), vec3(1, 0, 0), 4, targetable, shapeAt)
+      expect(Option.isSome(hit)).toBe(true)
+      if (Option.isSome(hit)) {
+        expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([2, 0, 0])
+        expect(hit.value.distance).toBeCloseTo(1.5, 12)
+      }
+    }),
+  )
+
+  it.effect('hits slab, cactus and pressure-plate geometry at their actual surface', () =>
+    Effect.sync(() => {
+      const cases = [
+        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: SLAB_SHAPE, distance: 0.5 },
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), shape: CACTUS_SHAPE, distance: 1 + 1 / 16 },
+        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: PRESSURE_PLATE_SHAPE, distance: 15 / 16 },
+      ] as const
+      for (const testCase of cases) {
+        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt([1, 0, 0]), () => testCase.shape)
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) expect(hit.value.distance).toBeCloseTo(testCase.distance, 12)
+      }
+    }),
+  )
+
+  it.effect('reports all six faces from the shape narrow phase', () =>
+    Effect.sync(() => {
+      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
+      const cases = [
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { origin: vec3(0, 0.5, 0.5), direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+      ] as const
+      for (const testCase of cases) {
+        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt(testCase.target), () => shape)
+        expect(Option.isSome(hit)).toBe(true)
+        if (Option.isSome(hit)) expect(hit.value.face).toBe(testCase.face)
+      }
+    }),
+  )
+
+  it.effect('applies maxDistance to the shape surface and stays deterministic', () =>
+    Effect.sync(() => {
+      const ray = () => voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      expect(Option.isNone(ray())).toBe(true)
+      const first = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const second = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      expect(first).toStrictEqual(second)
+    }),
+  )
+
+  it.effect('treats an invalid out-of-cell shape as a miss', () =>
+    Effect.sync(() => {
+      const invalid: AABB = { minX: -1, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
+      expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
+    }),
+  )
+
+  it.effect('rejects a diagonal ray whose per-axis shape intervals do not overlap', () =>
+    Effect.sync(() => {
+      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
+      const hit = voxelRaycast(vec3(0, 0.9, 0.5), vec3(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
+      expect(Option.isNone(hit)).toBe(true)
     }),
   )
 
@@ -307,18 +408,21 @@ describe('voxel DDA', () => {
       direction: vec3(-1, 0, 0),
       cellAfter: (crossings: number) => [-crossings, 0, 0] as const,
       normal: { x: 1, y: 0, z: 0 },
+      face: 'east',
       entryPoint: { x: -2, y: OFF_CENTRE, z: OFF_CENTRE },
     },
     {
       direction: vec3(0, -1, 0),
       cellAfter: (crossings: number) => [0, -crossings, 0] as const,
       normal: { x: 0, y: 1, z: 0 },
+      face: 'up',
       entryPoint: { x: OFF_CENTRE, y: -2, z: OFF_CENTRE },
     },
     {
       direction: vec3(0, 0, -1),
       cellAfter: (crossings: number) => [0, 0, -crossings] as const,
       normal: { x: 0, y: 0, z: 1 },
+      face: 'south',
       entryPoint: { x: OFF_CENTRE, y: OFF_CENTRE, z: -2 },
     },
   ] as const
@@ -354,6 +458,7 @@ describe('voxel DDA', () => {
           expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([...target])
           // Points BACK at the ray, so it is the positive unit vector here.
           expect(hit.value.normal).toStrictEqual(axis.normal)
+          expect(hit.value.face).toBe(axis.face)
           // 0.75 to leave the origin cell, then two whole cells. Reading 2.25
           // here means the positive-direction formula is being used: the ray
           // would be measuring its distance to the boundary it is moving AWAY
@@ -414,6 +519,7 @@ describe('voxel DDA', () => {
         // the other two, which changes WHICH face the hit is attributed to —
         // and the face normal is what decides where a placed block goes.
         expect(hit.value.normal).toStrictEqual({ x: 0, y: 0, z: 1 })
+        expect(hit.value.face).toBe('south')
         // 1.75 cells along each axis, i.e. 1.75 * sqrt(3) along a unit diagonal.
         expect(hit.value.distance).toBeCloseTo((OFF_CENTRE + 1) * Math.sqrt(3), 12)
         expect(hit.value.point.x).toBeCloseTo(-1, 12)

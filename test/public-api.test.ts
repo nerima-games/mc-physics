@@ -53,6 +53,7 @@ describe('public API surface', () => {
         'stepBody',
         'stepWorld',
         'maxSpeedWithoutTunnelling',
+        'clampSneakEdge',
         // dda
         'voxelRaycast',
       ]

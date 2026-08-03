@@ -84,7 +84,7 @@ plan.md の 1,453 も、参照実装自身の
 
 | ファイル | LOC | 扱い |
 | --- | --- | --- |
-| `packages/world/domain/voxel-raycast.ts` | 89 | **移植済み**（`domain/dda.ts`）。名前に physics/aabb/collision を含まないのでフィルタから漏れる |
+| `packages/world/domain/voxel-raycast.ts` | 89 | **移植済み**（`domain/dda.ts`）。名前に physics/aabb/collision を含まないのでフィルタから漏れる。任意のshape narrow phaseを追加し、非立方blockの空隙も正しく通過する |
 | `packages/core/domain/physics.ts` | 12 | 定数のみ |
 | `packages/rendering/infrastructure/raycasting/raycasting-service.ts` | 89 | Three.js の Raycaster。DDA が置き換えた相手。mc-render の責務 |
 | `packages/entity/application/mob/entity-manager-physics-frame.ts` | 97 | Mob の毎フレーム処理。mc-sim の責務。ただし P-3 の呼び出し順の証拠として重要 |
@@ -164,7 +164,7 @@ plan.md §6 Step 2 は「各 Step で参照実装の対応テスト・fixture・
 | --- | --- | --- | --- |
 | `packages/game/test/physics-world-service.test.ts` | 171 | **トンネリング不変条件**（:115-122）、static/kinematic 不変、終端速度 | **移植済み**（`test/integrate.test.ts`） |
 | `packages/world/domain/voxel-raycast.test.ts` | 83 | 原点セル非対象、maxDistance 境界（2.4 vs 2.6）、入射面法線、退化入力 | **移植済み**（`test/integrate.test.ts`） |
-| `packages/game/domain/aabb-collision.test.ts` | 187 | 形状定数の固定、`FALL_VELOCITY_THRESHOLD`、`clampSneakEdge` | **一部**。形状定数のみ |
+| `packages/game/domain/aabb-collision.test.ts` | 187 | 形状定数の固定、`FALL_VELOCITY_THRESHOLD`、`clampSneakEdge` | **一部**。形状定数と `clampSneakEdge` |
 | `packages/game/test/aabb-collision.test.ts` | 329 | 接地判定、落下スナップ、2 段重ねで上面、step-height 0.6 境界、天井、X/Z 壁、可変形状、壁登り回帰 | **移植済み**（`test/resolve.test.ts`）。ただし step-height は定数ではなく注入値の境界として（`design-notes.md` P-9-3） |
 | `packages/game/test/aabb-collision-edge-cases.test.ts` | 273 | 静止浮遊、めり込みからの押し出し、斜め、巨大座標、**Y を X より先に解決**、可変半径 | **一部**。「Y 先行」（`:220`）は移植したが、**このシナリオは本リポジトリでは順序を区別しない**（face-span ガードが先に効く。P-9-1）。順序の根拠は継ぎ目歩行と step-up の 2 本にある。**「めり込みからの押し出し」は移植しない** —— リゾルバは非めり込みを**維持**するのであって**確立**しない（P-9-7） |
 | `packages/game/test/block-collision-predicates.test.ts` | 455 | `PASSABLE_BLOCK_IDS` の中身 | **移植しない**。能力フラグに置き換えるため |
