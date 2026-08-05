@@ -73,7 +73,12 @@ const EPSILON = 1e-12
 type ShapeHit = Pick<VoxelHit, 'distance' | 'face' | 'normal'>
 
 const isCellShape = (shape: AABB): boolean =>
-  [shape.minX, shape.minY, shape.minZ, shape.maxX, shape.maxY, shape.maxZ].every(Number.isFinite) &&
+  Number.isFinite(shape.minX) &&
+  Number.isFinite(shape.minY) &&
+  Number.isFinite(shape.minZ) &&
+  Number.isFinite(shape.maxX) &&
+  Number.isFinite(shape.maxY) &&
+  Number.isFinite(shape.maxZ) &&
   shape.minX >= 0 &&
   shape.minY >= 0 &&
   shape.minZ >= 0 &&
@@ -89,34 +94,48 @@ const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | nu
   let nearDistance = -Infinity
   let farDistance = Infinity
   let face: BlockFace = 'west'
-  let normal: Vec3 = { x: -1, y: 0, z: 0 }
+  let normalX = -1
+  let normalY = 0
+  let normalZ = 0
 
-  const axes = [
-    { origin: origin.x, direction: direction.x, min: box.minX, max: box.maxX, lowFace: 'west', highFace: 'east', lowNormal: { x: -1, y: 0, z: 0 }, highNormal: { x: 1, y: 0, z: 0 } },
-    { origin: origin.y, direction: direction.y, min: box.minY, max: box.maxY, lowFace: 'down', highFace: 'up', lowNormal: { x: 0, y: -1, z: 0 }, highNormal: { x: 0, y: 1, z: 0 } },
-    { origin: origin.z, direction: direction.z, min: box.minZ, max: box.maxZ, lowFace: 'north', highFace: 'south', lowNormal: { x: 0, y: 0, z: -1 }, highNormal: { x: 0, y: 0, z: 1 } },
-  ] as const
-
-  for (const axis of axes) {
-    if (axis.direction === 0) {
-      if (axis.origin < axis.min || axis.origin > axis.max) return null
+  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
+    const axisOrigin = axisIndex === 0 ? origin.x : axisIndex === 1 ? origin.y : origin.z
+    const axisDirection = axisIndex === 0 ? direction.x : axisIndex === 1 ? direction.y : direction.z
+    const min = axisIndex === 0 ? box.minX : axisIndex === 1 ? box.minY : box.minZ
+    const max = axisIndex === 0 ? box.maxX : axisIndex === 1 ? box.maxY : box.maxZ
+    if (axisDirection === 0) {
+      if (axisOrigin < min || axisOrigin > max) return null
       continue
     }
-    const lowDistance = (axis.min - axis.origin) / axis.direction
-    const highDistance = (axis.max - axis.origin) / axis.direction
+    const lowDistance = (min - axisOrigin) / axisDirection
+    const highDistance = (max - axisOrigin) / axisDirection
     const enteringDistance = Math.min(lowDistance, highDistance)
     const leavingDistance = Math.max(lowDistance, highDistance)
     if (enteringDistance > nearDistance) {
       nearDistance = enteringDistance
-      const entersLowFace = axis.direction > 0
-      face = entersLowFace ? axis.lowFace : axis.highFace
-      normal = entersLowFace ? axis.lowNormal : axis.highNormal
+      const entersLowFace = axisDirection > 0
+      if (axisIndex === 0) {
+        face = entersLowFace ? 'west' : 'east'
+        normalX = entersLowFace ? -1 : 1
+        normalY = 0
+        normalZ = 0
+      } else if (axisIndex === 1) {
+        face = entersLowFace ? 'down' : 'up'
+        normalX = 0
+        normalY = entersLowFace ? -1 : 1
+        normalZ = 0
+      } else {
+        face = entersLowFace ? 'north' : 'south'
+        normalX = 0
+        normalY = 0
+        normalZ = entersLowFace ? -1 : 1
+      }
     }
     farDistance = Math.min(farDistance, leavingDistance)
     if (nearDistance > farDistance) return null
   }
 
-  return { distance: nearDistance, face, normal }
+  return { distance: nearDistance, face, normal: { x: normalX, y: normalY, z: normalZ } }
 }
 
 /**
