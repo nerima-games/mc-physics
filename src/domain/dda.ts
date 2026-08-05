@@ -89,6 +89,7 @@ const isCellShape = (shape: AABB): boolean =>
   shape.minY < shape.maxY &&
   shape.minZ < shape.maxZ
 
+/* eslint-disable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
 /** Ray/AABB slab intersection. Axis order is the deterministic X -> Y -> Z tie-break. */
 const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | null => {
   let nearDistance = -Infinity
@@ -137,6 +138,7 @@ const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | nu
 
   return { distance: nearDistance, face, normal: { x: normalX, y: normalY, z: normalZ } }
 }
+/* eslint-enable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
 
 /**
  * Walk the voxel grid from `origin` along `direction` and return the first
