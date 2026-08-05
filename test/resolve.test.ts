@@ -72,7 +72,7 @@ const withWorld = (isBlockSolid: IsBlockSolid, extra: Partial<ResolveOptions> = 
 })
 
 /** The centre Y at which a body of PLAYER_HALF_HEIGHT rests on top of `surfaceCell`. */
-const restingCentre = (surfaceCell: number): number => centreOfFoot(standingPlaneAbove(surfaceCell), HALF_H)
+const restingCentre = (surfaceCell: number): CentreY => centreOfFoot(standingPlaneAbove(surfaceCell), HALF_H)
 
 const standingOn = (surfaceCell: number, over: Partial<Body> = {}): Body => ({
   kind: 'dynamic',
@@ -86,7 +86,7 @@ const standingOn = (surfaceCell: number, over: Partial<Body> = {}): Body => ({
 })
 
 const boxOf = (body: Body, halfHeight = HALF_H, halfWidth = HALF_W) =>
-  entityAABB(body.x, CentreY(body.y), body.z, halfWidth, halfHeight)
+  entityAABB(body.x, body.y, body.z, halfWidth, halfHeight)
 
 /** Does the body overlap any block by more than the contact skin? */
 const penetratesSomething = (body: Body, options: ResolveOptions): boolean => {
@@ -185,7 +185,7 @@ describe('standard non-cubic block shapes', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 0 && by === 0 && bz === 0 ? PRESSURE_PLATE_SHAPE : null),
       })
-      const falling: Body = { ...standingOn(0), y: Number(HALF_H) + 1 / 16 + 0.01, vy: -1 }
+      const falling: Body = { ...standingOn(0), y: CentreY(Number(HALF_H) + 1 / 16 + 0.01), vy: -1 }
 
       const stepped = stepBody(falling, DT, options, 0)
 
@@ -200,7 +200,7 @@ describe('standard non-cubic block shapes', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
       })
-      const before: Body = { ...standingOn(0), x: 0.74, y: 1.5, vx: 1 }
+      const before: Body = { ...standingOn(0), x: 0.74, y: CentreY(1.5), vx: 1 }
       const crossing: Body = { ...before, x: 0.75 }
 
       const unobstructed = stepBody(before, DT, options, 0)
@@ -218,7 +218,7 @@ describe('standard non-cubic block shapes', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
       })
-      const body: Body = { ...standingOn(0), x: 0.75, y: 1.5, vx: 1 }
+      const body: Body = { ...standingOn(0), x: 0.75, y: CentreY(1.5), vx: 1 }
 
       expect(stepBody(body, DT, options, 0)).toStrictEqual(stepBody(body, DT, options, 0))
     }),
@@ -422,7 +422,7 @@ describe('continuous collision for high-speed steps', () => {
   it.effect('catches a ceiling crossed by a high-speed vertical launch', () =>
     Effect.sync(() => {
       const options = withWorld((bx, by, bz) => bx === 0 && by === 4 && bz === 0)
-      const rising: Body = { ...standingOn(0), y: 1.5, vy: 100 }
+      const rising: Body = { ...standingOn(0), y: CentreY(1.5), vy: 100 }
 
       const stepped = stepBody(rising, FAST_DT, options, 0)
 
@@ -452,7 +452,7 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) =>
         (bx === 1 && by === 5 && bz === 0) || (bx === 2 && by === 3 && bz === 0),
       )
-      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 50, vy: 100 }
+      const diagonal: Body = { ...standingOn(0), y: CentreY(1.5), vx: 50, vy: 100 }
 
       const stepped = stepBody(diagonal, FAST_DT, options, 0)
 
@@ -466,7 +466,7 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) =>
         (bx === 1 && by === 4 && bz === 0) || (bx === 2 && by === 2 && bz === 0),
       )
-      const diagonal: Body = { ...standingOn(0), y: 1.5, vx: 75, vy: 100 }
+      const diagonal: Body = { ...standingOn(0), y: CentreY(1.5), vx: 75, vy: 100 }
 
       const stepped = stepBody(diagonal, FAST_DT, options, 0)
 
@@ -516,7 +516,7 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       const options = withWorld(groundUpTo(63))
       // Half a frame's worth of fall above the floor, moving down at 5 m/s: one
       // step overshoots and the clamp takes it back to the surface exactly.
-      const falling = standingOn(63, { y: restingCentre(63) + 0.05, vy: -5 })
+      const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
 
       const stepped = stepBody(falling, DT, options)
 
@@ -559,7 +559,7 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       const options = withWorld((_bx, by) => by === 0 || by === 3)
       // Head 1 cm under the ceiling's underside at y = 3, moving up at 8 m/s:
       // one step would put the head 0.146 through it.
-      const jumping = standingOn(0, { y: 3 - Number(HALF_H) - 0.01, vy: 8 })
+      const jumping = standingOn(0, { y: CentreY(3 - Number(HALF_H) - 0.01), vy: 8 })
 
       const stepped = stepBody(jumping, DT, options)
 
@@ -661,7 +661,7 @@ describe('resting contact', () => {
           FastCheck.double({ min: -8, max: 8, noNaN: true, noDefaultInfinity: true }),
           (height, vy, vx) => {
             const options = withWorld(groundUpTo(63))
-            const start = standingOn(63, { y: restingCentre(63) + height, vy, vx })
+            const start = standingOn(63, { y: CentreY(restingCentre(63) + height), vy, vx })
             const once = resolveBody(integrateBody(start, DT), DT, options)
             const twice = resolveBody(once.body, DT, options)
             return JSON.stringify(once) === JSON.stringify(twice)
@@ -693,7 +693,7 @@ describe('resting contact', () => {
             const options = withWorld(
               (bx, by, bz) => by <= 63 || (by <= 66 && (bx === 1 || bz === 1)) || (by === 67 && bx === 0),
             )
-            const body: Body = { kind: 'dynamic', x, y, z: 0.5, vx, vy, vz }
+            const body: Body = { kind: 'dynamic', x, y: CentreY(y), z: 0.5, vx, vy, vz }
             const resolved = resolveBody(body, DT, options).body
 
             const horizontalBound = 2 * HALF_W + CONTACT_EPSILON
@@ -743,7 +743,7 @@ describe('zero penetration', () => {
           (heights, vx, vz, rawDelta) => {
             const options = withWorld(heightmapWorld(heights))
             const delta = clampDeltaTime(rawDelta)
-            let body: Body = { kind: 'dynamic', x: 0.5, y: 70, z: 0.5, vx, vy: 0, vz }
+            let body: Body = { kind: 'dynamic', x: 0.5, y: CentreY(70), z: 0.5, vx, vy: 0, vz }
 
             for (let frame = 0; frame < 60; frame += 1) {
               body = stepBody(body, delta, options).body
@@ -768,7 +768,7 @@ describe('zero penetration', () => {
           (dropHeight, rawDelta) => {
             const options = withWorld(groundUpTo(0))
             const delta = clampDeltaTime(rawDelta)
-            let body = standingOn(0, { y: restingCentre(0) + dropHeight })
+            let body = standingOn(0, { y: CentreY(restingCentre(0) + dropHeight) })
 
             // Long enough to fall 20 blocks even at the smallest legal delta.
             for (let frame = 0; frame < 2500; frame += 1) {
@@ -793,7 +793,7 @@ describe('zero penetration', () => {
       // tied together (design-notes P-5).
       const options = withWorld(groundUpTo(63))
       const dropped = standingOn(63, {
-        y: restingCentre(63) + maxFallPerStep(MAX_DELTA_SECS) - 0.1,
+        y: CentreY(restingCentre(63) + maxFallPerStep(MAX_DELTA_SECS) - 0.1),
         vy: TERMINAL_VELOCITY_Y,
       })
 
@@ -846,7 +846,7 @@ describe('energy', () => {
           (y, vx, vy, vz, rawDelta) => {
             const options = withWorld((bx, by, bz) => by <= 63 || (by <= 70 && bx === 2 && bz === 0))
             const delta = clampDeltaTime(rawDelta)
-            let body: Body = { kind: 'dynamic', x: 0.5, y, z: 0.5, vx, vy, vz }
+            let body: Body = { kind: 'dynamic', x: 0.5, y: CentreY(y), z: 0.5, vx, vy, vz }
 
             for (let frame = 0; frame < 40; frame += 1) {
               const before = energyOf(body)
@@ -866,7 +866,7 @@ describe('energy', () => {
   it.effect('a bouncing-height regression: a body dropped repeatedly never ends up higher than it started', () =>
     Effect.sync(() => {
       const options = withWorld(groundUpTo(63))
-      const start = standingOn(63, { y: restingCentre(63) + 10 })
+      const start = standingOn(63, { y: CentreY(restingCentre(63) + 10) })
       let body = start
 
       for (let frame = 0; frame < 500; frame += 1) {
@@ -908,7 +908,7 @@ describe('determinism', () => {
   const world = withWorld(groundUpTo(63))
   const crowd: ReadonlyArray<Body> = [
     standingOn(63, { x: 0.5, vx: 3 }),
-    standingOn(63, { x: 4.5, y: restingCentre(63) + 6, vy: -12 }),
+    standingOn(63, { x: 4.5, y: CentreY(restingCentre(63) + 6), vy: -12 }),
     standingOn(63, { kind: 'static', x: 8.5 }),
     standingOn(63, { kind: 'kinematic', x: 12.5, vy: 4 }),
     standingOn(63, { x: 16.5, vz: -5 }),
@@ -972,7 +972,7 @@ describe('determinism', () => {
       const options = withWorld(groundUpTo(63))
       for (const kind of ['static', 'kinematic'] as const) {
         const resting = standingOn(63, { kind, vy: -20 })
-        const airborne = standingOn(63, { kind, y: restingCentre(63) + 20 })
+        const airborne = standingOn(63, { kind, y: CentreY(restingCentre(63) + 20) })
 
         expect(resolveBody(resting, DT, options).body).toStrictEqual(resting)
         expect(resolveBody(resting, DT, options).isGrounded).toBe(true)

@@ -13,6 +13,8 @@ import { describe, expect, it } from '@effect/vitest'
 import { Effect, FastCheck, Option } from 'effect'
 import {
   CACTUS_SHAPE,
+  CentreY,
+  FootY,
   PLAYER_HALF_HEIGHT,
   PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
@@ -34,13 +36,26 @@ import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrate, integrateBody, maxFallPerSte
 const dynamicBody = (over: Partial<Body> = {}): Body => ({
   kind: 'dynamic',
   x: 0,
-  y: 100,
+  y: CentreY(100),
   z: 0,
   vx: 0,
   vy: 0,
   vz: 0,
   ...over,
 })
+
+const footYMustNotBeAcceptedAsBodyCentre: Body = {
+  kind: 'dynamic',
+  x: 0,
+  // @ts-expect-error Body coordinates use the AABB centre, never its feet.
+  y: FootY(0),
+  z: 0,
+  vx: 0,
+  vy: 0,
+  vz: 0,
+}
+
+void footYMustNotBeAcceptedAsBodyCentre
 
 describe('the deltaTime clamp', () => {
   it.effect('is exactly min(max(0.001, raw), 0.05)', () =>
@@ -192,9 +207,9 @@ describe('semi-implicit Euler', () => {
     Effect.sync(() => {
       const delta = clampDeltaTime(0.02)
       const bodies: ReadonlyArray<Body> = [
-        dynamicBody({ y: 10 }),
-        dynamicBody({ kind: 'static', y: 20 }),
-        dynamicBody({ y: 30, vx: 1 }),
+        dynamicBody({ y: CentreY(10) }),
+        dynamicBody({ kind: 'static', y: CentreY(20) }),
+        dynamicBody({ y: CentreY(30), vx: 1 }),
       ]
       expect(integrate(bodies, delta)).toStrictEqual(integrate(bodies, delta))
       const reversed = integrate([...bodies].reverse(), delta)

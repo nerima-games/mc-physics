@@ -38,6 +38,7 @@
  * See docs/design-notes.md, regressions `physics-integrator-is-symplectic` and
  * `physics-resolve-runs-after-integrate`.
  */
+import { CentreY } from './coordinates'
 import type { DeltaTimeSecs } from './delta-time'
 
 /** Reference gravity (`packages/game/application/game-state-support.ts:10`). */
@@ -63,7 +64,7 @@ export type Body = {
   readonly kind: BodyKind
   readonly x: number
   /** CENTRE Y. See domain/coordinates.ts on why the distinction is typed. */
-  readonly y: number
+  readonly y: CentreY
   readonly z: number
   readonly vx: number
   readonly vy: number
@@ -97,7 +98,7 @@ export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, gravityY: nu
     vy: clampedY,
     vz: body.vz,
     x: body.x + body.vx * deltaTime,
-    y: body.y + clampedY * deltaTime,
+    y: CentreY(body.y + clampedY * deltaTime),
     z: body.z + body.vz * deltaTime,
   }
 }

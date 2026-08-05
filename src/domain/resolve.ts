@@ -210,8 +210,8 @@ export const clampSneakEdge = (
 const shapeAt = (options: ResolveOptions, bx: number, by: number, bz: number): AABB | null =>
   options.blockShapeAt?.(bx, by, bz) ?? (options.isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null)
 
-const boxAt = (options: ResolveOptions, x: number, y: number, z: number): AABB =>
-  entityAABB(x, CentreY(y), z, options.halfWidth, options.halfHeight)
+const boxAt = (options: ResolveOptions, x: number, y: CentreY, z: number): AABB =>
+  entityAABB(x, y, z, options.halfWidth, options.halfHeight)
 
 /**
  * Every solid block box overlapping `box` beyond the contact skin.
@@ -409,7 +409,8 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
     deltaTime,
   )
 
-  const boxAfterY = boxAt(options, body.x, vertical.position, body.z)
+  const resolvedY = CentreY(vertical.position)
+  const boxAfterY = boxAt(options, body.x, resolvedY, body.z)
   const alongX = clampAxis(
     { position: body.x, velocity: body.vx },
     boxAfterY.minX,
@@ -420,7 +421,7 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
     (block) => block.maxX,
   )
 
-  const boxAfterX = boxAt(options, alongX.position, vertical.position, body.z)
+  const boxAfterX = boxAt(options, alongX.position, resolvedY, body.z)
   const alongZ = clampAxis(
     { position: body.z, velocity: body.vz },
     boxAfterX.minZ,
@@ -434,7 +435,7 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
   const resolved: Body = {
     kind: 'dynamic',
     x: alongX.position,
-    y: vertical.position,
+    y: resolvedY,
     z: alongZ.position,
     vx: alongX.velocity,
     vy: vertical.velocity,
@@ -617,7 +618,7 @@ const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptio
     const contact: Body = {
       ...target,
       x: from.x + dx * hit.time,
-      y: from.y + dy * hit.time,
+      y: CentreY(from.y + dy * hit.time),
       z: from.z + dz * hit.time,
     }
     if (hit.axis === 'x') {
