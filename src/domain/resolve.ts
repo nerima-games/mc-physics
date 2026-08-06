@@ -210,24 +210,21 @@ export const clampSneakEdge = (
 const shapeAt = (options: ResolveOptions, bx: number, by: number, bz: number): AABB | null =>
   options.blockShapeAt?.(bx, by, bz) ?? (options.isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null)
 
-const boxAt = (options: ResolveOptions, x: number, y: number, z: number): AABB =>
-  entityAABB(x, CentreY(y), z, options.halfWidth, options.halfHeight)
+const boxAt = (options: ResolveOptions, x: number, y: CentreY, z: number): AABB =>
+  entityAABB(x, y, z, options.halfWidth, options.halfHeight)
 
 /**
  * Every solid block box overlapping `box` beyond the contact skin.
  *
- * Collected into an array rather than folded in place so that each phase below
- * is a `reduce` over a set: `min` and `max` do not care what order they see
- * their arguments in, which is how the resolver gets to be scan-order
- * independent by construction rather than by inspection.
- *
- * This allocates, and the reference does not (it fuses the scan and the fold,
- * and mutates its output arguments). `integrate.ts` makes the same trade for
- * the same reason: the pure version is the definition, and an in-place variant
- * gets written when there is a benchmark to justify it and this to test against.
+ * The visitor keeps the cell traversal in one place while each resolution phase
+ * folds it into its own scalar result. This avoids materialising a short-lived
+ * block array for every Y, X, and Z pass.
  */
-const collidingBlocks = (options: ResolveOptions, box: AABB): ReadonlyArray<AABB> => {
-  const found: Array<AABB> = []
+const forEachCollidingBlock = (
+  options: ResolveOptions,
+  box: AABB,
+  visit: (block: AABB) => void,
+): void => {
   const bxMax = Math.floor(box.maxX)
   const byMax = Math.floor(box.maxY)
   const bzMax = Math.floor(box.maxZ)
@@ -241,13 +238,12 @@ const collidingBlocks = (options: ResolveOptions, box: AABB): ReadonlyArray<AABB
         }
         const blockBox = blockAABB(bx, by, bz, shape)
         if (collidesWith(box, blockBox)) {
-          found.push(blockBox)
+          visit(blockBox)
         }
       }
     }
   }
 
-  return found
 }
 
 type AxisState = {
@@ -282,24 +278,32 @@ const clampAxis = (
   bodyMin: number,
   bodyMax: number,
   halfExtent: number,
-  blocks: ReadonlyArray<AABB>,
+  options: ResolveOptions,
+  box: AABB,
   nearFace: (block: AABB) => number,
   farFace: (block: AABB) => number,
 ): AxisState => {
   if (state.velocity > 0) {
-    const face = blocks.reduce(
-      (nearest, block) => (nearFace(block) >= bodyMin ? Math.min(nearest, nearFace(block)) : nearest),
-      Number.POSITIVE_INFINITY,
-    )
+    let face = Number.POSITIVE_INFINITY
+    forEachCollidingBlock(options, box, (block) => {
+      if (nearFace(block) >= bodyMin) {
+        face = Math.min(face, nearFace(block))
+      }
+    })
     return face < Number.POSITIVE_INFINITY ? { position: face - halfExtent, velocity: 0 } : state
   }
   if (state.velocity < 0) {
-    const face = blocks.reduce(
-      (nearest, block) => (farFace(block) <= bodyMax ? Math.max(nearest, farFace(block)) : nearest),
-      Number.NEGATIVE_INFINITY,
-    )
+    let face = Number.NEGATIVE_INFINITY
+    forEachCollidingBlock(options, box, (block) => {
+      if (farFace(block) <= bodyMax) {
+        face = Math.max(face, farFace(block))
+      }
+    })
     return face > Number.NEGATIVE_INFINITY ? { position: face + halfExtent, velocity: 0 } : state
   }
+  // The former eager `collidingBlocks(...)` argument queried the same cells
+  // even for a stationary axis. Preserve that observable world-callback order.
+  forEachCollidingBlock(options, box, () => {})
   return state
 }
 
@@ -325,27 +329,26 @@ const resolveVertical = (
   state: AxisState,
   deltaTime: DeltaTimeSecs,
 ): AxisState => {
-  const blocks = collidingBlocks(options, box)
-  if (blocks.length === 0) {
-    return state
-  }
-
   if (state.velocity <= 0) {
     const reach = -state.velocity * deltaTime + (options.stepHeight ?? 0) + CONTACT_EPSILON
-    const floorTop = blocks.reduce(
-      (highest, block) => (block.maxY - box.minY <= reach ? Math.max(highest, block.maxY) : highest),
-      Number.NEGATIVE_INFINITY,
-    )
+    let floorTop = Number.NEGATIVE_INFINITY
+    forEachCollidingBlock(options, box, (block) => {
+      if (block.maxY - box.minY <= reach) {
+        floorTop = Math.max(floorTop, block.maxY)
+      }
+    })
     return floorTop > Number.NEGATIVE_INFINITY
       ? { position: floorTop + options.halfHeight, velocity: 0 }
       : state
   }
 
   const reach = state.velocity * deltaTime + CONTACT_EPSILON
-  const ceiling = blocks.reduce(
-    (lowest, block) => (box.maxY - block.minY <= reach ? Math.min(lowest, block.minY) : lowest),
-    Number.POSITIVE_INFINITY,
-  )
+  let ceiling = Number.POSITIVE_INFINITY
+  forEachCollidingBlock(options, box, (block) => {
+    if (box.maxY - block.minY <= reach) {
+      ceiling = Math.min(ceiling, block.minY)
+    }
+  })
   return ceiling < Number.POSITIVE_INFINITY ? { position: ceiling - options.halfHeight, velocity: 0 } : state
 }
 
@@ -409,24 +412,27 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
     deltaTime,
   )
 
-  const boxAfterY = boxAt(options, body.x, vertical.position, body.z)
+  const resolvedY = CentreY(vertical.position)
+  const boxAfterY = boxAt(options, body.x, resolvedY, body.z)
   const alongX = clampAxis(
     { position: body.x, velocity: body.vx },
     boxAfterY.minX,
     boxAfterY.maxX,
     options.halfWidth,
-    collidingBlocks(options, boxAfterY),
+    options,
+    boxAfterY,
     (block) => block.minX,
     (block) => block.maxX,
   )
 
-  const boxAfterX = boxAt(options, alongX.position, vertical.position, body.z)
+  const boxAfterX = boxAt(options, alongX.position, resolvedY, body.z)
   const alongZ = clampAxis(
     { position: body.z, velocity: body.vz },
     boxAfterX.minZ,
     boxAfterX.maxZ,
     options.halfWidth,
-    collidingBlocks(options, boxAfterX),
+    options,
+    boxAfterX,
     (block) => block.minZ,
     (block) => block.maxZ,
   )
@@ -434,7 +440,7 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
   const resolved: Body = {
     kind: 'dynamic',
     x: alongX.position,
-    y: vertical.position,
+    y: resolvedY,
     z: alongZ.position,
     vx: alongX.velocity,
     vy: vertical.velocity,
@@ -475,13 +481,12 @@ const axisPriority = (axis: SweepAxis): number => (axis === 'y' ? 0 : axis === '
  * box, this grows with distance travelled rather than the volume of a long
  * diagonal prism.
  */
-const sweptCandidates = (
+const forEachSweptCandidate = (
   start: Body,
   end: Body,
   options: ResolveOptions,
-): ReadonlyArray<AABB> => {
-  const found: Array<AABB> = []
-  const asked = new Set<string>()
+  visit: (block: AABB) => void,
+): void => {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const dz = end.z - start.z
@@ -491,29 +496,54 @@ const sweptCandidates = (
   const steps = Math.max(1, crossings + 1)
   const radiusX = Math.ceil(options.halfWidth)
   const radiusY = Math.ceil(Number(options.halfHeight))
+  let hasPreviousRange = false
+  let previousMinX = 0
+  let previousMaxX = 0
+  let previousMinY = 0
+  let previousMaxY = 0
+  let previousMinZ = 0
+  let previousMaxZ = 0
 
   for (let index = 0; index <= steps; index += 1) {
     const time = index / steps
     const cx = Math.floor(start.x + dx * time)
     const cy = Math.floor(start.y + dy * time)
     const cz = Math.floor(start.z + dz * time)
-    for (let bx = cx - radiusX; bx <= cx + radiusX; bx += 1) {
-      for (let by = cy - radiusY; by <= cy + radiusY; by += 1) {
-        for (let bz = cz - radiusX; bz <= cz + radiusX; bz += 1) {
-          const key = `${bx},${by},${bz}`
-          if (asked.has(key)) {
+    const minX = cx - radiusX
+    const maxX = cx + radiusX
+    const minY = cy - radiusY
+    const maxY = cy + radiusY
+    const minZ = cz - radiusX
+    const maxZ = cz + radiusX
+    for (let bx = minX; bx <= maxX; bx += 1) {
+      for (let by = minY; by <= maxY; by += 1) {
+        for (let bz = minZ; bz <= maxZ; bz += 1) {
+          // Each range bound is monotonic along a linear sweep, so a cell
+          // cannot leave a range and re-enter later. The previous fixed range
+          // is therefore a complete allocation-free duplicate filter.
+          if (
+            hasPreviousRange
+            && bx >= previousMinX && bx <= previousMaxX
+            && by >= previousMinY && by <= previousMaxY
+            && bz >= previousMinZ && bz <= previousMaxZ
+          ) {
             continue
           }
-          asked.add(key)
           const shape = shapeAt(options, bx, by, bz)
           if (shape !== null) {
-            found.push(blockAABB(bx, by, bz, shape))
+            visit(blockAABB(bx, by, bz, shape))
           }
         }
       }
     }
+    hasPreviousRange = true
+    previousMinX = minX
+    previousMaxX = maxX
+    previousMinY = minY
+    previousMaxY = maxY
+    previousMinZ = minZ
+    previousMaxZ = maxZ
   }
-  return found
 }
 
 const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | null => {
@@ -524,17 +554,17 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
   const endBox = boxAt(options, end.x, end.y, end.z)
   let nearest: SweepHit | null = null
 
-  for (const block of sweptCandidates(start, end, options)) {
+  forEachSweptCandidate(start, end, options, (block) => {
     const touchesVerticalFace =
       Math.abs(startBox.minY - block.maxY) <= CONTACT_EPSILON
       || Math.abs(startBox.maxY - block.minY) <= CONTACT_EPSILON
     if (Math.abs(dy) <= CONTACT_EPSILON && touchesVerticalFace) {
-      continue
+      return
     }
     // Endpoint overlaps remain the discrete resolver's responsibility. This
     // keeps its step-up and established low-speed face selection unchanged.
     if (collidesWith(endBox, block)) {
-      continue
+      return
     }
     const expanded = {
       minX: block.minX - options.halfWidth,
@@ -549,19 +579,19 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       && start.y > expanded.minY + CONTACT_EPSILON && start.y < expanded.maxY - CONTACT_EPSILON
       && start.z > expanded.minZ + CONTACT_EPSILON && start.z < expanded.maxZ - CONTACT_EPSILON
     if (strictlyInside) {
-      continue
+      return
     }
 
     let entry = Number.NEGATIVE_INFINITY
     let exit = Number.POSITIVE_INFINITY
     let entryAxis: SweepAxis = 'y'
-    const axes = [
-      ['y', start.y, dy, expanded.minY, expanded.maxY],
-      ['x', start.x, dx, expanded.minX, expanded.maxX],
-      ['z', start.z, dz, expanded.minZ, expanded.maxZ],
-    ] as const
     let misses = false
-    for (const [axis, origin, delta, min, max] of axes) {
+    for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
+      const axis: SweepAxis = axisIndex === 0 ? 'y' : axisIndex === 1 ? 'x' : 'z'
+      const origin = axisIndex === 0 ? start.y : axisIndex === 1 ? start.x : start.z
+      const delta = axisIndex === 0 ? dy : axisIndex === 1 ? dx : dz
+      const min = axisIndex === 0 ? expanded.minY : axisIndex === 1 ? expanded.minX : expanded.minZ
+      const max = axisIndex === 0 ? expanded.maxY : axisIndex === 1 ? expanded.maxX : expanded.maxZ
       if (Math.abs(delta) <= CONTACT_EPSILON) {
         if (origin < min - CONTACT_EPSILON || origin > max + CONTACT_EPSILON) {
           misses = true
@@ -580,7 +610,7 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       exit = Math.min(exit, axisExit)
     }
     if (misses || entry > exit + CONTACT_EPSILON || exit < 0 || entry < -CONTACT_EPSILON || entry >= 1 - CONTACT_EPSILON) {
-      continue
+      return
     }
     const hit = { time: Math.max(0, entry), axis: entryAxis }
     if (
@@ -590,7 +620,7 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
     ) {
       nearest = hit
     }
-  }
+  })
   return nearest
 }
 
@@ -617,7 +647,7 @@ const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptio
     const contact: Body = {
       ...target,
       x: from.x + dx * hit.time,
-      y: from.y + dy * hit.time,
+      y: CentreY(from.y + dy * hit.time),
       z: from.z + dz * hit.time,
     }
     if (hit.axis === 'x') {
