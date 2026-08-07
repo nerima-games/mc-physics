@@ -286,8 +286,9 @@ const clampAxis = (
   if (state.velocity > 0) {
     let face = Number.POSITIVE_INFINITY
     forEachCollidingBlock(options, box, (block) => {
-      if (nearFace(block) >= bodyMin) {
-        face = Math.min(face, nearFace(block))
+      const candidateFace = nearFace(block)
+      if (candidateFace >= bodyMin) {
+        face = Math.min(face, candidateFace)
       }
     })
     return face < Number.POSITIVE_INFINITY ? { position: face - halfExtent, velocity: 0 } : state
@@ -295,8 +296,9 @@ const clampAxis = (
   if (state.velocity < 0) {
     let face = Number.NEGATIVE_INFINITY
     forEachCollidingBlock(options, box, (block) => {
-      if (farFace(block) <= bodyMax) {
-        face = Math.max(face, farFace(block))
+      const candidateFace = farFace(block)
+      if (candidateFace <= bodyMax) {
+        face = Math.max(face, candidateFace)
       }
     })
     return face > Number.NEGATIVE_INFINITY ? { position: face + halfExtent, velocity: 0 } : state
