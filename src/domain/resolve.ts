@@ -552,7 +552,9 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
   const dz = end.z - start.z
   const startBox = boxAt(options, start.x, start.y, start.z)
   const endBox = boxAt(options, end.x, end.y, end.z)
-  let nearest: SweepHit | null = null
+  let nearestTime = 0
+  let nearestAxis: SweepAxis = 'y'
+  let hasNearest = false
 
   forEachSweptCandidate(start, end, options, (block) => {
     const touchesVerticalFace =
@@ -562,22 +564,20 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       return
     }
     // Endpoint overlaps remain the discrete resolver's responsibility. This
-    // keeps its step-up and established low-speed face selection unchanged.
+    // Keeps its step-up and established low-speed face selection unchanged.
     if (collidesWith(endBox, block)) {
       return
     }
-    const expanded = {
-      minX: block.minX - options.halfWidth,
-      maxX: block.maxX + options.halfWidth,
-      minY: block.minY - Number(options.halfHeight),
-      maxY: block.maxY + Number(options.halfHeight),
-      minZ: block.minZ - options.halfWidth,
-      maxZ: block.maxZ + options.halfWidth,
-    }
+    const minX = block.minX - options.halfWidth
+    const maxX = block.maxX + options.halfWidth
+    const minY = block.minY - Number(options.halfHeight)
+    const maxY = block.maxY + Number(options.halfHeight)
+    const minZ = block.minZ - options.halfWidth
+    const maxZ = block.maxZ + options.halfWidth
     const strictlyInside =
-      start.x > expanded.minX + CONTACT_EPSILON && start.x < expanded.maxX - CONTACT_EPSILON
-      && start.y > expanded.minY + CONTACT_EPSILON && start.y < expanded.maxY - CONTACT_EPSILON
-      && start.z > expanded.minZ + CONTACT_EPSILON && start.z < expanded.maxZ - CONTACT_EPSILON
+      start.x > minX + CONTACT_EPSILON && start.x < maxX - CONTACT_EPSILON
+      && start.y > minY + CONTACT_EPSILON && start.y < maxY - CONTACT_EPSILON
+      && start.z > minZ + CONTACT_EPSILON && start.z < maxZ - CONTACT_EPSILON
     if (strictlyInside) {
       return
     }
@@ -590,8 +590,8 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       const axis: SweepAxis = axisIndex === 0 ? 'y' : axisIndex === 1 ? 'x' : 'z'
       const origin = axisIndex === 0 ? start.y : axisIndex === 1 ? start.x : start.z
       const delta = axisIndex === 0 ? dy : axisIndex === 1 ? dx : dz
-      const min = axisIndex === 0 ? expanded.minY : axisIndex === 1 ? expanded.minX : expanded.minZ
-      const max = axisIndex === 0 ? expanded.maxY : axisIndex === 1 ? expanded.maxX : expanded.maxZ
+      const min = axisIndex === 0 ? minY : axisIndex === 1 ? minX : minZ
+      const max = axisIndex === 0 ? maxY : axisIndex === 1 ? maxX : maxZ
       if (Math.abs(delta) <= CONTACT_EPSILON) {
         if (origin < min - CONTACT_EPSILON || origin > max + CONTACT_EPSILON) {
           misses = true
@@ -612,16 +612,18 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
     if (misses || entry > exit + CONTACT_EPSILON || exit < 0 || entry < -CONTACT_EPSILON || entry >= 1 - CONTACT_EPSILON) {
       return
     }
-    const hit = { time: Math.max(0, entry), axis: entryAxis }
+    const hitTime = Math.max(0, entry)
     if (
-      nearest === null
-      || hit.time < nearest.time - CONTACT_EPSILON
-      || (Math.abs(hit.time - nearest.time) <= CONTACT_EPSILON && axisPriority(hit.axis) < axisPriority(nearest.axis))
+      !hasNearest
+      || hitTime < nearestTime - CONTACT_EPSILON
+      || (Math.abs(hitTime - nearestTime) <= CONTACT_EPSILON && axisPriority(entryAxis) < axisPriority(nearestAxis))
     ) {
-      nearest = hit
+      nearestTime = hitTime
+      nearestAxis = entryAxis
+      hasNearest = true
     }
   })
-  return nearest
+  return hasNearest ? { time: nearestTime, axis: nearestAxis } : null
 }
 
 const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptions): Body => {
