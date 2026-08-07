@@ -38,6 +38,18 @@ describe('continuous projectile collisions', () => {
     expect(result.hit?.flightTimeSeconds).toBeLessThan(0.05)
   })
 
+  it('keeps the opposite face normal and ignores invalid candidate bounds', () => {
+    const arrow = launchArrow({ pitchRadians: 0, position: { x: 4, y: 0.5, z: 0.5 }, speed: 100, yawRadians: Math.PI / 2 })
+    const result = stepArrow(arrow, world({ blockBounds: () => [{ maxX: 2, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }] }), 0.05)
+    expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 1, y: 0, z: 0 }, point: { x: 2 } })
+
+    const noHit = stepArrow(launchArrow({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 }), world({
+      blockBounds: () => [{ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }],
+    }), 0.05)
+    expect(noHit.hit).toBeUndefined()
+    expect(noHit.arrow.state).toBe('flying')
+  })
+
   it('hits entity AABBs and ignores the shooter only during grace', () => {
     const entity = { bounds: { maxX: 1, maxY: 1, maxZ: 1, minX: 0.5, minY: -1, minZ: -1 }, id: 'shooter' }
     const fresh = launchArrow({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, shooterId: 'shooter', speed: 20, yawRadians: -Math.PI / 2 })

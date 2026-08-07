@@ -47,7 +47,8 @@ const finiteVec = (value: Vec3): boolean =>
   Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z)
 
 const validBox = (box: AABB): boolean =>
-  [box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ].every(Number.isFinite) &&
+  Number.isFinite(box.minX) && Number.isFinite(box.minY) && Number.isFinite(box.minZ) &&
+  Number.isFinite(box.maxX) && Number.isFinite(box.maxY) && Number.isFinite(box.maxZ) &&
   box.minX <= box.maxX && box.minY <= box.maxY && box.minZ <= box.maxZ
 
 const contains = (box: AABB, point: Vec3): boolean =>
@@ -57,26 +58,52 @@ const contains = (box: AABB, point: Vec3): boolean =>
 
 const segmentAABB = (start: Vec3, end: Vec3, box: AABB): SegmentHit | null => {
   if (!validBox(box)) {return null}
-  const delta = { x: end.x - start.x, y: end.y - start.y, z: end.z - start.z }
+  const deltaX = end.x - start.x
+  const deltaY = end.y - start.y
+  const deltaZ = end.z - start.z
   let near = 0
   let far = 1
-  let normal: Vec3 = { x: 0, y: 0, z: 0 }
-  const axes = [
-    { delta: delta.x, high: { x: 1, y: 0, z: 0 }, low: { x: -1, y: 0, z: 0 }, max: box.maxX, min: box.minX, start: start.x },
-    { delta: delta.y, high: { x: 0, y: 1, z: 0 }, low: { x: 0, y: -1, z: 0 }, max: box.maxY, min: box.minY, start: start.y },
-    { delta: delta.z, high: { x: 0, y: 0, z: 1 }, low: { x: 0, y: 0, z: -1 }, max: box.maxZ, min: box.minZ, start: start.z },
-  ] as const
-  for (const axis of axes) {
-    if (axis.delta === 0) {
-      if (axis.start < axis.min || axis.start > axis.max) {return null}
+  let normalX = 0
+  let normalY = 0
+  let normalZ = 0
+  let axisDelta = deltaX
+  let axisStart = start.x
+  let axisMin = box.minX
+  let axisMax = box.maxX
+  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
+    if (axisIndex === 1) {
+      axisDelta = deltaY
+      axisStart = start.y
+      axisMin = box.minY
+      axisMax = box.maxY
+    } else if (axisIndex === 2) {
+      axisDelta = deltaZ
+      axisStart = start.z
+      axisMin = box.minZ
+      axisMax = box.maxZ
+    }
+    if (axisDelta === 0) {
+      if (axisStart < axisMin || axisStart > axisMax) {return null}
       continue
     }
-    const low = (axis.min - axis.start) / axis.delta
-    const high = (axis.max - axis.start) / axis.delta
+    const low = (axisMin - axisStart) / axisDelta
+    const high = (axisMax - axisStart) / axisDelta
     const entering = Math.min(low, high)
     if (entering > near) {
       near = entering
-      normal = axis.delta > 0 ? axis.low : axis.high
+      if (axisIndex === 0) {
+        normalX = axisDelta > 0 ? -1 : 1
+        normalY = 0
+        normalZ = 0
+      } else if (axisIndex === 1) {
+        normalX = 0
+        normalY = axisDelta > 0 ? -1 : 1
+        normalZ = 0
+      } else {
+        normalX = 0
+        normalY = 0
+        normalZ = axisDelta > 0 ? -1 : 1
+      }
     }
     far = Math.min(far, Math.max(low, high))
     if (near > far) {return null}
@@ -84,8 +111,8 @@ const segmentAABB = (start: Vec3, end: Vec3, box: AABB): SegmentHit | null => {
   if (near < 0 || near > 1) {return null}
   return {
     fraction: near,
-    normal,
-    point: { x: start.x + delta.x * near, y: start.y + delta.y * near, z: start.z + delta.z * near },
+    normal: { x: normalX, y: normalY, z: normalZ },
+    point: { x: start.x + deltaX * near, y: start.y + deltaY * near, z: start.z + deltaZ * near },
   }
 }
 
