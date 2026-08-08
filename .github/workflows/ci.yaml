@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          # changeset status --since=main (below) needs the full history to
+          # changeset status --since=origin/main (below) needs the full history to
           # diff against origin/main; the default shallow clone only has HEAD.
           fetch-depth: 0
 
@@ -73,7 +73,7 @@ jobs:
       # CI-config-only PRs; those are expected to add an empty changeset
       # (`pnpm changeset add --empty`) to satisfy this check.
       - name: Changeset status
-        run: pnpm changeset status --since=main
+        run: pnpm changeset status --since=origin/main
 
       # Independent required gate from `pnpm verify` (TEST_STANDARD.md §1, §3).
       # `vitest run --coverage` exits non-zero on its own when any of the four
