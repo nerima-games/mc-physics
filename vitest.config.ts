@@ -34,12 +34,15 @@ export default defineConfig({
       reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
       // Org-wide gate (TEST_STANDARD.md §3): 99% on all four v8 metrics,
-      // enabled immediately and unconditionally, no staged rollout. Measured
-      // at rollout time (this migration): statements 99.41%, branches 99.35%,
-      // functions 100%, lines 99.41% (src/domain/dda.ts:161 is the sole
-      // uncovered line, an unreachable-in-practice fallback `Option.none()`
-      // after the raycast step loop). All four metrics already clear 99%, so
-      // this repository is not one of the known-red repositories at rollout.
+      // enabled immediately and unconditionally, no staged rollout. All four
+      // metrics clear 99%; the remaining uncovered points are documented
+      // `/* v8 ignore */` lines with a written reachability proof at each
+      // site (not a blanket exemption) — currently one in
+      // src/domain/dda.ts (the raycast step loop's post-loop fallback) and
+      // two in src/domain/projectile.ts (the segment test's final
+      // fraction-range check, and the entity-hit `entityId` fallback), each
+      // proven unreachable from the algorithm's own invariants rather than
+      // merely hard to exercise. See each site's comment for the proof.
       thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
     },
   },
