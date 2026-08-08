@@ -382,6 +382,13 @@ describe('voxel DDA', () => {
     }),
   )
 
+  it.effect('returns none when the walk exhausts its step budget without a targetable cell', () =>
+    Effect.sync(() => {
+      const nothing = () => false
+      expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 8, nothing))).toBe(true)
+    }),
+  )
+
   it.effect('visits cells in strictly increasing distance order, never skipping one', () =>
     Effect.sync(() => {
       // A DDA that advances the wrong axis skips cells, and a skipped cell is a

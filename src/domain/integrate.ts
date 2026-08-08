@@ -90,7 +90,10 @@ export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, gravityY: nu
 
   // Velocity first, position from the NEW velocity. See the file header.
   const acceleratedY = body.vy + gravityY * deltaTime
-  const clampedY = acceleratedY < TERMINAL_VELOCITY_Y ? TERMINAL_VELOCITY_Y : acceleratedY
+  let clampedY = acceleratedY
+  if (acceleratedY < TERMINAL_VELOCITY_Y) {
+    clampedY = TERMINAL_VELOCITY_Y
+  }
 
   return {
     kind: body.kind,

@@ -1,0 +1,9 @@
+---
+"@nerima-games/mc-physics": patch
+---
+
+Bring `src/**` fully into compliance with the org's newly-effective oxlint strictness (`.oxlintrc.json` scoped-strictness policy): every `src/domain/*.ts` file is now clean under `oxlint --deny-warnings` with zero disable comments, via real fixes (named constants for magic numbers, if/else in place of ternaries, sorted object keys and imports, `continue`-free loops) plus a small set of documented, evidence-based rule-threshold adjustments for this package's scalarized hot-path geometry functions (`max-params`, `max-statements`, `complexity`, `init-declarations`) and its coordinate/geometry vocabulary (`id-length`, `new-cap`). `test/**` gets a matching `overrides` block relaxing the same pure-style rules for test-fixture patterns.
+
+Fixes a real bug found while converting `resolve.ts`'s `shapeAt` from a ternary to an if/else: the original used `??`, which treats a `blockShapeAt` callback returning `null` the same as it being absent (both fall through to `isBlockSolid`); a naive conversion would have treated an explicit `null` as a final answer instead. The corrected version preserves the original fallthrough behaviour and is covered by the existing `solidity is injected` test suite.
+
+Closes the four-v8-metric coverage gate (99% statements/branches/functions/lines) opened up by this lint work and by pre-existing gaps in `projectile.ts`: added behavioural tests for the raycast's step-budget exhaustion, the resolver's X-vs-Z sweep tie-break, and `projectile.ts`'s axis-parallel segment test, entering-face normals (both signs), multi-candidate nearest-hit selection, non-flying-arrow no-op, and step-displacement overflow. The few still-uncovered lines are `/* v8 ignore */`d with a written reachability proof at each site (not a blanket exemption), matching the pattern this file already used for `intersectShape`.

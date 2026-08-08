@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          # changeset status --since=main (below) needs the full history to
+          # changeset status --since=origin/main (below) needs the full history to
           # diff against origin/main; the default shallow clone only has HEAD.
           fetch-depth: 0
 
@@ -51,8 +51,19 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      # oxlint is provided by the Nix devShell (flake.nix), not a package.json
+      # devDependency — see flake.nix's comment on why. Installing Nix just for
+      # this one step is the org-wide trade-off (DEPENDENCY_POLICY.md §5
+      # "前提条件"): one pinned oxlint version instead of 16 repos each
+      # independently drifting on their own npm-resolved version.
+      - name: Set up Nix
+        uses: ./.github/actions/nix-setup
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
       - name: Lint
-        run: pnpm lint
+        run: nix develop --command pnpm lint
 
       - name: Test
         run: pnpm test
@@ -62,7 +73,7 @@ jobs:
       # CI-config-only PRs; those are expected to add an empty changeset
       # (`pnpm changeset add --empty`) to satisfy this check.
       - name: Changeset status
-        run: pnpm changeset status --since=main
+        run: pnpm changeset status --since=origin/main
 
       # Independent required gate from `pnpm verify` (TEST_STANDARD.md §1, §3).
       # `vitest run --coverage` exits non-zero on its own when any of the four

@@ -82,7 +82,8 @@ export const standingPlaneAbove = (surfaceY: number): FootY => FootY(surfaceY + 
 
 /** Reference player half-extents (`packages/core/domain/constants.ts:22-24`). */
 export const PLAYER_HALF_WIDTH = 0.3
-export const PLAYER_HALF_HEIGHT: HalfHeight = HalfHeight(0.9)
+const PLAYER_HALF_HEIGHT_METRES = 0.9
+export const PLAYER_HALF_HEIGHT: HalfHeight = HalfHeight(PLAYER_HALF_HEIGHT_METRES)
 
 /** A continuous point. Y is up. */
 export type Vec3 = {
@@ -117,47 +118,57 @@ export const entityAABB = (
   halfWidth: number,
   halfHeight: HalfHeight,
 ): AABB => ({
-  minX: x - halfWidth,
-  minY: centreY - halfHeight,
-  minZ: z - halfWidth,
   maxX: x + halfWidth,
   maxY: centreY + halfHeight,
   maxZ: z + halfWidth,
+  minX: x - halfWidth,
+  minY: centreY - halfHeight,
+  minZ: z - halfWidth,
 })
 
 /** The shape a full block occupies within its own cell: the whole unit cube. */
 export const FULL_BLOCK_SHAPE: AABB = {
-  minX: 0,
-  minY: 0,
-  minZ: 0,
   maxX: 1,
   maxY: 1,
   maxZ: 1,
+  minX: 0,
+  minY: 0,
+  minZ: 0,
 }
 
 /** A slab: the bottom half of its cell. */
 export const SLAB_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: 0.5 }
 
+/**
+ * One Minecraft "pixel": a sixteenth of a block, the finest granularity block
+ * shapes are authored at. `0.0625` rather than `1 / 16`: a division expression
+ * is not a bare-literal `const` initializer, so the linter cannot see it as
+ * the named constant it is meant to be — and unlike most fractions, sixteenths
+ * are exact in IEEE-754 (16 is a power of two), so the decimal form loses
+ * nothing.
+ */
+const SIXTEENTH = 0.0625
+
 /** A pressure plate: the bottom sixteenth of its cell. */
-export const PRESSURE_PLATE_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: 1 / 16 }
+export const PRESSURE_PLATE_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: SIXTEENTH }
 
 /** A cactus: a full-height block inset one sixteenth on both horizontal axes. */
 export const CACTUS_SHAPE: AABB = {
   ...FULL_BLOCK_SHAPE,
-  minX: 1 / 16,
-  maxX: 15 / 16,
-  minZ: 1 / 16,
-  maxZ: 15 / 16,
+  maxX: 1 - SIXTEENTH,
+  maxZ: 1 - SIXTEENTH,
+  minX: SIXTEENTH,
+  minZ: SIXTEENTH,
 }
 
 /** The world-space AABB of the block at integer cell (bx, by, bz), given its shape. */
 export const blockAABB = (bx: number, by: number, bz: number, shape: AABB = FULL_BLOCK_SHAPE): AABB => ({
-  minX: bx + shape.minX,
-  minY: by + shape.minY,
-  minZ: bz + shape.minZ,
   maxX: bx + shape.maxX,
   maxY: by + shape.maxY,
   maxZ: bz + shape.maxZ,
+  minX: bx + shape.minX,
+  minY: by + shape.minY,
+  minZ: bz + shape.minZ,
 })
 
 /**

@@ -475,6 +475,20 @@ describe('continuous collision for high-speed steps', () => {
     }),
   )
 
+  it.effect('uses X before Z when two swept faces are reached simultaneously', () =>
+    Effect.sync(() => {
+      const options = withWorld((bx, by, bz) =>
+        (bx === 1 && by === 1 && bz === 4) || (bx === 2 && by === 1 && bz === 3),
+      )
+      const diagonal = standingOn(0, { vx: 75, vz: 200 })
+
+      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+
+      expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
+      expect(stepped.body.vx).toBe(0)
+    }),
+  )
+
   it.effect('blocks motion into an initial contact but permits motion away from it', () =>
     Effect.sync(() => {
       const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
