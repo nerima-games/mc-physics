@@ -108,6 +108,20 @@ const segmentAABB = (start: Vec3, end: Vec3, box: AABB): SegmentHit | null => {
     far = Math.min(far, Math.max(low, high))
     if (near > far) {return null}
   }
+  /*
+   * PROOF this check's condition is unreachable, not merely untested: `near`
+   * starts at 0 and is only ever replaced by a strictly larger `entering`
+   * value, so `near >= 0` holds for the rest of the function. `far` starts at
+   * 1 and is only ever narrowed by `Math.min`, so `far <= 1` holds throughout
+   * too. If `near` had ever exceeded 1 it would also have exceeded `far`
+   * (since `far <= 1 < near` at that point), and the `near > far` check two
+   * lines above would already have returned `null` on that same axis's
+   * iteration — this line is only reached when the loop completes without
+   * that happening, i.e. when `near <= far <= 1` held on every axis. So at
+   * this point `0 <= near <= far <= 1`, making `near < 0 || near > 1`
+   * provably always false.
+   */
+  /* v8 ignore next */
   if (near < 0 || near > 1) {return null}
   return {
     fraction: near,
@@ -166,9 +180,21 @@ export const stepArrow = (arrow: Arrow, world: ProjectileWorld, dt: number): Pro
   }
   if (first !== null) {
     const flightTimeSeconds = arrow.ageSeconds + dt * first.fraction
+    /*
+     * PROOF the `?? ''` fallback below is unreachable, not merely untested:
+     * `first.entityId` is only read there inside the `first.kind === 'entity'`
+     * branch, and `first` is built in exactly two places above — the `'block'`
+     * branch never sets `entityId` at all, and the `'entity'` branch always
+     * sets it to `entity.id`, a required (non-optional) `string` on
+     * `ProjectileEntity`. So whenever `first.kind === 'entity'`,
+     * `first.entityId` is already a defined string; the type only carries
+     * `entityId?: string` because it is shared with the `'block'` shape.
+     */
+    /* v8 ignore next */
+    const entityId = first.entityId ?? ''
     const hit: ProjectileHit = first.kind === 'block'
       ? { flightTimeSeconds, kind: 'block', normal: first.normal, point: first.point }
-      : { entityId: first.entityId ?? '', flightTimeSeconds, kind: 'entity', normal: first.normal, point: first.point }
+      : { entityId, flightTimeSeconds, kind: 'entity', normal: first.normal, point: first.point }
     const base = { ...arrow, ageSeconds: flightTimeSeconds, position: first.point, velocity: { x: 0, y: 0, z: 0 } }
     return first.kind === 'block'
       ? { arrow: { ...base, hit, recoverable: true, state: 'stuck' }, hit }

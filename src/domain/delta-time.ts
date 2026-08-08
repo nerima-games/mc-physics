@@ -81,8 +81,11 @@ export const MAX_DELTA_SECS = 0.05
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
 export const FIRST_FRAME_DELTA_SECS = 0.016
 
+/** The brand's own floor — any non-negative delta is legal, even outside the clamp range below (see the module header). */
+const BRAND_MIN_SECS = 0
+
 export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
-  (value) => Number.isFinite(value) && value >= 0,
+  (value) => Number.isFinite(value) && value >= BRAND_MIN_SECS,
   (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
 )
 
@@ -121,7 +124,9 @@ export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
  * ban — `pnpm check:deps`, which used to enforce it, was removed org-wide).
  * Time is injected, so a replay produces the same simulation.
  */
-export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs =>
-  previousSecs === undefined
-    ? DeltaTimeSecs(FIRST_FRAME_DELTA_SECS)
-    : clampDeltaTime(currentSecs - previousSecs)
+export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs => {
+  if (typeof previousSecs === 'undefined') {
+    return DeltaTimeSecs(FIRST_FRAME_DELTA_SECS)
+  }
+  return clampDeltaTime(currentSecs - previousSecs)
+}

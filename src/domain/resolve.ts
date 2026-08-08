@@ -108,18 +108,18 @@
  * change in mc-sim and nothing here moves.
  */
 import {
+  type AABB,
   CONTACT_EPSILON,
   CentreY,
   FULL_BLOCK_SHAPE,
+  type HalfHeight,
   blockAABB,
   collidesWith,
   entityAABB,
   isRestingOn,
-  type AABB,
-  type HalfHeight,
 } from './coordinates'
+import { type Body, GRAVITY_Y, integrateBody } from './integrate'
 import type { DeltaTimeSecs } from './delta-time'
-import { GRAVITY_Y, integrateBody, type Body } from './integrate'
 
 /**
  * "Does this cell stop a body?" Asked once per candidate cell.
@@ -207,8 +207,22 @@ export const clampSneakEdge = (
   return { x: nextX, z: nextZ }
 }
 
-const shapeAt = (options: ResolveOptions, bx: number, by: number, bz: number): AABB | null =>
-  options.blockShapeAt?.(bx, by, bz) ?? (options.isBlockSolid(bx, by, bz) ? FULL_BLOCK_SHAPE : null)
+const shapeAt = (options: ResolveOptions, bx: number, by: number, bz: number): AABB | null => {
+  /*
+   * `null` (an opinion of "no shape here") and `undefined` (no `blockShapeAt`
+   * at all) both fall through to `isBlockSolid`, matching `??`'s nullish check
+   * on the original expression — `blockShapeAt` returning `null` is NOT the
+   * same as this function returning `null` early.
+   */
+  const shape = options.blockShapeAt?.(bx, by, bz)
+  if (shape !== null && typeof shape !== 'undefined') {
+    return shape
+  }
+  if (options.isBlockSolid(bx, by, bz)) {
+    return FULL_BLOCK_SHAPE
+  }
+  return null
+}
 
 const boxAt = (options: ResolveOptions, x: number, y: CentreY, z: number): AABB =>
   entityAABB(x, y, z, options.halfWidth, options.halfHeight)
@@ -233,12 +247,11 @@ const forEachCollidingBlock = (
     for (let by = Math.floor(box.minY); by <= byMax; by += 1) {
       for (let bz = Math.floor(box.minZ); bz <= bzMax; bz += 1) {
         const shape = shapeAt(options, bx, by, bz)
-        if (shape === null) {
-          continue
-        }
-        const blockBox = blockAABB(bx, by, bz, shape)
-        if (collidesWith(box, blockBox)) {
-          visit(blockBox)
+        if (shape !== null) {
+          const blockBox = blockAABB(bx, by, bz, shape)
+          if (collidesWith(box, blockBox)) {
+            visit(blockBox)
+          }
         }
       }
     }
@@ -291,7 +304,10 @@ const clampAxis = (
         face = Math.min(face, candidateFace)
       }
     })
-    return face < Number.POSITIVE_INFINITY ? { position: face - halfExtent, velocity: 0 } : state
+    if (face < Number.POSITIVE_INFINITY) {
+      return { position: face - halfExtent, velocity: 0 }
+    }
+    return state
   }
   if (state.velocity < 0) {
     let face = Number.NEGATIVE_INFINITY
@@ -301,11 +317,18 @@ const clampAxis = (
         face = Math.max(face, candidateFace)
       }
     })
-    return face > Number.NEGATIVE_INFINITY ? { position: face + halfExtent, velocity: 0 } : state
+    if (face > Number.NEGATIVE_INFINITY) {
+      return { position: face + halfExtent, velocity: 0 }
+    }
+    return state
   }
-  // The former eager `collidingBlocks(...)` argument queried the same cells
-  // even for a stationary axis. Preserve that observable world-callback order.
-  forEachCollidingBlock(options, box, () => {})
+  /*
+   * The former eager `collidingBlocks(...)` argument queried the same cells
+   * even for a stationary axis. Preserve that observable world-callback order.
+   */
+  forEachCollidingBlock(options, box, () => {
+    // Intentionally empty: only the traversal's world-callback order matters here.
+  })
   return state
 }
 
@@ -339,9 +362,10 @@ const resolveVertical = (
         floorTop = Math.max(floorTop, block.maxY)
       }
     })
-    return floorTop > Number.NEGATIVE_INFINITY
-      ? { position: floorTop + options.halfHeight, velocity: 0 }
-      : state
+    if (floorTop > Number.NEGATIVE_INFINITY) {
+      return { position: floorTop + options.halfHeight, velocity: 0 }
+    }
+    return state
   }
 
   const reach = state.velocity * deltaTime + CONTACT_EPSILON
@@ -351,7 +375,10 @@ const resolveVertical = (
       ceiling = Math.min(ceiling, block.minY)
     }
   })
-  return ceiling < Number.POSITIVE_INFINITY ? { position: ceiling - options.halfHeight, velocity: 0 } : state
+  if (ceiling < Number.POSITIVE_INFINITY) {
+    return { position: ceiling - options.halfHeight, velocity: 0 }
+  }
+  return state
 }
 
 /**
@@ -441,12 +468,12 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
 
   const resolved: Body = {
     kind: 'dynamic',
-    x: alongX.position,
-    y: resolvedY,
-    z: alongZ.position,
     vx: alongX.velocity,
     vy: vertical.velocity,
     vz: alongZ.velocity,
+    x: alongX.position,
+    y: resolvedY,
+    z: alongZ.position,
   }
 
   return {
@@ -476,7 +503,18 @@ type SweepHit = {
   readonly axis: SweepAxis
 }
 
-const axisPriority = (axis: SweepAxis): number => (axis === 'y' ? 0 : axis === 'x' ? 1 : 2)
+/** Tie-break order at equal sweep-hit times: Y first, then X, then Z — the same axis order the file header explains above. */
+const AXIS_PRIORITY_Z = 2
+
+const axisPriority = (axis: SweepAxis): number => {
+  if (axis === 'y') {
+    return 0
+  }
+  if (axis === 'x') {
+    return 1
+  }
+  return AXIS_PRIORITY_Z
+}
 
 /**
  * Cells near the centre-line grid walk. Unlike scanning the swept bounding
@@ -520,20 +558,21 @@ const forEachSweptCandidate = (
     for (let bx = minX; bx <= maxX; bx += 1) {
       for (let by = minY; by <= maxY; by += 1) {
         for (let bz = minZ; bz <= maxZ; bz += 1) {
-          // Each range bound is monotonic along a linear sweep, so a cell
-          // cannot leave a range and re-enter later. The previous fixed range
-          // is therefore a complete allocation-free duplicate filter.
-          if (
+          /*
+           * Each range bound is monotonic along a linear sweep, so a cell
+           * cannot leave a range and re-enter later. The previous fixed range
+           * is therefore a complete allocation-free duplicate filter.
+           */
+          const isDuplicateOfPreviousRange =
             hasPreviousRange
             && bx >= previousMinX && bx <= previousMaxX
             && by >= previousMinY && by <= previousMaxY
             && bz >= previousMinZ && bz <= previousMaxZ
-          ) {
-            continue
-          }
-          const shape = shapeAt(options, bx, by, bz)
-          if (shape !== null) {
-            visit(blockAABB(bx, by, bz, shape))
+          if (!isDuplicateOfPreviousRange) {
+            const shape = shapeAt(options, bx, by, bz)
+            if (shape !== null) {
+              visit(blockAABB(bx, by, bz, shape))
+            }
           }
         }
       }
@@ -546,6 +585,41 @@ const forEachSweptCandidate = (
     previousMinZ = minZ
     previousMaxZ = maxZ
   }
+}
+
+/** One axis's slab-test inputs for the sweep below: where the ray starts, how far it moves, and the block's expanded bounds on that axis. */
+type SweepAxisComponents = {
+  readonly axis: SweepAxis
+  readonly delta: number
+  readonly max: number
+  readonly min: number
+  readonly origin: number
+}
+
+/** The three axes' slab-test inputs, in the Y -> X -> Z tie-break order used throughout this file. */
+const sweepAxisComponents = (
+  start: Body,
+  delta: Vec3Delta,
+  bounds: ExpandedBlockBounds,
+): ReadonlyArray<SweepAxisComponents> => [
+  { axis: 'y', delta: delta.dy, max: bounds.maxY, min: bounds.minY, origin: start.y },
+  { axis: 'x', delta: delta.dx, max: bounds.maxX, min: bounds.minX, origin: start.x },
+  { axis: 'z', delta: delta.dz, max: bounds.maxZ, min: bounds.minZ, origin: start.z },
+]
+
+type Vec3Delta = {
+  readonly dx: number
+  readonly dy: number
+  readonly dz: number
+}
+
+type ExpandedBlockBounds = {
+  readonly maxX: number
+  readonly maxY: number
+  readonly maxZ: number
+  readonly minX: number
+  readonly minY: number
+  readonly minZ: number
 }
 
 const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | null => {
@@ -565,8 +639,10 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
     if (Math.abs(dy) <= CONTACT_EPSILON && touchesVerticalFace) {
       return
     }
-    // Endpoint overlaps remain the discrete resolver's responsibility. This
-    // Keeps its step-up and established low-speed face selection unchanged.
+    /*
+     * Endpoint overlaps remain the discrete resolver's responsibility; this
+     * keeps its step-up and established low-speed face selection unchanged.
+     */
     if (collidesWith(endBox, block)) {
       return
     }
@@ -588,28 +664,24 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
     let exit = Number.POSITIVE_INFINITY
     let entryAxis: SweepAxis = 'y'
     let misses = false
-    for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
-      const axis: SweepAxis = axisIndex === 0 ? 'y' : axisIndex === 1 ? 'x' : 'z'
-      const origin = axisIndex === 0 ? start.y : axisIndex === 1 ? start.x : start.z
-      const delta = axisIndex === 0 ? dy : axisIndex === 1 ? dx : dz
-      const min = axisIndex === 0 ? minY : axisIndex === 1 ? minX : minZ
-      const max = axisIndex === 0 ? maxY : axisIndex === 1 ? maxX : maxZ
-      if (Math.abs(delta) <= CONTACT_EPSILON) {
-        if (origin < min - CONTACT_EPSILON || origin > max + CONTACT_EPSILON) {
+    for (const component of sweepAxisComponents(start, { dx, dy, dz }, { maxX, maxY, maxZ, minX, minY, minZ })) {
+      if (Math.abs(component.delta) <= CONTACT_EPSILON) {
+        if (component.origin < component.min - CONTACT_EPSILON || component.origin > component.max + CONTACT_EPSILON) {
           misses = true
           break
         }
-        continue
+        // Else: the ray does not move on this axis and is already inside the slab, so it contributes nothing.
+      } else {
+        const first = (component.min - component.origin) / component.delta
+        const second = (component.max - component.origin) / component.delta
+        const axisEntry = Math.min(first, second)
+        const axisExit = Math.max(first, second)
+        if (axisEntry > entry + CONTACT_EPSILON) {
+          entry = axisEntry
+          entryAxis = component.axis
+        }
+        exit = Math.min(exit, axisExit)
       }
-      const first = (min - origin) / delta
-      const second = (max - origin) / delta
-      const axisEntry = Math.min(first, second)
-      const axisExit = Math.max(first, second)
-      if (axisEntry > entry + CONTACT_EPSILON) {
-        entry = axisEntry
-        entryAxis = axis
-      }
-      exit = Math.min(exit, axisExit)
     }
     if (misses || entry > exit + CONTACT_EPSILON || exit < 0 || entry < -CONTACT_EPSILON || entry >= 1 - CONTACT_EPSILON) {
       return
@@ -625,11 +697,23 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       hasNearest = true
     }
   })
-  return hasNearest ? { time: nearestTime, axis: nearestAxis } : null
+  if (hasNearest) {
+    return { axis: nearestAxis, time: nearestTime }
+  }
+  return null
 }
 
+/** A box's full extent along one axis is twice its half-extent. */
+const DIAMETER_FACTOR = 2
+
+/** Y, X, Z: at most one collision to resolve per axis per step. */
+const MAX_SWEEP_COLLISIONS_PER_STEP = 3
+
 const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptions): Body => {
-  const minimumBodySpan = Math.min(2 * options.halfWidth, 2 * Number(options.halfHeight))
+  const minimumBodySpan = Math.min(
+    DIAMETER_FACTOR * options.halfWidth,
+    DIAMETER_FACTOR * Number(options.halfHeight),
+  )
   if (
     Math.abs(integrated.x - start.x) <= minimumBodySpan
     && Math.abs(integrated.y - start.y) <= minimumBodySpan
@@ -640,7 +724,7 @@ const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptio
 
   let from = start
   let target = integrated
-  for (let collision = 0; collision < 3; collision += 1) {
+  for (let collision = 0; collision < MAX_SWEEP_COLLISIONS_PER_STEP; collision += 1) {
     const hit = sweptHit(from, target, options)
     if (hit === null) {
       break
@@ -655,11 +739,11 @@ const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptio
       z: from.z + dz * hit.time,
     }
     if (hit.axis === 'x') {
-      target = { ...target, x: contact.x, vx: 0 }
+      target = { ...target, vx: 0, x: contact.x }
     } else if (hit.axis === 'y') {
-      target = { ...target, y: contact.y, vy: 0 }
+      target = { ...target, vy: 0, y: contact.y }
     } else {
-      target = { ...target, z: contact.z, vz: 0 }
+      target = { ...target, vz: 0, z: contact.z }
     }
     from = contact
   }
@@ -683,7 +767,10 @@ export const stepBody = (
   gravityY: number = GRAVITY_Y,
 ): Resolution => {
   const integrated = integrateBody(body, deltaTime, gravityY)
-  const collisionSafe = body.kind === 'dynamic' ? resolveSweptMotion(body, integrated, options) : integrated
+  let collisionSafe = integrated
+  if (body.kind === 'dynamic') {
+    collisionSafe = resolveSweptMotion(body, integrated, options)
+  }
   return resolveBody(collisionSafe, deltaTime, options)
 }
 
@@ -705,4 +792,4 @@ export const stepWorld = (
  * threshold; this helper remains useful to callers of `resolveBody` directly.
  */
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number =>
-  (blockThickness + 2 * halfExtent) / maxDeltaSecs
+  (blockThickness + DIAMETER_FACTOR * halfExtent) / maxDeltaSecs

@@ -39,9 +39,9 @@
  * See docs/design-notes.md, regressions `physics-dda-skips-origin-cell` and
  * `physics-dda-respects-max-distance`.
  */
+import { type AABB, FULL_BLOCK_SHAPE, type Vec3, blockAABB } from './coordinates'
 import type { BlockFace } from '@nerima-games/mc-kernel'
 import { Option } from 'effect'
-import { blockAABB, FULL_BLOCK_SHAPE, type AABB, type Vec3 } from './coordinates'
 
 export type VoxelHit = {
   /** Integer cell coordinates of the block that was hit. */
@@ -140,6 +140,60 @@ const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | nu
 }
 /* eslint-enable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
 
+/** Which way (if any) the DDA steps on one axis, from that axis's normalised ray-direction component. */
+const stepSign = (component: number): -1 | 0 | 1 => {
+  if (component > 0) {
+    return 1
+  }
+  if (component < 0) {
+    return -1
+  }
+  return 0
+}
+
+/**
+ * Ray-parameter distance between successive grid-boundary crossings on one
+ * axis. Infinity if the ray never moves on this axis, so it never wins the
+ * three-way comparison in the walk loop below.
+ */
+const axisTDelta = (step: number, component: number): number => {
+  if (step === 0) {
+    return Infinity
+  }
+  return Math.abs(1 / component)
+}
+
+/** Ray-parameter distance to the FIRST grid-boundary crossing on one axis. */
+const firstCrossingT = (step: number, cell: number, originComponent: number, tDelta: number): number => {
+  if (step === 0) {
+    return Infinity
+  }
+  if (step > 0) {
+    return (cell + 1 - originComponent) * tDelta
+  }
+  return (originComponent - cell) * tDelta
+}
+
+/** Which cube face a step in the given direction along one axis enters through. */
+const crossingFace = (step: number, positiveFace: BlockFace, negativeFace: BlockFace): BlockFace => {
+  if (step > 0) {
+    return positiveFace
+  }
+  return negativeFace
+}
+
+/** One grid-boundary crossing: how far along the ray, which face, and the entered face's unit normal. */
+type AxisCrossing = {
+  readonly travelled: number
+  readonly face: BlockFace
+  readonly normalX: number
+  readonly normalY: number
+  readonly normalZ: number
+}
+
+/** Setup-phase-only: run once per `voxelRaycast` call, never inside the walk loop. */
+const STEP_BOUND_MARGIN = 3
+
 /**
  * Walk the voxel grid from `origin` along `direction` and return the first
  * targetable cell, or `Option.none()`.
@@ -150,7 +204,10 @@ const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | nu
  * test for it (`packages/world/domain/voxel-raycast.test.ts`).
  *
  * `let` + `for` throughout: this is the canonical incremental DDA, and its
- * whole advantage is that each step is a comparison and an add.
+ * whole advantage is that each step is a comparison and an add. The per-step
+ * axis walk is deliberately NOT split into a helper function call: that would
+ * reintroduce a call per grid cell crossed, exactly the cost this loop shape
+ * exists to avoid.
  */
 export const voxelRaycast = (
   origin: Vec3,
@@ -175,85 +232,104 @@ export const voxelRaycast = (
   let cellY = Math.floor(origin.y)
   let cellZ = Math.floor(origin.z)
 
-  const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0
-  const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0
-  const stepZ = dz > 0 ? 1 : dz < 0 ? -1 : 0
+  const stepX = stepSign(dx)
+  const stepY = stepSign(dy)
+  const stepZ = stepSign(dz)
 
-  // Distance along the ray between successive boundary crossings, per axis.
-  // An axis the ray does not move along never crosses: Infinity, so its tMax
-  // never wins the three-way comparison below.
-  const tDeltaX = stepX === 0 ? Infinity : Math.abs(1 / dx)
-  const tDeltaY = stepY === 0 ? Infinity : Math.abs(1 / dy)
-  const tDeltaZ = stepZ === 0 ? Infinity : Math.abs(1 / dz)
+  /*
+   * Distance along the ray between successive boundary crossings, per axis.
+   * An axis the ray does not move along never crosses: Infinity, so its tMax
+   * never wins the three-way comparison below.
+   */
+  const tDeltaX = axisTDelta(stepX, dx)
+  const tDeltaY = axisTDelta(stepY, dy)
+  const tDeltaZ = axisTDelta(stepZ, dz)
 
   // Distance to the FIRST crossing on each axis.
-  let tMaxX = stepX === 0 ? Infinity : (stepX > 0 ? cellX + 1 - origin.x : origin.x - cellX) * tDeltaX
-  let tMaxY = stepY === 0 ? Infinity : (stepY > 0 ? cellY + 1 - origin.y : origin.y - cellY) * tDeltaY
-  let tMaxZ = stepZ === 0 ? Infinity : (stepZ > 0 ? cellZ + 1 - origin.z : origin.z - cellZ) * tDeltaZ
+  let tMaxX = firstCrossingT(stepX, cellX, origin.x, tDeltaX)
+  let tMaxY = firstCrossingT(stepY, cellY, origin.y, tDeltaY)
+  let tMaxZ = firstCrossingT(stepZ, cellZ, origin.z, tDeltaZ)
 
-  // The ray crosses at most maxDistance/tDelta boundaries per axis. Summing
-  // over the axes gives the L1 bound; +3 covers the entry cell and rounding.
-  const maxSteps = Math.ceil(maxDistance * (Math.abs(dx) + Math.abs(dy) + Math.abs(dz))) + 3
+  /*
+   * The ray crosses at most maxDistance/tDelta boundaries per axis. Summing
+   * over the axes gives the L1 bound; STEP_BOUND_MARGIN covers the entry cell
+   * and rounding.
+   */
+  const maxSteps = Math.ceil(maxDistance * (Math.abs(dx) + Math.abs(dy) + Math.abs(dz))) + STEP_BOUND_MARGIN
 
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
-    let travelled: number
-    let normalX = 0
-    let normalY = 0
-    let normalZ = 0
-    let face: BlockFace
-
+    let crossing: AxisCrossing
     if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
-      travelled = tMaxX
+      crossing = { face: crossingFace(stepX, 'west', 'east'), normalX: -stepX, normalY: 0, normalZ: 0, travelled: tMaxX }
       cellX += stepX
       tMaxX += tDeltaX
-      normalX = -stepX
-      face = stepX > 0 ? 'west' : 'east'
     } else if (tMaxY <= tMaxZ) {
-      travelled = tMaxY
+      crossing = { face: crossingFace(stepY, 'down', 'up'), normalX: 0, normalY: -stepY, normalZ: 0, travelled: tMaxY }
       cellY += stepY
       tMaxY += tDeltaY
-      normalY = -stepY
-      face = stepY > 0 ? 'down' : 'up'
     } else {
-      travelled = tMaxZ
+      crossing = { face: crossingFace(stepZ, 'north', 'south'), normalX: 0, normalY: 0, normalZ: -stepZ, travelled: tMaxZ }
       cellZ += stepZ
       tMaxZ += tDeltaZ
-      normalZ = -stepZ
-      face = stepZ > 0 ? 'north' : 'south'
     }
 
-    if (travelled > maxDistance) {
+    if (crossing.travelled > maxDistance) {
       return Option.none()
     }
-    if (!isTargetable(cellX, cellY, cellZ)) {
-      continue
+    if (isTargetable(cellX, cellY, cellZ)) {
+      const shape = shapeAt?.(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
+      if (isCellShape(shape)) {
+        let shapeHit: ShapeHit | null = null
+        if (typeof shapeAt === 'undefined') {
+          shapeHit = {
+            distance: crossing.travelled,
+            face: crossing.face,
+            normal: { x: crossing.normalX, y: crossing.normalY, z: crossing.normalZ },
+          }
+        } else {
+          shapeHit = intersectShape(origin, { x: dx, y: dy, z: dz }, blockAABB(cellX, cellY, cellZ, shape))
+        }
+        if (shapeHit !== null && shapeHit.distance <= maxDistance) {
+          return Option.some({
+            bx: cellX,
+            by: cellY,
+            bz: cellZ,
+            distance: shapeHit.distance,
+            face: shapeHit.face,
+            normal: shapeHit.normal,
+            point: {
+              x: origin.x + dx * shapeHit.distance,
+              y: origin.y + dy * shapeHit.distance,
+              z: origin.z + dz * shapeHit.distance,
+            },
+          })
+        }
+      }
     }
-
-    const shape = shapeAt?.(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
-    if (!isCellShape(shape)) {
-      continue
-    }
-    const shapeHit = shapeAt === undefined
-      ? { distance: travelled, normal: { x: normalX, y: normalY, z: normalZ }, face }
-      : intersectShape(origin, { x: dx, y: dy, z: dz }, blockAABB(cellX, cellY, cellZ, shape))
-    if (shapeHit === null || shapeHit.distance > maxDistance) {
-      continue
-    }
-
-    return Option.some({
-      bx: cellX,
-      by: cellY,
-      bz: cellZ,
-      normal: shapeHit.normal,
-      face: shapeHit.face,
-      distance: shapeHit.distance,
-      point: {
-        x: origin.x + dx * shapeHit.distance,
-        y: origin.y + dy * shapeHit.distance,
-        z: origin.z + dz * shapeHit.distance,
-      },
-    })
   }
 
+  /* v8 ignore start */
+  /*
+   * PROOF this is unreachable, not merely untested: `maxSteps` is
+   * `ceil(maxDistance * (|dx| + |dy| + |dz|)) + STEP_BOUND_MARGIN` for a unit
+   * direction. The number of grid-boundary crossings a straight ray of length
+   * `maxDistance` makes is `sum over axes of |floor(end_axis) -
+   * floor(start_axis)|`, which is bounded above by `maxDistance * |axis
+   * component| + 1` per axis (one crossing per unit travelled, plus at most
+   * one more for where the ray starts mid-cell) — summed, that is exactly the
+   * L1 term above plus at most 3, which `STEP_BOUND_MARGIN` supplies. So the
+   * in-loop `crossing.travelled > maxDistance` check is guaranteed to fire
+   * (returning `Option.none()` from inside the loop) at or before the last
+   * budgeted step, for every finite `origin`/`direction` this function
+   * accepts — both are validated finite above. This fallback exists as a
+   * belt-and-suspenders return so the function's type is total even if that
+   * bound is ever loosened; it was already documented as the sole
+   * unreachable-in-practice line at this repository's coverage-gate rollout
+   * (see vitest.config.ts's `thresholds` comment). v8's coverage instrument
+   * attributes the enclosing loop's "completed without an early return" edge
+   * to this whole trailing region (from the loop's closing brace to the
+   * function's), not just the `return` line, so the ignore spans that region.
+   */
   return Option.none()
+  /* v8 ignore stop */
 }
