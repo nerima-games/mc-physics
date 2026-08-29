@@ -1,4 +1,3 @@
-/* eslint-disable complexity, id-length, max-statements, no-continue, no-magic-numbers, no-ternary, no-undefined */
 import type { AABB } from './coordinates'
 import type { Position } from '@nerima-games/mc-kernel'
 
@@ -34,11 +33,16 @@ export const ARROW_PROFILE: ProjectileProfile = {
 
 /**
  * Java gives the snowball 0.03 blocks/tick² of gravity against the arrow's
- * 0.05 — a 0.6x ratio. `ARROW_PROFILE.gravity` is that same per-tick constant
- * already converted to this module's seconds basis, so applying the same
- * ratio there carries the conversion through unchanged: 9.81 * 0.6 = 5.886.
+ * 0.05 — a 0.6x ratio (`SNOWBALL_GRAVITY_RATIO`). `ARROW_PROFILE.gravity` is
+ * that same per-tick constant already converted to this module's seconds
+ * basis, so applying the same ratio there carries the conversion through
+ * unchanged: 9.81 * 0.6 = 5.886.
  */
-export const SNOWBALL_PROFILE: ProjectileProfile = { ...ARROW_PROFILE, gravity: ARROW_PROFILE.gravity * 0.6 }
+const SNOWBALL_GRAVITY_RATIO = 0.6
+export const SNOWBALL_PROFILE: ProjectileProfile = {
+  ...ARROW_PROFILE,
+  gravity: ARROW_PROFILE.gravity * SNOWBALL_GRAVITY_RATIO,
+}
 
 /** Java's egg shares the snowball's 0.03 blocks/tick² gravity exactly. */
 export const EGG_PROFILE: ProjectileProfile = SNOWBALL_PROFILE
@@ -99,62 +103,97 @@ const contains = (box: AABB, point: Position): boolean =>
   point.y >= box.minY && point.y <= box.maxY &&
   point.z >= box.minZ && point.z <= box.maxZ
 
+const ZERO_NORMAL: Position = { x: 0, y: 0, z: 0 }
+
+type AxisSlab = Readonly<{
+  delta: number
+  max: number
+  min: number
+  negativeNormal: Position
+  positiveNormal: Position
+  start: number
+}>
+
+type SlabWindow = Readonly<{ entry: number; exit: number; normal: Position }>
+
+/**
+ * A zero-delta axis never leaves its start value, so it neither narrows the
+ * [entry, exit] window nor contributes a face normal — reported here as the
+ * widest-possible window ([-Infinity, Infinity], no normal) rather than via a
+ * `continue` in the caller's loop, so the caller has one shape to fold over
+ * regardless of axis.
+ */
+const slabWindow = (slab: AxisSlab): SlabWindow | null => {
+  if (slab.delta === 0) {
+    if (slab.start < slab.min || slab.start > slab.max) {
+      return null
+    }
+    return { entry: Number.NEGATIVE_INFINITY, exit: Number.POSITIVE_INFINITY, normal: ZERO_NORMAL }
+  }
+  const low = (slab.min - slab.start) / slab.delta
+  const high = (slab.max - slab.start) / slab.delta
+  let normal = slab.positiveNormal
+  if (slab.delta > 0) {
+    normal = slab.negativeNormal
+  }
+  return { entry: Math.min(low, high), exit: Math.max(low, high), normal }
+}
+
+const axisSlabs = (start: Position, delta: Position, box: AABB): readonly AxisSlab[] => [
+  {
+    delta: delta.x,
+    max: box.maxX,
+    min: box.minX,
+    negativeNormal: { x: -1, y: 0, z: 0 },
+    positiveNormal: { x: 1, y: 0, z: 0 },
+    start: start.x,
+  },
+  {
+    delta: delta.y,
+    max: box.maxY,
+    min: box.minY,
+    negativeNormal: { x: 0, y: -1, z: 0 },
+    positiveNormal: { x: 0, y: 1, z: 0 },
+    start: start.y,
+  },
+  {
+    delta: delta.z,
+    max: box.maxZ,
+    min: box.minZ,
+    negativeNormal: { x: 0, y: 0, z: -1 },
+    positiveNormal: { x: 0, y: 0, z: 1 },
+    start: start.z,
+  },
+]
+
 const segmentAABB = (start: Position, end: Position, box: AABB): SegmentHit | null => {
-  if (!validBox(box)) {return null}
-  const deltaX = end.x - start.x
-  const deltaY = end.y - start.y
-  const deltaZ = end.z - start.z
-  let near = 0
+  if (!validBox(box)) {
+    return null
+  }
+  const delta: Position = { x: end.x - start.x, y: end.y - start.y, z: end.z - start.z }
   let far = 1
-  let normalX = 0
-  let normalY = 0
-  let normalZ = 0
-  let axisDelta = deltaX
-  let axisStart = start.x
-  let axisMin = box.minX
-  let axisMax = box.maxX
-  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
-    if (axisIndex === 1) {
-      axisDelta = deltaY
-      axisStart = start.y
-      axisMin = box.minY
-      axisMax = box.maxY
-    } else if (axisIndex === 2) {
-      axisDelta = deltaZ
-      axisStart = start.z
-      axisMin = box.minZ
-      axisMax = box.maxZ
+  let best: SlabWindow = { entry: 0, exit: 1, normal: ZERO_NORMAL }
+  for (const slab of axisSlabs(start, delta, box)) {
+    const window = slabWindow(slab)
+    if (window === null) {
+      return null
     }
-    if (axisDelta === 0) {
-      if (axisStart < axisMin || axisStart > axisMax) {return null}
-      continue
+    if (window.entry > best.entry) {
+      best = window
     }
-    const low = (axisMin - axisStart) / axisDelta
-    const high = (axisMax - axisStart) / axisDelta
-    const entering = Math.min(low, high)
-    if (entering > near) {
-      near = entering
-      if (axisIndex === 0) {
-        normalX = axisDelta > 0 ? -1 : 1
-        normalY = 0
-        normalZ = 0
-      } else if (axisIndex === 1) {
-        normalX = 0
-        normalY = axisDelta > 0 ? -1 : 1
-        normalZ = 0
-      } else {
-        normalX = 0
-        normalY = 0
-        normalZ = axisDelta > 0 ? -1 : 1
-      }
+    far = Math.min(far, window.exit)
+    if (best.entry > far) {
+      return null
     }
-    far = Math.min(far, Math.max(low, high))
-    if (near > far) {return null}
   }
   return {
-    fraction: near,
-    normal: { x: normalX, y: normalY, z: normalZ },
-    point: { x: start.x + deltaX * near, y: start.y + deltaY * near, z: start.z + deltaZ * near },
+    fraction: best.entry,
+    normal: best.normal,
+    point: {
+      x: start.x + delta.x * best.entry,
+      y: start.y + delta.y * best.entry,
+      z: start.z + delta.z * best.entry,
+    },
   }
 }
 
@@ -164,6 +203,15 @@ const despawn = (
 ): ProjectileStep => ({
   projectile: { ...projectile, reason, state: 'despawned' },
 })
+
+type LaunchedBase = Readonly<{ ageSeconds: number; position: Position; velocity: Position }>
+
+const withShooterId = (base: LaunchedBase, shooterId: string | undefined): ProjectileBase => {
+  if (typeof shooterId === 'string') {
+    return { ...base, shooterId }
+  }
+  return base
+}
 
 /**
  * Launch kinematics are profile-independent: the initial velocity derives
@@ -177,10 +225,115 @@ export const launchProjectile = (launch: ProjectileLaunch): Projectile => {
     y: -Math.sin(launch.pitchRadians) * launch.speed,
     z: -Math.cos(launch.yawRadians) * horizontalSpeed,
   }
-  const base = { ageSeconds: 0, position: launch.position, velocity, ...(launch.shooterId === undefined ? {} : { shooterId: launch.shooterId }) }
-  return finiteVec(launch.position) && finiteVec(velocity) && Number.isFinite(launch.speed) && launch.speed >= 0
-    ? { ...base, state: 'flying' }
-    : { ...base, reason: 'invalid', state: 'despawned' }
+  const base = withShooterId({ ageSeconds: 0, position: launch.position, velocity }, launch.shooterId)
+  const isValidLaunch =
+    finiteVec(launch.position) && finiteVec(velocity) && Number.isFinite(launch.speed) && launch.speed >= 0
+  if (isValidLaunch) {
+    return { ...base, state: 'flying' }
+  }
+  return { ...base, reason: 'invalid', state: 'despawned' }
+}
+
+type CandidateHit = SegmentHit &
+  (Readonly<{ kind: 'block' }> | Readonly<{ kind: 'entity'; entityId: string }>)
+
+/** Ties go to whichever candidate was already `first`, i.e. to array/search order. */
+const earlierHit = (first: CandidateHit | null, candidate: CandidateHit): CandidateHit => {
+  if (first === null || candidate.fraction < first.fraction) {
+    return candidate
+  }
+  return first
+}
+
+const firstBlockHit = (start: Position, end: Position, world: ProjectileWorld): CandidateHit | null => {
+  let first: CandidateHit | null = null
+  for (const box of world.blockBounds(start, end)) {
+    const hit = segmentAABB(start, end, box)
+    if (hit !== null) {
+      first = earlierHit(first, { ...hit, kind: 'block' })
+    }
+  }
+  return first
+}
+
+const firstEntityHit = (
+  start: Position,
+  end: Position,
+  world: ProjectileWorld,
+  shooterId: string | undefined,
+  ageSeconds: number,
+  shooterGraceSeconds: number,
+): CandidateHit | null => {
+  let first: CandidateHit | null = null
+  for (const entity of world.entities) {
+    const withinShooterGrace = entity.id === shooterId && ageSeconds < shooterGraceSeconds
+    if (!withinShooterGrace) {
+      const hit = segmentAABB(start, end, entity.bounds)
+      if (hit !== null) {
+        first = earlierHit(first, { ...hit, entityId: entity.id, kind: 'entity' })
+      }
+    }
+  }
+  return first
+}
+
+/** Blocks are searched first, so an exact fraction tie between a block and an entity keeps the block (matches `earlierHit`'s tie rule). */
+const firstHit = (
+  state: ProjectileBase,
+  end: Position,
+  world: ProjectileWorld,
+  profile: ProjectileProfile,
+): CandidateHit | null => {
+  const blockHit = firstBlockHit(state.position, end, world)
+  const entityHit = firstEntityHit(state.position, end, world, state.shooterId, state.ageSeconds, profile.shooterGraceSeconds)
+  if (blockHit === null) {
+    return entityHit
+  }
+  if (entityHit === null) {
+    return blockHit
+  }
+  return earlierHit(blockHit, entityHit)
+}
+
+const buildHitResult = (
+  state: Extract<Projectile, { state: 'flying' }>,
+  dt: number,
+  first: CandidateHit,
+): ProjectileStep => {
+  const flightTimeSeconds = state.ageSeconds + dt * first.fraction
+  const base = { ...state, ageSeconds: flightTimeSeconds, position: first.point, velocity: { x: 0, y: 0, z: 0 } }
+  if (first.kind === 'block') {
+    const hit: ProjectileHit = { flightTimeSeconds, kind: 'block', normal: first.normal, point: first.point }
+    return { hit, projectile: { ...base, hit, recoverable: true, state: 'stuck' } }
+  }
+  const hit: ProjectileHit = {
+    entityId: first.entityId,
+    flightTimeSeconds,
+    kind: 'entity',
+    normal: first.normal,
+    point: first.point,
+  }
+  return { hit, projectile: { ...base, reason: 'entity-hit', state: 'despawned' } }
+}
+
+const isInvalidFlightInput = (state: ProjectileBase, dt: number, world: ProjectileWorld): boolean =>
+  !finiteVec(state.position) ||
+  !finiteVec(state.velocity) ||
+  !Number.isFinite(state.ageSeconds) ||
+  state.ageSeconds < 0 ||
+  !Number.isFinite(dt) ||
+  dt <= 0 ||
+  !validBox(world.bounds)
+
+/** Minecraft simulates physics at 20 ticks per second; drag is defined per-tick, so raising it to `dt * MINECRAFT_TICKS_PER_SECOND` converts the per-tick factor to this module's per-second `dt` basis. */
+const MINECRAFT_TICKS_PER_SECOND = 20
+
+const dragFactorFor = (position: Position, dt: number, world: ProjectileWorld, profile: ProjectileProfile): number => {
+  let drag = profile.airDrag
+  if (world.isInWater(position)) {
+    drag = profile.waterDrag
+  }
+  return drag ** (dt * MINECRAFT_TICKS_PER_SECOND)
 }
 
 export const stepProjectile = (
@@ -189,15 +342,22 @@ export const stepProjectile = (
   world: ProjectileWorld,
   profile: ProjectileProfile,
 ): ProjectileStep => {
-  if (state.state !== 'flying') {return { projectile: state }}
-  if (!finiteVec(state.position) || !finiteVec(state.velocity) || !Number.isFinite(state.ageSeconds) || state.ageSeconds < 0 || !Number.isFinite(dt) || dt <= 0 || !validBox(world.bounds)) {
+  if (state.state !== 'flying') {
+    return { projectile: state }
+  }
+  if (isInvalidFlightInput(state, dt, world)) {
     return despawn(state, 'invalid')
   }
-  const ageSeconds = state.ageSeconds + dt
-  if (!Number.isFinite(ageSeconds)) {return despawn({ ...state, ageSeconds }, 'invalid')}
-  if (ageSeconds >= profile.maxLifetimeSeconds) {return despawn({ ...state, ageSeconds }, 'lifetime')}
 
-  const drag = (world.isInWater(state.position) ? profile.waterDrag : profile.airDrag) ** (dt * 20)
+  const ageSeconds = state.ageSeconds + dt
+  if (!Number.isFinite(ageSeconds)) {
+    return despawn({ ...state, ageSeconds }, 'invalid')
+  }
+  if (ageSeconds >= profile.maxLifetimeSeconds) {
+    return despawn({ ...state, ageSeconds }, 'lifetime')
+  }
+
+  const drag = dragFactorFor(state.position, dt, world, profile)
   const velocity = {
     x: state.velocity.x * drag,
     y: (state.velocity.y - profile.gravity * dt) * drag,
@@ -208,41 +368,18 @@ export const stepProjectile = (
     y: state.position.y + velocity.y * dt,
     z: state.position.z + velocity.z * dt,
   }
-  if (!finiteVec(velocity) || !finiteVec(end)) {return despawn({ ...state, ageSeconds }, 'invalid')}
+  if (!finiteVec(velocity) || !finiteVec(end)) {
+    return despawn({ ...state, ageSeconds }, 'invalid')
+  }
 
-  let first: (SegmentHit & Readonly<{ kind: 'block' | 'entity'; entityId?: string }>) | null = null
-  for (const box of world.blockBounds(state.position, end)) {
-    const hit = segmentAABB(state.position, end, box)
-    if (hit !== null && (first === null || hit.fraction < first.fraction)) {first = { ...hit, kind: 'block' }}
-  }
-  for (const entity of world.entities) {
-    if (entity.id === state.shooterId && state.ageSeconds < profile.shooterGraceSeconds) {continue}
-    const hit = segmentAABB(state.position, end, entity.bounds)
-    if (hit !== null && (first === null || hit.fraction < first.fraction)) {first = { ...hit, entityId: entity.id, kind: 'entity' }}
-  }
+  const first = firstHit(state, end, world, profile)
   if (first !== null) {
-    const flightTimeSeconds = state.ageSeconds + dt * first.fraction
-    /*
-     * PROOF the `?? ''` fallback below is unreachable, not merely untested:
-     * `first.entityId` is only read there inside the `first.kind === 'entity'`
-     * branch, and `first` is built in exactly two places above — the `'block'`
-     * branch never sets `entityId` at all, and the `'entity'` branch always
-     * sets it to `entity.id`, a required (non-optional) `string` on
-     * `ProjectileEntity`. So whenever `first.kind === 'entity'`,
-     * `first.entityId` is already a defined string; the type only carries
-     * `entityId?: string` because it is shared with the `'block'` shape.
-     */
-    /* v8 ignore next */
-    const entityId = first.entityId ?? ''
-    const hit: ProjectileHit = first.kind === 'block'
-      ? { flightTimeSeconds, kind: 'block', normal: first.normal, point: first.point }
-      : { entityId, flightTimeSeconds, kind: 'entity', normal: first.normal, point: first.point }
-    const base = { ...state, ageSeconds: flightTimeSeconds, position: first.point, velocity: { x: 0, y: 0, z: 0 } }
-    return first.kind === 'block'
-      ? { hit, projectile: { ...base, hit, recoverable: true, state: 'stuck' } }
-      : { hit, projectile: { ...base, reason: 'entity-hit', state: 'despawned' } }
+    return buildHitResult(state, dt, first)
   }
 
   const next: Projectile = { ...state, ageSeconds, position: end, state: 'flying', velocity }
-  return contains(world.bounds, end) ? { projectile: next } : despawn(next, 'world')
+  if (contains(world.bounds, end)) {
+    return { projectile: next }
+  }
+  return despawn(next, 'world')
 }

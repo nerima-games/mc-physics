@@ -109,9 +109,13 @@ describe('public API surface', () => {
         'primeTnt',
         'planPrimedTnt',
         'applyPrimedTntPlan',
-        // entity interaction
+        // entity interaction (broad-phase, narrow-phase, mass, resolution)
         'detectEntityCollisions',
         'resolveEntityCollisions',
+        'collisionOf',
+        'inverseMassOf',
+        'normalizedOptions',
+        'potentialPairs',
         'DEFAULT_ENTITY_COLLISION_OPTIONS',
       ]
       expect(Object.keys(physics).sort()).toEqual([...expected].sort())

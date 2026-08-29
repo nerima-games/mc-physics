@@ -42,14 +42,18 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm config set --location=user //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
 
+      # Step-level timeouts localize a hang to its step instead of letting it
+      # consume the whole 15-minute job budget before anything is reported.
       - name: Install dependencies
         # --ignore-scripts: pnpm runs postinstall, and a fork PR can edit
         # package.json and the lockfile consistently and still satisfy
         # --frozen-lockfile. Nothing here needs a lifecycle script.
         run: pnpm install --frozen-lockfile --ignore-scripts
+        timeout-minutes: 5
 
       - name: Type check
         run: pnpm typecheck
+        timeout-minutes: 3
 
       # oxlint is provided by the Nix devShell (flake.nix), not a package.json
       # devDependency — see flake.nix's comment on why. Installing Nix just for
@@ -58,15 +62,18 @@ jobs:
       # npm-resolved version.
       - name: Set up Nix
         uses: ./.github/actions/nix-setup
+        timeout-minutes: 6
         with:
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Lint
         run: nix develop --command pnpm lint
+        timeout-minutes: 5
 
       - name: Test
         run: pnpm test
+        timeout-minutes: 5
 
       # Catches a user-facing PR that forgot to add a .changeset/*.md entry
       # the organization-wide release standard. Not required to pass on docs-only or
@@ -74,6 +81,7 @@ jobs:
       # (`pnpm changeset add --empty`) to satisfy this check.
       - name: Changeset status
         run: pnpm changeset status --since=origin/main
+        timeout-minutes: 2
 
       # Independent required gate from `pnpm verify` (organization-wide test standard).
       # `vitest run --coverage` exits non-zero on its own when any of the four
@@ -82,15 +90,19 @@ jobs:
       # needed here.
       - name: Coverage
         run: pnpm test:coverage
+        timeout-minutes: 5
 
       - name: Build
         run: pnpm build
+        timeout-minutes: 3
 
       - name: Peer dependency check
         run: pnpm peers check
+        timeout-minutes: 2
 
       - name: Package dry run
         run: pnpm pack --dry-run
+        timeout-minutes: 2
 
       - name: Upload coverage report
         if: always()

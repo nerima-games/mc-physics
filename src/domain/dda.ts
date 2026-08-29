@@ -36,16 +36,16 @@
  *
  * See docs/design-notes.md, regressions `physics-dda-skips-origin-cell` and
  * `physics-dda-respects-max-distance`.
+ *
+ * Shape narrow-phase (turning a candidate cell into an exact entry point) is
+ * split out into `dda-shapes.ts`; this file is the grid walk and its public
+ * API.
  */
-import {
-  type AABB,
-  type BlockShape,
-  aabbsOfBlockShape,
-  blockAABB,
-} from './coordinates'
+import { type AxisCrossing, type RaycastShapeAt, shapeHitAt } from './dda-shapes'
 import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
-import { FULL_BLOCK_SHAPE } from './shape-data'
 import { Option } from 'effect'
+
+export type { RaycastShapeAt } from './dda-shapes'
 
 export type VoxelHit = {
   /** Integer cell coordinates of the block that was hit. */
@@ -65,85 +65,7 @@ export type VoxelHit = {
 /** Asked once per candidate cell. Physics never sees a block id. */
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 
-/**
- * The targetable block's one or more AABBs within its own cell. `null` means a
- * full cube, while an empty array means that the cell has no collision shape.
- * Invalid or out-of-cell shapes are ignored rather than extending the raycast
- * into a neighbouring voxel owned by another DDA step.
- */
-export type RaycastShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
-
 const EPSILON = 1e-12
-
-type ShapeHit = Pick<VoxelHit, 'distance' | 'face' | 'normal'>
-
-const isCellShape = (shape: AABB): boolean =>
-  Number.isFinite(shape.minX) &&
-  Number.isFinite(shape.minY) &&
-  Number.isFinite(shape.minZ) &&
-  Number.isFinite(shape.maxX) &&
-  Number.isFinite(shape.maxY) &&
-  Number.isFinite(shape.maxZ) &&
-  shape.minX >= 0 &&
-  shape.minY >= 0 &&
-  shape.minZ >= 0 &&
-  shape.maxX <= 1 &&
-  shape.maxY <= 1 &&
-  shape.maxZ <= 1 &&
-  shape.minX < shape.maxX &&
-  shape.minY < shape.maxY &&
-  shape.minZ < shape.maxZ
-
-/* eslint-disable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
-/** Ray/AABB slab intersection. Axis order is the deterministic X -> Y -> Z tie-break. */
-const intersectShape = (origin: Position, direction: Position, box: AABB): ShapeHit | null => {
-  let nearDistance = -Infinity
-  let farDistance = Infinity
-  let face: BlockFace = 'west'
-  let normalX = -1
-  let normalY = 0
-  let normalZ = 0
-
-  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
-    const axisOrigin = axisIndex === 0 ? origin.x : axisIndex === 1 ? origin.y : origin.z
-    const axisDirection = axisIndex === 0 ? direction.x : axisIndex === 1 ? direction.y : direction.z
-    const min = axisIndex === 0 ? box.minX : axisIndex === 1 ? box.minY : box.minZ
-    const max = axisIndex === 0 ? box.maxX : axisIndex === 1 ? box.maxY : box.maxZ
-    if (axisDirection === 0) {
-      if (axisOrigin < min || axisOrigin > max) return null
-      continue
-    }
-    const lowDistance = (min - axisOrigin) / axisDirection
-    const highDistance = (max - axisOrigin) / axisDirection
-    const enteringDistance = Math.min(lowDistance, highDistance)
-    const leavingDistance = Math.max(lowDistance, highDistance)
-    if (enteringDistance > nearDistance) {
-      nearDistance = enteringDistance
-      const entersLowFace = axisDirection > 0
-      if (axisIndex === 0) {
-        face = entersLowFace ? 'west' : 'east'
-        normalX = entersLowFace ? -1 : 1
-        normalY = 0
-        normalZ = 0
-      } else if (axisIndex === 1) {
-        face = entersLowFace ? 'down' : 'up'
-        normalX = 0
-        normalY = entersLowFace ? -1 : 1
-        normalZ = 0
-      } else {
-        face = entersLowFace ? 'north' : 'south'
-        normalX = 0
-        normalY = 0
-        normalZ = entersLowFace ? -1 : 1
-      }
-    }
-    farDistance = Math.min(farDistance, leavingDistance)
-    if (nearDistance > farDistance) return null
-  }
-
-  return { distance: nearDistance, face, normal: { x: normalX, y: normalY, z: normalZ } }
-}
-/* eslint-enable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
 
 /** Which way (if any) the DDA steps on one axis, from that axis's normalised ray-direction component. */
 const stepSign = (component: number): -1 | 0 | 1 => {
@@ -185,63 +107,6 @@ const crossingFace = (step: number, positiveFace: BlockFace, negativeFace: Block
     return positiveFace
   }
   return negativeFace
-}
-
-/** One grid-boundary crossing: how far along the ray, which face, and the entered face's unit normal. */
-type AxisCrossing = {
-  readonly travelled: number
-  readonly face: BlockFace
-  readonly normalX: number
-  readonly normalY: number
-  readonly normalZ: number
-}
-
-const crossingShapeHit = (crossing: AxisCrossing): ShapeHit => ({
-  distance: crossing.travelled,
-  face: crossing.face,
-  normal: { x: crossing.normalX, y: crossing.normalY, z: crossing.normalZ },
-})
-
-const nearestShapeHit = (
-  origin: Position,
-  direction: Position,
-  cellX: number,
-  cellY: number,
-  cellZ: number,
-  shapes: ReadonlyArray<AABB>,
-  maxDistance: number,
-): ShapeHit | null => {
-  let nearest: ShapeHit | null = null
-  for (const localShape of shapes) {
-    if (isCellShape(localShape)) {
-      const candidateHit = intersectShape(origin, direction, blockAABB(cellX, cellY, cellZ, localShape))
-      if (
-        candidateHit !== null &&
-        candidateHit.distance <= maxDistance &&
-        (nearest === null || candidateHit.distance < nearest.distance)
-      ) {
-        nearest = candidateHit
-      }
-    }
-  }
-  return nearest
-}
-
-const shapeHitAt = (
-  origin: Position,
-  direction: Position,
-  cellX: number,
-  cellY: number,
-  cellZ: number,
-  maxDistance: number,
-  shapeAt: RaycastShapeAt | undefined,
-  crossing: AxisCrossing,
-): ShapeHit | null => {
-  if (typeof shapeAt === 'undefined') {
-    return crossingShapeHit(crossing)
-  }
-  const shape = shapeAt(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
-  return nearestShapeHit(origin, direction, cellX, cellY, cellZ, aabbsOfBlockShape(shape), maxDistance)
 }
 
 /** Setup-phase-only: run once per `voxelRaycast` call, never inside the walk loop. */

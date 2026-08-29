@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FastCheck } from 'effect'
 import {
   CentreY,
   detectEntityCollisions,
@@ -134,5 +135,58 @@ describe('entity collision resolution', () => {
     const result = resolveEntityCollisions(immovable, { cellSize: 0, iterations: 0, restitution: 2 })
     expect(result.entities).toEqual(immovable)
     expect(result.collisions).toHaveLength(1)
+  })
+})
+
+describe('entity collision resolution properties', () => {
+  it('conserves momentum for an equal-mass dynamic pair: the two velocity changes sum to zero', () => {
+    // resolvePair (src/domain/entity-collision-resolve.ts) applies the collision
+    // impulse as dv = impulse * (-inverseMassOf(first)) to the first body and
+    // dv = impulse * inverseMassOf(second) to the second. inverseMassOf is
+    // 1/mass for a dynamic body, so with equal, finite, positive masses the two
+    // inverse masses are equal and the velocity changes are exact opposites
+    // regardless of restitution, penetration, or iteration count. A
+    // kinematic/static body has inverseMassOf 0 (infinite mass), which breaks
+    // the symmetry, so this property is restricted to dynamic/dynamic pairs.
+    const arbitraryPosition = FastCheck.double({ min: -2, max: 2, noNaN: true, noDefaultInfinity: true })
+    const arbitraryVelocity = FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true })
+    const arbitraryHalfExtent = FastCheck.double({ min: 0.2, max: 1.5, noNaN: true, noDefaultInfinity: true })
+    const arbitraryMass = FastCheck.double({ min: 0.1, max: 50, noNaN: true, noDefaultInfinity: true })
+    const arbitraryRestitution = FastCheck.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true })
+    const arbitraryIterations = FastCheck.integer({ min: 1, max: 5 })
+
+    let collidedAtLeastOnce = false
+
+    FastCheck.assert(
+      FastCheck.property(
+        FastCheck.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
+        FastCheck.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
+        arbitraryHalfExtent,
+        arbitraryMass,
+        arbitraryRestitution,
+        arbitraryIterations,
+        ([x1, y1, z1, vx1, vy1, vz1], [x2, y2, z2, vx2, vy2, vz2], halfExtent, mass, restitution, iterations) => {
+          const body1: Body = { kind: 'dynamic', vx: vx1, vy: vy1, vz: vz1, x: x1, y: CentreY(y1), z: z1 }
+          const body2: Body = { kind: 'dynamic', vx: vx2, vy: vy2, vz: vz2, x: x2, y: CentreY(y2), z: z2 }
+          const first = entityOf('first', body1, { halfHeight: HalfHeight(halfExtent), halfWidth: halfExtent, mass })
+          const second = entityOf('second', body2, { halfHeight: HalfHeight(halfExtent), halfWidth: halfExtent, mass })
+
+          const result = resolveEntityCollisions([first, second], { cellSize: 2, iterations, restitution })
+          if (result.collisions.length > 0) {
+            collidedAtLeastOnce = true
+          }
+
+          const resolvedFirst = result.entities[0]!.body
+          const resolvedSecond = result.entities[1]!.body
+          const dvx = (resolvedFirst.vx - vx1) + (resolvedSecond.vx - vx2)
+          const dvy = (resolvedFirst.vy - vy1) + (resolvedSecond.vy - vy2)
+          const dvz = (resolvedFirst.vz - vz1) + (resolvedSecond.vz - vz2)
+          return Math.abs(dvx) < 1e-6 && Math.abs(dvy) < 1e-6 && Math.abs(dvz) < 1e-6
+        },
+      ),
+      { numRuns: 300 },
+    )
+
+    expect(collidedAtLeastOnce).toBe(true)
   })
 })
