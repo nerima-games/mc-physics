@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@nerima-games/mc-kernel':
-        specifier: 0.4.0
-        version: 0.4.0(effect@3.22.1)
+        specifier: 0.5.0
+        version: 0.5.0(effect@3.22.1)
       effect:
         specifier: ^3.22.1
         version: 3.22.1
@@ -321,8 +321,8 @@ packages:
     resolution: {integrity: sha512-6QEf6yqFbETdwGITKq57aYoPfX/3K8XFNwsAlx0C1M7o8cb79sv1M3w+tWuWvIcSbNqrLF7OD7YpZMVVz335hQ==}
     engines: {node: '>=20.0.0'}
 
-  '@nerima-games/mc-kernel@0.4.0':
-    resolution: {integrity: sha512-kUqt04yFmmo0RGQEROzjruIkKVbiH9PM9+noMxk6OGk3qWVlT5jRSvIehYwZy4wh9yOK+ZhtG0QjAUeXAC0R1A==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-kernel/0.4.0/9342d6e28b483341137f64f9e6a93f467924d45c}
+  '@nerima-games/mc-kernel@0.5.0':
+    resolution: {integrity: sha512-Siy5d91Asd+7c4ALskhL19Yoc+8H6y9BlB73FLMAd4s/jokU1yk09AliENFDaVv0to6Wg9KvgU8qGDKflv4CeQ==, tarball: https://npm.pkg.github.com/download/@nerima-games/mc-kernel/0.5.0/9488ca427acfb5eef363aeecf1195326d8893612}
     engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
     peerDependencies:
       effect: ^3.22.1
@@ -1191,7 +1191,7 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.0
 
-  '@nerima-games/mc-kernel@0.4.0(effect@3.22.1)':
+  '@nerima-games/mc-kernel@0.5.0(effect@3.22.1)':
     dependencies:
       effect: 3.22.1
 
