@@ -15,6 +15,10 @@ export type MovementConfig = Readonly<{
   readonly groundAcceleration: number
   readonly airAcceleration: number
   readonly jumpVelocity: number
+  /** Java: ~0.04 blocks/tick^2 swim-up accel x 20 ticks/s = 0.8 blocks/s^2 (per-second unit). */
+  readonly fluidAscentAcceleration: number
+  /** Java: ~0.2 blocks/tick swim-up cap x 20 ticks/s = 4 blocks/s (per-second unit). */
+  readonly fluidAscentMaxSpeed: number
 }>
 
 const finiteOrZero = (value: number): number => {
@@ -45,6 +49,7 @@ export const applyMovementInput = (
   body: Body,
   input: MovementInput,
   isGrounded: boolean,
+  inFluid: boolean,
   deltaTime: DeltaTimeSecs,
   config: MovementConfig,
 ): Body => {
@@ -78,9 +83,13 @@ export const applyMovementInput = (
   const nextVx = approach(body.vx, directionX * speed, maximumChange)
   const nextVz = approach(body.vz, directionZ * speed, maximumChange)
   const jumpVelocity = Math.max(0, finiteOrZero(config.jumpVelocity))
+  const fluidAscentAcceleration = Math.max(0, finiteOrZero(config.fluidAscentAcceleration))
+  const fluidAscentMaxSpeed = Math.max(0, finiteOrZero(config.fluidAscentMaxSpeed))
   let nextVy = body.vy
   if (isGrounded && input.jumpPressed) {
     nextVy = Math.max(body.vy, jumpVelocity)
+  } else if (inFluid && input.jumpPressed && nextVy < fluidAscentMaxSpeed) {
+    nextVy = Math.min(fluidAscentMaxSpeed, nextVy + fluidAscentAcceleration * seconds)
   }
 
   return { ...body, vx: nextVx, vy: nextVy, vz: nextVz }

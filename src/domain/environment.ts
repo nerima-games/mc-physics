@@ -135,7 +135,12 @@ export const applySurfaceMotion = (body: Body, effects: SurfaceEffects): Body =>
   }
 
   const multiplier = clampedUnit(effects.friction) * (1 - clampedUnit(effects.movementDrag))
-  return { ...body, vx: body.vx * multiplier, vz: body.vz * multiplier }
+  /*
+   * An absent vertical drag multiplies by exactly 1, which IEEE-754 leaves
+   * bit-identical for every vy including -0 and NaN.
+   */
+  const vy = body.vy * (1 - clampedUnit(effects.movementDragY ?? 0))
+  return { ...body, vx: body.vx * multiplier, vy, vz: body.vz * multiplier }
 }
 
 export const sampleBlockHazards = (box: AABB, environment: BlockEnvironment): BlockHazards => {

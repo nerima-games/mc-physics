@@ -7,6 +7,22 @@ export type AxisState = {
   readonly blocked: boolean
   readonly position: number
   readonly velocity: number
+  /**
+   * Set only when a downward floor impact was reflected by bounciness, so
+   * `velocity` points away from the surface it just touched rather than
+   * resting on it. `resolveBody` reads this to keep a bounced body from
+   * reporting grounded on the frame it leaves the floor.
+   */
+  readonly bounced?: boolean
+}
+
+/** Only a finite value in [0, 1] is a meaningful bounciness; anything else (unset, NaN, negative) means none. */
+const clampBounciness = (value: number | undefined): number => {
+  const candidate = value ?? Number.NaN
+  if (!Number.isFinite(candidate)) {
+    return 0
+  }
+  return Math.min(1, Math.max(0, candidate))
 }
 
 export const clampAxis = (
@@ -56,15 +72,47 @@ export const resolveVertical = (
   state: AxisState,
   deltaTime: DeltaTimeSecs,
 ): AxisState => {
-  if (state.velocity <= 0) {
+  /*
+   * A resting body (velocity exactly 0) sits a contact-epsilon gap above its
+   * floor, so no colliding block can satisfy the floor test below:
+   * `collidesWith` demands more than CONTACT_EPSILON of overlap while the
+   * floor test accepts at most that much reach. Returning early states that
+   * invariant instead of hiding it in an unreachable bounce guard (P-6).
+   */
+  if (state.velocity === 0) {
+    return state
+  }
+
+  if (state.velocity < 0) {
     const reach = -state.velocity * deltaTime + CONTACT_EPSILON
     let floorTop = Number.NEGATIVE_INFINITY
+    /*
+     * Cell of whichever block currently holds `floorTop`. Recovered from the
+     * block's own AABB rather than threaded through `forEachCollidingBlock`
+     * (whose signature is out of scope here): every authored shape's local
+     * min lies in [0, 1), so `Math.floor(block.min*)` is exactly the cell.
+     */
+    let floorBx = 0
+    let floorBy = 0
+    let floorBz = 0
     forEachCollidingBlock(options, box, (block) => {
-      if (block.maxY - box.minY <= reach) {
-        floorTop = Math.max(floorTop, block.maxY)
+      if (block.maxY - box.minY <= reach && block.maxY > floorTop) {
+        floorTop = block.maxY
+        floorBx = Math.floor(block.minX)
+        floorBy = Math.floor(block.minY)
+        floorBz = Math.floor(block.minZ)
       }
     })
     if (floorTop > Number.NEGATIVE_INFINITY) {
+      const bounciness = clampBounciness(options.bouncinessAt?.(floorBx, floorBy, floorBz))
+      if (bounciness > 0) {
+        return {
+          blocked: true,
+          bounced: true,
+          position: floorTop + options.halfHeight,
+          velocity: -state.velocity * bounciness,
+        }
+      }
       return { blocked: true, position: floorTop + options.halfHeight, velocity: 0 }
     }
     return state

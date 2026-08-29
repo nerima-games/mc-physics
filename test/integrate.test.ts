@@ -216,6 +216,88 @@ describe('semi-implicit Euler', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// FR-004: AIR DRAG
+// ---------------------------------------------------------------------------
+
+describe('air drag (FR-004)', () => {
+  it('REGRESSION: the default dragPerSecond (1) reproduces the pre-injection integrator exactly', () => {
+      const delta = clampDeltaTime(0.02)
+      const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
+      expect(integrateBody(body, delta)).toStrictEqual(
+        integrateBody(body, delta, GRAVITY_Y, 1, TERMINAL_VELOCITY_Y),
+      )
+  })
+
+  it('PROPERTY: for dragPerSecond in (0, 1], no axis speed increases in one step', () => {
+      // gravityY is pinned to 0 so the property isolates drag from the separate
+      // vertical acceleration gravity contributes.
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.double({ min: 1e-6, max: 1, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
+          (dragPerSecond, vx, vy, vz, rawDelta) => {
+            const delta = clampDeltaTime(rawDelta)
+            const stepped = integrateBody(dynamicBody({ vx, vy, vz }), delta, 0, dragPerSecond)
+            return (
+              Math.abs(stepped.vx) <= Math.abs(vx) + 1e-9 &&
+              Math.abs(stepped.vy) <= Math.abs(vy) + 1e-9 &&
+              Math.abs(stepped.vz) <= Math.abs(vz) + 1e-9
+            )
+          },
+        ),
+        { numRuns: 300 },
+      )
+  })
+
+  it('applies the continuous form: v *= dragPerSecond ** dt, on all three axes', () => {
+      // Vanilla per-tick drag of ~0.98 at 20 ticks/s is dragPerSecond = 0.98 **
+      // 20 ≈ 0.667/s; this checks the continuous formula the other direction,
+      // at an arbitrary dt rather than the tick boundary.
+      const delta = clampDeltaTime(0.1)
+      const dragPerSecond = 0.5
+      const stepped = integrateBody(dynamicBody({ vx: 4, vy: 0, vz: -4 }), delta, 0, dragPerSecond)
+      const expectedFactor = dragPerSecond ** delta
+      expect(stepped.vx).toBeCloseTo(4 * expectedFactor, 12)
+      expect(stepped.vz).toBeCloseTo(-4 * expectedFactor, 12)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FR-005: INJECTED TERMINAL VELOCITY
+// ---------------------------------------------------------------------------
+
+describe('injected terminal velocity (FR-005)', () => {
+  it('caps at the injected value instead of the module default', () => {
+      const shallow = TERMINAL_VELOCITY_Y / 2 // e.g. -16: a slower, shallower fall
+      const delta = clampDeltaTime(0.02)
+      let body = dynamicBody()
+      for (let step = 0; step < 400; step += 1) {
+        body = integrateBody(body, delta, GRAVITY_Y, 1, shallow)
+      }
+      expect(body.vy).toBe(shallow)
+  })
+
+  it('REGRESSION: a non-negative or non-finite terminalVelocityY falls back to the module default', () => {
+      const delta = clampDeltaTime(0.05)
+      const fallToTerminal = (invalid: number): number => {
+        let body = dynamicBody()
+        // |TERMINAL_VELOCITY_Y| / |GRAVITY_Y| ≈ 3.26s to reach the asymptote;
+        // 200 steps at this delta is ~10s, comfortably past it.
+        for (let step = 0; step < 200; step += 1) {
+          body = integrateBody(body, delta, GRAVITY_Y, 1, invalid)
+        }
+        return body.vy
+      }
+      for (const invalid of [0, 5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        expect(fallToTerminal(invalid)).toBe(TERMINAL_VELOCITY_Y)
+      }
+  })
+})
+
 describe('voxel DDA', () => {
   const solidAt = (target: readonly [number, number, number]) => (bx: number, by: number, bz: number) =>
     bx === target[0] && by === target[1] && bz === target[2]

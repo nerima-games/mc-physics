@@ -81,27 +81,56 @@ export type Body = {
  *
  * `static` and `kinematic` bodies are returned unchanged: gravity does not act
  * on them and their motion is authored elsewhere.
+ *
+ * `dragPerSecond` (default 1, no drag) is the continuous counterpart of a
+ * per-tick multiplier: `v *= dragPerSecond ** dt`, applied to all three axes
+ * before gravity. Vanilla's per-tick ~0.98-0.99 at 20 ticks/s is
+ * `0.98 ** 20 ≈ 0.667/s`.
+ *
+ * `terminalVelocityY` (default `TERMINAL_VELOCITY_Y`) overrides the downward
+ * speed cap. Only a finite, negative value is a meaningful cap on falling;
+ * anything else falls back to the module default.
  */
-export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, gravityY: number = GRAVITY_Y): Body => {
+/** Only a finite, negative value is a valid downward-speed cap; anything else falls back to the default. */
+const normalizeTerminalVelocityY = (value: number): number => {
+  if (Number.isFinite(value) && value < 0) {
+    return value
+  }
+  return TERMINAL_VELOCITY_Y
+}
+
+export const integrateBody = (
+  body: Body,
+  deltaTime: DeltaTimeSecs,
+  gravityY: number = GRAVITY_Y,
+  dragPerSecond: number = 1,
+  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
+): Body => {
   if (body.kind !== 'dynamic') {
     return body
   }
 
+  const drag = dragPerSecond ** deltaTime
+  const draggedVx = body.vx * drag
+  const draggedVy = body.vy * drag
+  const draggedVz = body.vz * drag
+
   // Velocity first, position from the NEW velocity. See the file header.
-  const acceleratedY = body.vy + gravityY * deltaTime
+  const acceleratedY = draggedVy + gravityY * deltaTime
+  const safeTerminalVelocityY = normalizeTerminalVelocityY(terminalVelocityY)
   let clampedY = acceleratedY
-  if (acceleratedY < TERMINAL_VELOCITY_Y) {
-    clampedY = TERMINAL_VELOCITY_Y
+  if (acceleratedY < safeTerminalVelocityY) {
+    clampedY = safeTerminalVelocityY
   }
 
   return {
     kind: body.kind,
-    vx: body.vx,
+    vx: draggedVx,
     vy: clampedY,
-    vz: body.vz,
-    x: body.x + body.vx * deltaTime,
+    vz: draggedVz,
+    x: body.x + draggedVx * deltaTime,
     y: CentreY(body.y + clampedY * deltaTime),
-    z: body.z + body.vz * deltaTime,
+    z: body.z + draggedVz * deltaTime,
   }
 }
 
@@ -110,7 +139,10 @@ export const integrate = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
   gravityY: number = GRAVITY_Y,
-): ReadonlyArray<Body> => bodies.map((body) => integrateBody(body, deltaTime, gravityY))
+  dragPerSecond: number = 1,
+  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
+): ReadonlyArray<Body> =>
+  bodies.map((body) => integrateBody(body, deltaTime, gravityY, dragPerSecond, terminalVelocityY))
 
 /**
  * The largest distance a body can fall in one step.

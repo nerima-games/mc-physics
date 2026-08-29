@@ -60,14 +60,26 @@ describe('public API surface', () => {
         'clampSneakEdge',
         // dda
         'voxelRaycast',
-        // projectile
-        'ARROW_AIR_DRAG',
-        'ARROW_GRAVITY',
-        'ARROW_MAX_LIFETIME_SECONDS',
-        'ARROW_SHOOTER_GRACE_SECONDS',
-        'ARROW_WATER_DRAG',
-        'launchArrow',
-        'stepArrow',
+        // projectile (profile-generalized; arrow behaviour lives in ARROW_PROFILE)
+        'ARROW_PROFILE',
+        'SNOWBALL_PROFILE',
+        'EGG_PROFILE',
+        'TRIDENT_PROFILE',
+        'launchProjectile',
+        'stepProjectile',
+        // glide
+        'GLIDE_CLIMB_CONVERSION_PER_SECOND',
+        'GLIDE_CLIMB_LIFT_MULTIPLIER',
+        'GLIDE_DIVE_CONVERSION_PER_SECOND',
+        'GLIDE_GRAVITY_PER_SECOND_SQUARED',
+        'GLIDE_HORIZONTAL_DRAG_PER_SECOND',
+        'GLIDE_LIFT_CANCEL_FACTOR',
+        'GLIDE_TURN_RATE_PER_SECOND',
+        'GLIDE_VERTICAL_DRAG_PER_SECOND',
+        'DEFAULT_GLIDE_CONFIG',
+        'glideStep',
+        // piston
+        'pistonExtrusion',
         // movement
         'applyMovementInput',
         'applyKnockback',

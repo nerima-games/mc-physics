@@ -1204,3 +1204,128 @@ describe('solidity is injected, never derived from a block id', () => {
       expect(stepBody(body, DT, passable).body.y).toBeLessThan(restingCentre(63))
   })
 })
+
+// ---------------------------------------------------------------------------
+// FR-009: BOUNCE (SLIME / BED)
+// ---------------------------------------------------------------------------
+
+describe('bounce (FR-009)', () => {
+  // gravityY is pinned to 0 in the exact-value cases below so the reflected
+  // velocity is a clean function of the incoming vy and bounciness alone —
+  // with real gravity, integrate runs before resolve (file header on
+  // integrate.ts), so the impact velocity resolveVertical actually sees
+  // already includes this frame's g*dt and the expected number would have to
+  // account for it too.
+
+  it('reflects downward velocity scaled by bounciness on a genuine floor impact', () => {
+      const options = withWorld(groundUpTo(63), { bouncinessAt: () => 0.5 })
+      const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
+
+      const stepped = stepBody(falling, DT, options, 0)
+
+      expect(stepped.body.y).toBe(restingCentre(63))
+      expect(stepped.body.vy).toBeCloseTo(2.5, 12)
+      expect(stepped.isGrounded).toBe(false)
+  })
+
+  it('samples bounciness at the block cell actually contacted', () => {
+      const seen: Array<readonly [number, number, number]> = []
+      const options = withWorld(groundUpTo(63), {
+        bouncinessAt: (bx, by, bz) => {
+          seen.push([bx, by, bz])
+          return 0.5
+        },
+      })
+      const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
+
+      stepBody(falling, DT, options, 0)
+
+      expect(seen).toContainEqual([0, 63, 0])
+  })
+
+  it('IDENTITY: bounciness 0 is bit-identical to no bounciness option at all', () => {
+      const withZero = withWorld(groundUpTo(63), { bouncinessAt: () => 0 })
+      const withoutOption = withWorld(groundUpTo(63))
+      const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
+
+      expect(stepBody(falling, DT, withZero)).toStrictEqual(stepBody(falling, DT, withoutOption))
+  })
+
+  it('clamps a bounciness above 1 to 1, so a bounce never gains energy over a perfectly elastic one', () => {
+      const options = withWorld(groundUpTo(63), { bouncinessAt: () => 5 })
+      const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
+
+      const stepped = stepBody(falling, DT, options, 0)
+
+      expect(stepped.body.vy).toBeCloseTo(5, 12)
+  })
+
+  it('does not bounce a resting body: zero incoming velocity has nothing to reflect', () => {
+      // gravityY: 0 as well — with real gravity a "resting" vy: 0 body is
+      // nudged to a small negative velocity by this very frame's integration
+      // before resolveVertical ever sees it (the same mechanism that lets a
+      // resting body re-clamp to the floor every frame), which would make
+      // this indistinguishable from a genuine downward impact. The guard
+      // under test is against exactly-zero incoming velocity, so gravity is
+      // held at 0 to present exactly that.
+      const options = withWorld(groundUpTo(63), { bouncinessAt: () => 1 })
+      const resting = standingOn(63)
+
+      const stepped = stepBody(resting, DT, options, 0)
+
+      expect(stepped.body.vy).toBe(0)
+      expect(stepped.isGrounded).toBe(true)
+  })
+
+  it('does not affect a ceiling collision', () => {
+      const options = withWorld((_bx, by) => by === 0 || by === 3, { bouncinessAt: () => 1 })
+      const jumping = standingOn(0, { y: CentreY(3 - Number(HALF_H) - 0.01), vy: 8 })
+
+      const stepped = stepBody(jumping, DT, options)
+
+      expect(stepped.body.y).toBe(3 - Number(HALF_H))
+      expect(stepped.body.vy).toBe(0)
+      expect(stepped.isGrounded).toBe(false)
+  })
+
+  it('does not affect horizontal collisions', () => {
+      const options = withWorld((bx, by) => by === 0 || (bx === 1 && by === 1), { bouncinessAt: () => 1 })
+      const walking = standingOn(0, { x: 0.85, vx: REFERENCE_TOP_SPEED })
+
+      const stepped = stepBody(walking, DT, options)
+
+      expect(stepped.body.x).toBe(1 - HALF_W)
+      expect(stepped.body.vx).toBe(0)
+  })
+
+  it('PROPERTY: repeated bounces off real gravity never leave a dropped body higher than it started', () => {
+      // A natural multi-frame fall, matching the style of the existing
+      // 'energy' describe block above, rather than an artificially placed
+      // single-frame gap: an arbitrary (gap, velocity) pair fed straight into
+      // one resolveVertical call can make the discrete "impact velocity"
+      // (this frame's post-gravity vy, per the integrate-then-resolve order)
+      // overstate the true contact speed for the actual, much smaller gap —
+      // which is a property of the one-step gap/reach approximation itself,
+      // not of bounce specifically. A body that actually fell there frame by
+      // frame never presents that mismatch.
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: 1, max: 10, noNaN: true, noDefaultInfinity: true }),
+          (bounciness, dropHeight) => {
+            const options = withWorld(groundUpTo(63), { bouncinessAt: () => bounciness })
+            const start = standingOn(63, { y: CentreY(restingCentre(63) + dropHeight) })
+            let body = start
+            for (let frame = 0; frame < 500; frame += 1) {
+              body = stepBody(body, DT, options).body
+              if (body.y > start.y + 1e-6) {
+                return false
+              }
+            }
+            return true
+          },
+        ),
+        { numRuns: 200 },
+      )
+  })
+})

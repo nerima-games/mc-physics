@@ -18,6 +18,8 @@ export type BlockEnvironment = Readonly<{
 export type SurfaceEffects = Readonly<{
   readonly friction: number
   readonly movementDrag: number
+  /** Vertical drag for materials whose vertical drag differs from horizontal (cobwebs, powder snow). Omitted leaves vy untouched. */
+  readonly movementDragY?: number
 }>
 
 export type BlockHazards = Readonly<{
@@ -49,11 +51,15 @@ export type FluidEffects = Readonly<{
 export type FluidMotionCoefficients = Readonly<{
   readonly water: Readonly<{
     readonly dragPerSecond: number
+    /** Vertical drag, for a fluid whose vertical drag differs from horizontal (e.g. lava). Omitted falls back to dragPerSecond. */
+    readonly dragPerSecondY?: number
     readonly buoyancyAcceleration: number
     readonly flowAcceleration: number
   }>
   readonly lava: Readonly<{
     readonly dragPerSecond: number
+    /** Vertical drag, for a fluid whose vertical drag differs from horizontal (e.g. lava). Omitted falls back to dragPerSecond. */
+    readonly dragPerSecondY?: number
     readonly buoyancyAcceleration: number
     readonly flowAcceleration: number
   }>

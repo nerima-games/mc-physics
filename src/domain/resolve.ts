@@ -1,4 +1,4 @@
-import { type Body, GRAVITY_Y, integrateBody } from './integrate'
+import { type Body, GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody } from './integrate'
 import { DIAMETER_FACTOR, resolveSweptMotion } from './resolve-sweep'
 import type {
   HasGroundSupport,
@@ -91,9 +91,19 @@ export const resolveBody = (body: Body, deltaTime: DeltaTimeSecs, options: Resol
     z: alongZ.position,
   }
 
+  /*
+   * A bounced body sits exactly where it landed this frame, which
+   * `isSupported` (a purely positional check) would read as resting — but its
+   * velocity now points away from the surface, so it is not grounded.
+   */
+  let isGrounded = false
+  if (vertical.bounced !== true) {
+    isGrounded = isSupported(options, boxAt(options, resolved.x, resolved.y, resolved.z))
+  }
+
   return {
     body: resolved,
-    isGrounded: isSupported(options, boxAt(options, resolved.x, resolved.y, resolved.z)),
+    isGrounded,
   }
 }
 
@@ -108,8 +118,10 @@ export const stepBody = (
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
   gravityY: number = GRAVITY_Y,
+  dragPerSecond: number = 1,
+  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
 ): Resolution => {
-  const integrated = integrateBody(body, deltaTime, gravityY)
+  const integrated = integrateBody(body, deltaTime, gravityY, dragPerSecond, terminalVelocityY)
   let collisionSafe = integrated
   if (body.kind === 'dynamic') {
     collisionSafe = resolveSweptMotion(body, integrated, options)
@@ -122,7 +134,10 @@ export const stepWorld = (
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
   gravityY: number = GRAVITY_Y,
-): ReadonlyArray<Resolution> => bodies.map((body) => stepBody(body, deltaTime, options, gravityY))
+  dragPerSecond: number = 1,
+  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
+): ReadonlyArray<Resolution> =>
+  bodies.map((body) => stepBody(body, deltaTime, options, gravityY, dragPerSecond, terminalVelocityY))
 
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number =>
   (blockThickness + DIAMETER_FACTOR * halfExtent) / maxDeltaSecs

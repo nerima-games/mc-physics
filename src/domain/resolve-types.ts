@@ -13,6 +13,13 @@ export type ResolveOptions = {
   /** Optional state-specific or compound geometry. When supplied, it is authoritative. */
   readonly blockShapeAt?: BlockShapeAt
   readonly stepHeight?: number
+  /**
+   * Slime-block/bed style bounce. Sampled at the block cell contacted by a
+   * genuine downward floor impact only — resting contact and ceiling/wall
+   * hits are unaffected. Clamped to [0, 1]; unset or 0 is the plain vy=0
+   * clamp.
+   */
+  readonly bouncinessAt?: (bx: number, by: number, bz: number) => number
 }
 
 export type Resolution = {

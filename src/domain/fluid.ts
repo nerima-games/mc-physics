@@ -33,11 +33,14 @@ export const applyFluidMotion = (
   const lavaVolume = volume(effects.lavaVolume)
   const dragPerSecond = waterVolume * nonNegativeFinite(coefficients.water.dragPerSecond) +
     lavaVolume * nonNegativeFinite(coefficients.lava.dragPerSecond)
+  const dragPerSecondY = waterVolume * nonNegativeFinite(coefficients.water.dragPerSecondY ?? coefficients.water.dragPerSecond) +
+    lavaVolume * nonNegativeFinite(coefficients.lava.dragPerSecondY ?? coefficients.lava.dragPerSecond)
   const buoyancyAcceleration = waterVolume * nonNegativeFinite(coefficients.water.buoyancyAcceleration) +
     lavaVolume * nonNegativeFinite(coefficients.lava.buoyancyAcceleration)
   const flowAcceleration = waterVolume * nonNegativeFinite(coefficients.water.flowAcceleration) +
     lavaVolume * nonNegativeFinite(coefficients.lava.flowAcceleration)
   const dragMultiplier = Math.exp(-dragPerSecond * seconds)
+  const dragMultiplierY = Math.exp(-dragPerSecondY * seconds)
   const flowX = finiteOrZero(effects.flow.x)
   const flowY = finiteOrZero(effects.flow.y)
   const flowZ = finiteOrZero(effects.flow.z)
@@ -45,7 +48,7 @@ export const applyFluidMotion = (
   return {
     ...body,
     vx: body.vx * dragMultiplier + flowX * flowAcceleration * seconds,
-    vy: body.vy * dragMultiplier + buoyancyAcceleration * seconds + flowY * flowAcceleration * seconds,
+    vy: body.vy * dragMultiplierY + buoyancyAcceleration * seconds + flowY * flowAcceleration * seconds,
     vz: body.vz * dragMultiplier + flowZ * flowAcceleration * seconds,
   }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FastCheck } from 'effect'
 import { type BlockType } from '@nerima-games/mc-kernel'
 import {
   CACTUS_SHAPE,
@@ -98,6 +99,47 @@ describe('environment material sampling', () => {
       vx: 0,
       vz: -0,
     })
+  })
+})
+
+describe('vertical surface drag (FR-006: cobwebs, powder snow)', () => {
+  it('leaves vy untouched when movementDragY is not specified, matching pre-FR-006 behaviour', () => {
+    const effects = { friction: 0.5, movementDrag: 0.8 }
+    const body = bodyOf()
+    expect(applySurfaceMotion(body, effects).vy).toBe(body.vy)
+  })
+
+  it('applies movementDragY to vy independently of the horizontal friction/drag multiplier', () => {
+    const effects = { friction: 0.5, movementDrag: 0.8, movementDragY: 0.25 }
+    const actual = applySurfaceMotion(bodyOf(), effects)
+    expect(actual.vy).toBeCloseTo(bodyOf().vy * 0.75)
+    expect(actual.vx).toBeCloseTo(0.2)
+    expect(actual.vz).toBeCloseTo(-0.4)
+  })
+
+  it('sanitizes a non-finite movementDragY to zero drag, the same fallback clampedUnit uses for movementDrag/friction', () => {
+    const actual = applySurfaceMotion(bodyOf(), {
+      friction: 1,
+      movementDrag: 0,
+      movementDragY: Number.POSITIVE_INFINITY,
+    })
+    expect(actual.vy).toBe(bodyOf().vy)
+  })
+
+  it('property: movementDragY in (0, 1] never increases |vy|, and omitting it leaves vy exactly unchanged', () => {
+    FastCheck.assert(
+      FastCheck.property(
+        FastCheck.double({ min: 1e-9, max: 1, noNaN: true, noDefaultInfinity: true }),
+        FastCheck.double({ min: -1000, max: 1000, noNaN: true, noDefaultInfinity: true }),
+        (dragY, vy) => {
+          const body = { ...bodyOf(), vy }
+          const decayed = applySurfaceMotion(body, { friction: 1, movementDrag: 0, movementDragY: dragY })
+          const untouched = applySurfaceMotion(body, { friction: 1, movementDrag: 0 })
+          return Math.abs(decayed.vy) <= Math.abs(vy) + 1e-9 && untouched.vy === vy
+        },
+      ),
+      { numRuns: 200 },
+    )
   })
 })
 
