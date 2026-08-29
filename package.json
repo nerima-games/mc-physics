@@ -1,6 +1,6 @@
 {
   "name": "@nerima-games/mc-physics",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "type": "module",
   "description": "Pure voxel physics primitives for the nerima-games Minecraft-clone rebuild: Euler integration, AABB collision, DDA raycasts, environment effects, entity collisions, projectile sweeps, primed TNT fuse progression, and bounded explosion planning. No external physics engine.",
   "homepage": "https://github.com/nerima-games/mc-physics#readme",
