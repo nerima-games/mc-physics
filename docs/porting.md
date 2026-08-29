@@ -179,3 +179,44 @@ plan.md §3.4 の「プロパティテスト（エネルギー非増加、めり
 「解決は固定点である」「どのフェーズも正当化できる距離以上に体を動かさない」——
 がここに含まれており、実際に mutation を 3 件、参照実装由来のシナリオテストではなく
 これらの不変条件のほうが捕まえている（`testing.md` §7）。
+
+## 7. 逆方向の移植: mc-kernel への委譲（重複実装の発見と等価性検証）
+
+これまでの節は「参照実装からこのリポジトリへ何を持ってくるか」を扱ってきた。この節は逆方向、
+「このリポジトリが独自に実装していたものを、どこで mc-kernel の実装に差し替えたか」を記録する。
+
+### 発見の経緯
+
+mc-kernel 0.5.0 は、爆発の bounded plan（`planExplosion` / `applyExplosionPlan`）と
+起爆済み TNT の fuse 進行（`primeTnt` / `planPrimedTnt` / `applyPrimedTntPlan`）を実装した。
+これは本リポジトリが `domain/explosion.ts` / `domain/primed-tnt.ts` としてすでに独自実装を
+持っていた計算と同じ契約 —— 入力（ワールドの読み取り、エンティティ集合、中心・半径・seed /
+fuse 状態）と出力（bounded な mutation の projection、commit callback への委譲、状態非所有）を
+指す。同じ計算が 2 つの独立したパッケージに重複して存在する状態だった。
+
+### 対処: 独自実装を削除し、kernel の実装をそのまま re-export する
+
+新規実装を書き直すのではなく、削除前に両実装の入出力が一致することを確認したうえで、
+本リポジトリの `domain/explosion.ts` / `domain/primed-tnt.ts` を削除し、`src/index.ts` から
+kernel の `planExplosion` / `applyExplosionPlan` / `DEFAULT_EXPLOSION_LIMITS` /
+`primeTnt` / `planPrimedTnt` / `applyPrimedTntPlan` / `DEFAULT_TNT_FUSE_SECS` /
+`MAX_TNT_FUSE_ADVANCE_SECS` をそのまま re-export する形に置き換えた。
+
+この変更のあとも `test/explosion.test.ts` / `test/primed-tnt.test.ts` は残しており、
+役割が変わっている: 独自実装の正しさを検証するテストから、**re-export された契約が
+呼び出し側から見て変わっていないこと**を検証するテストになった。
+
+### 責務境界への影響
+
+`docs/responsibility.md` §3 が定める所有権の境界（ワールド書き込み、health / status / velocity
+の適用、ドロップ生成、TNT entity の lifecycle は mc-sim / mx-gameplay が所有する）は変わっていない。
+変わったのは「bounded plan の計算そのものを誰が実装しているか」だけである。
+
+### 教訓: 依存先が同じ計算を実装したら、まず等価性を確認してから委譲する
+
+`domain/glide.ts` や `domain/piston.ts` のような、mc-kernel にまだ存在しない新規の物理計算とは
+性質が異なる。爆発と TNT は「たまたま両方の層に実装が存在した」ケースであり、独自実装を残す
+理由（この層固有のホットパス最適化、mc-kernel が知らない不変条件など）が無い限り、重複は
+削除して委譲する方が保守コストが低い。座標語彙（旧来のローカル位置型と kernel の `Position`）の統一も同じ判断基準に従った
+（`docs/responsibility.md` §4）。一方 `AABB` はホットパス最適化という固有の理由があるため
+統一を見送っており、判断基準が「委譲すれば必ず勝つ」ではないことも同時に示している。

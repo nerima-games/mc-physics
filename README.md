@@ -7,8 +7,14 @@ Euler 積分、ブロック / エンティティ AABB 衝突、voxel-DDA、環�
 
 ## 依存
 
-`@nerima-games/mc-kernel@0.4.0` を実行時依存として直接利用し、
-`BlockProperties`、`BlockCapabilities`、`FluidKind`、`DeltaTimeSecs` を共有する。`effect` は値の検証と
+`@nerima-games/mc-kernel@0.5.0` を実行時依存として直接利用し、
+`BlockProperties`、`BlockCapabilities`、`FluidKind`、`DeltaTimeSecs`、`Position` を共有する。座標語彙も
+共有し、この層が独自に持っていたローカルな `{x, y, z}` 型とその生成関数は廃止して
+kernel の `Position`/`position` を再 export する
+（衝突判定に使う flat AABB はホットパス設計としてこの層に残す。`docs/responsibility.md` §4）。
+爆発計画（`planExplosion`）と起爆済み TNT の fuse 進行（`primeTnt`/`planPrimedTnt`）は、旧
+`domain/explosion.ts` / `domain/primed-tnt.ts` の独自実装との等価性を確認したうえで削除し、
+kernel の実装をそのまま再 export する（`docs/porting.md` §7）。`effect` は値の検証と
 純粋な計算の組み立てに使う。ブロック ID、レジストリ、チャンクはこの層に複製しない。
 
 ## このリポジトリの位置づけ
@@ -104,7 +110,8 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
 ```typescript
 import {
   centreOfFoot, standingPlaneAbove, PLAYER_HALF_HEIGHT, PLAYER_HALF_WIDTH,
-  clampDeltaTime, clampSneakEdge, stepBody, voxelRaycast, vec3,
+  clampDeltaTime, clampSneakEdge, stepBody, voxelRaycast, position,
+  launchProjectile, stepProjectile, ARROW_PROFILE, glideStep, pistonExtrusion,
   planExplosion, applyExplosionPlan, primeTnt, planPrimedTnt, applyPrimedTntPlan,
 } from '@nerima-games/mc-physics'
 
@@ -118,12 +125,14 @@ const dt = clampDeltaTime(rawDeltaSecs)     // min(max(0.001, raw), 0.05)
 
 // 積分 → 解決。この順序は逆にできない（逆にすると 1 フレーム分の落下距離だけ床に沈む）。
 // stepBody がその合成に名前を与えているので、逆順は diff に現れる。
+// 第4〜6引数（gravityY, dragPerSecond, terminalVelocityY）は既定が公式 Java 版準拠で、注入で上書きできる。
 const { body: next, isGrounded } = stepBody(body, dt, {
   halfWidth: PLAYER_HALF_WIDTH,
   halfHeight: PLAYER_HALF_HEIGHT,
   blockPropertiesAt,   // または blockPropertiesAtFromKernel(blockIdAt)
   // blockShapeAt,     // 状態依存・複合形状。単一AABBまたはAABB配列を返す
   // stepHeight: 0.6,  // ゲーム的なチューニング値。既定 0（= step-up 無し）
+  // bouncinessAt,     // スライムブロック/ベッドの着地バウンス。[0,1]、反射時は isGrounded=false
 })
 
 // ブロック狙撃は DDA。原点セルは決して返さない。
@@ -133,9 +142,18 @@ const hit = voxelRaycast(eye, forward, 5, (bx, by, bz) => isSolid(bx, by, bz))
 // resolve/environment では null または空配列が「衝突形状なし」。DDAでは null がfull cube、空配列が非ヒット。
 const shapedHit = voxelRaycast(eye, forward, 5, isTargetable, blockShapeAt)
 
+// 矢/雪玉/卵/トライデントは ProjectileProfile を注入する一般化 API。
+// ARROW_PROFILE は kernel の矢用ステップ関数とステップ毎等価（test/projectile.test.ts）。
+const flying = launchProjectile({ position: eye, yawRadians, pitchRadians, speed: 3 })
+const projectileStep = stepProjectile(flying, dt, projectileWorld, ARROW_PROFILE)
+
+// エリトラ滑空とピストン押し出しは、状態を持たない幾何・速度計算だけを提供する。
+const nextVelocity = glideStep(velocity, { pitchRadians, yawRadians }, dt)
+const extrusion = pistonExtrusion(entityAabb, { axis: 'y', before: blockAabbBeforeMove, distance: 1 })
+
 // 爆発は破壊対象とエンティティ効果を決定論的に計画する。状態の書き込みは呼び出し側が行う。
 const explosionPlan = planExplosion({
-  center: vec3(0, 0, 0), radius: 4, seed: 0, blocks: explosionBlockAt, entities,
+  center: position(0, 0, 0), radius: 4, seed: 0, blocks: explosionBlockAt, entities,
 })
 applyExplosionPlan(explosionPlan, ({ destroyedBlocks, entityEffects }) => {
   commitExplosionMutation(destroyedBlocks, entityEffects)
@@ -211,16 +229,35 @@ const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)
 - **落下ブロックの開始候補を判定する。** `fallsWhenUnsupported` と支持側の
   `canSupportAttachments` を mc-kernel から直接使い、ブロック ID と位置を返す。ブロック除去、
   落下エンティティの生成、着地配置は呼び出し側が所有する。
-- **エンティティ衝突と移動の純粋なプリミティブを提供する。** broad-phase / narrow-phase、
-  質量を使った解決、入力による移動、jump、sprint、knockback を公開する。
-- **矢の飛翔・ブロック / エンティティ hit test を提供する。** 永続化、アイテム消費、ダメージ、
-  バージョン別の projectile tuning は呼び出し側が所有する。
-- **爆発の bounded plan を提供する。** ブロックの抵抗・遮蔽から破壊対象を、エンティティの
-  露出から damage / knockback を計算する。`applyExplosionPlan` は計画データを commit callback に
-  渡すだけで、ブロック除去、health、velocity、ドロップの更新は呼び出し側が所有する。
-- **起爆済み TNT の fuse plan を提供する。** `primeTnt` と `planPrimedTnt` は bounded な fuse 進行を
-  計画し、尽きたフレームでは既存の爆発 planner を再利用する。TNT entity の lifecycle、状態の
-  永続化、爆発効果の適用は呼び出し側が所有する。
+- **エンティティ衝突と移動の純粋なプリミティブを提供する。** 質量を使った解決に加えて、
+  broad-phase（空間グリッド、`potentialPairs`）と narrow-phase（`collisionOf`、`inverseMassOf`、
+  `normalizedOptions`）自体も公開する。`applyMovementInput` は水泳上昇（`inFluid` 引数と
+  `fluidAscentAcceleration` / `fluidAscentMaxSpeed`）を追加で受け取る。jump、sprint、knockback も公開する。
+- **投射体は `ProjectileProfile` を注入する一般化 API を提供する。** Arrow 固有だった旧 API
+  （矢専用の launch/step 関数と定数群）は撤去し、`launchProjectile`/`stepProjectile` が
+  `ARROW_PROFILE` / `SNOWBALL_PROFILE` / `EGG_PROFILE` / `TRIDENT_PROFILE` を注入で切り替える。
+  `ARROW_PROFILE` は kernel の対応する矢実装とステップ毎に等価であることをテストで固定している。
+  永続化、アイテム消費、ダメージ、Arrow 型そのものが必要な消費者は kernel を直接使う。
+- **爆発と起爆済み TNT の bounded plan は kernel の実装をそのまま再 export する。**
+  独自の `domain/explosion.ts` / `domain/primed-tnt.ts` は、kernel 版との等価性を確認したうえで
+  削除した（`docs/porting.md` §7）。`planExplosion` はブロックの抵抗・遮蔽から破壊対象を、
+  エンティティの露出から damage / knockback を計算し、`applyExplosionPlan` は計画データを
+  commit callback に渡すだけである。`primeTnt` / `planPrimedTnt` は bounded な fuse 進行を計画し、
+  尽きたフレームでは同じ爆発 planner を再利用する。ブロック除去、health、velocity、ドロップの更新、
+  TNT entity の lifecycle と状態の永続化は、どちらもいまなお呼び出し側が所有する。
+- **落下・移動の既定値は公式 Java 版準拠で、すべて注入で上書きできる。**
+  `integrateBody`/`stepBody` は空気抵抗（`dragPerSecond`、既定 1 = 抵抗なし）と終端速度
+  （`terminalVelocityY`、既定 -32）を追加引数で受け取る。`SurfaceEffects.movementDragY` と
+  `FluidMotionCoefficients.*.dragPerSecondY` は水平とは別の垂直ドラッグ（クモの巣、パウダースノー、
+  溶岩）を表現する。`ResolveOptions.bouncinessAt` はスライムブロック/ベッドの着地バウンスで、
+  反射した着地は `isGrounded: false` を返す。
+- **エリトラ滑空とピストン押し出しの幾何・速度計算を提供する。** `domain/glide.ts` の `glideStep` は
+  1 tick 分の滑空速度変化を計算する純関数で、係数は公式ソースではなくコミュニティによる
+  逆解析からの校正であることをモジュールヘッダに明記している。装備・耐久・接地判定は呼び出し側の
+  責務である。`domain/piston.ts` の `pistonExtrusion` は、移動するブロック AABB が静止エンティティを
+  押し出す変位を計算する —— この層の他の解決関数がすべて「非めり込みを維持する」のに対し、
+  ピストンだけは「非めり込みを確立する」唯一の例外である（`docs/design-notes.md` P-9-7）。
+  どちらのブロックが動くか、通電判定、ブロック状態の書き換えは mc-redstone/mc-sim が所有する。
 - **ビルド成果物を生成する。** `pnpm build` は ESM の `dist/index.js`、型宣言、source map を生成し、
   `exports` は `dist` のみを公開する。`prepublishOnly` は `pnpm verify` を実行する。
 - **カバレッジ閾値は 100%。** 計測対象の statements / branches / functions / lines をすべて
@@ -229,13 +266,15 @@ const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)
 ### 現行 API の境界
 
 公式 Minecraft と同一の版・Edition 仕様は未指定であり、このライブラリ単独での完全互換は主張しない。
-上記の環境、移動、エンティティ、矢の API は、注入された状態に対する純粋な計算であり、完全な
-Minecraft tick を実行するオーケストレーターではない。次の機能はこの層が所有しない。
+上記の環境、移動、エンティティ、投射体、滑空、ピストンの API は、注入された状態に対する純粋な計算であり、
+完全な Minecraft tick を実行するオーケストレーターではない。次の機能はこの層が所有しない。
 
 - fluid の流動・ブロック状態更新、インベントリ、アイテム、mob AI
 - 接触ダメージ・窒息・落下ダメージの health / status への適用
 - 爆発で計画されたブロック除去、health / status / velocity への適用、ドロップ生成
 - entity collection の lifecycle、tick 順序、乗り物、落下ブロックのブロック除去・entity 生成・着地配置
+- エリトラの装備・耐久判定、滑空状態そのものの決定（`glideStep` は速度変化のみ計算する）
+- ピストンの通電・可動判定・ブロック状態の書き換え（`pistonExtrusion` は押し出し幾何のみ計算する）
 - Edition / version ごとの block state、複合形状、projectile tuning と公式データセット
 
 これらを公式互換として固定するには、対象 Edition・バージョン・データ源を仕様として固定し、

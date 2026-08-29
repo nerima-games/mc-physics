@@ -36,6 +36,8 @@ plan.md の数値のうち再検証で食い違ったものは `porting.md` に�
 - **「2.3ms→0.09ms、25倍」の出典（コミット `101074e3` のブラウザ実測）と、再現できないこと** → `design-notes.md` P-7
 - **AABB 衝突リゾルバの設計判断（軸順序・swept AABB・reach 上限・注入する step height）** → `design-notes.md` P-9、`public-api.md` §3-2
 - **リゾルバのテストを mutation で確かめた記録** → `testing.md` §7
+- **爆発 / 起爆済み TNT を独自実装から kernel の re-export へ切り替えた経緯** → `porting.md` §7、`responsibility.md` §2.1
+- **`pistonExtrusion` が「維持であって確立ではない」の唯一の例外である理由** → `design-notes.md` P-9-7、`public-api.md` §5-6
 
 ## 上位資料
 

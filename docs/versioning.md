@@ -29,7 +29,7 @@ maintainer による裁量判断のみで行う（組織共通のリリース標
 
 したがって現在の `package.json` は:
 
-- `dependencies` に `mc-kernel@0.4.0` と `effect` を直接宣言し、共有データ契約を重複定義しない。
+- `dependencies` に `mc-kernel@0.5.0` と `effect` を直接宣言し、共有データ契約を重複定義しない。
 - `exports` は `dist/index.js` と `dist/index.d.ts` を指し、利用者の実行時に TypeScript
   ソースを読み込まない。
 - `prepublishOnly` は `pnpm verify` を実行し、公開前に型・lint・テスト・カバレッジ・ビルド・package export smoke を検証する。

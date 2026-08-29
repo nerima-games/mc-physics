@@ -60,13 +60,32 @@ export type Body = {
 }
 export const GRAVITY_Y = -9.82
 export const TERMINAL_VELOCITY_Y = -32
-export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, gravityY?: number): Body
-export const integrate = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, gravityY?: number): ReadonlyArray<Body>
+export const integrateBody = (
+  body: Body,
+  deltaTime: DeltaTimeSecs,
+  gravityY?: number,
+  dragPerSecond?: number,        // default 1: no drag
+  terminalVelocityY?: number,    // default TERMINAL_VELOCITY_Y
+): Body
+export const integrate = (
+  bodies: ReadonlyArray<Body>,
+  deltaTime: DeltaTimeSecs,
+  gravityY?: number,
+  dragPerSecond?: number,
+  terminalVelocityY?: number,
+): ReadonlyArray<Body>
 export const maxFallPerStep = (maxDeltaSecs: number): number
 ```
 
 ホットパスには in-place 版が要るが、それは**ベンチマークができてから**、
 かつ純粋版を定義とする API の下に入れる。正しさが先、速さは後。しかも速い版はこれに対してテストできる。
+
+**`dragPerSecond` と `terminalVelocityY` は本ブランチで追加した注入ポイントで、既定値は公式 Java 版準拠**
+（`responsibility.md` の設計注意を参照）。`dragPerSecond`（既定 1、抵抗なし）は 1 tick あたりの
+乗算係数の連続版で、`v *= dragPerSecond ** dt` として全軸へ重力の前に適用する。`terminalVelocityY`
+（既定 `TERMINAL_VELOCITY_Y`）は下向き速度の上限そのものを差し替える。有限かつ負の値だけを受け付け、
+それ以外（未指定、非有限、非負）はモジュール既定へフォールバックする。低速で落下するブロック
+（例: パラシュート的な挙動）を、公式値を変えずに表現できるようにする注入である。
 
 ### 定数の出典
 
@@ -159,24 +178,48 @@ export const standingPlaneAbove = (surfaceY: number): FootY
 export const PLAYER_HALF_WIDTH = 0.3
 export const PLAYER_HALF_HEIGHT: HalfHeight   // 0.9
 
-export type Vec3 = { readonly x: number; readonly y: number; readonly z: number }
-export const vec3 = (x: number, y: number, z: number): Vec3
+/** Structurally identical to this package's retired local `{ x, y, z }` type and constructor; kernel owns the vocabulary now. */
+export type { Position } from '@nerima-games/mc-kernel'
+export { position } from '@nerima-games/mc-kernel'
 
 export type AABB = {
   readonly minX: number; readonly minY: number; readonly minZ: number
   readonly maxX: number; readonly maxY: number; readonly maxZ: number
 }
+export type BlockShape = AABB | ReadonlyArray<AABB>
+export const aabbsOfBlockShape = (shape: BlockShape): ReadonlyArray<AABB>
 export const entityAABB = (x: number, centreY: CentreY, z: number, halfWidth: number, halfHeight: HalfHeight): AABB
+export const aabbOfCollisionShape = (shape: CollisionShape): AABB | null   // kernel's CollisionShape -> local AABB
 export const blockAABB = (bx: number, by: number, bz: number, shape?: AABB): AABB
-export const FULL_BLOCK_SHAPE: AABB
-export const SLAB_SHAPE: AABB
-export const PRESSURE_PLATE_SHAPE: AABB
-export const CACTUS_SHAPE: AABB
 
 export const intersects = (a: AABB, b: AABB): boolean
 export const penetrationY = (a: AABB, b: AABB): number
 export const CONTACT_EPSILON = 1e-9
+export const collidesWith = (a: AABB, b: AABB): boolean
 export const isRestingOn = (body: AABB, surface: AABB): boolean
+```
+
+**The local position vector type and its lowercase constructor were retired.** This package used to declare
+its own `{ x, y, z }` vocabulary under those names; it now re-exports mc-kernel's `Position`/`position`
+instead, which is structurally identical (`test/coordinates.test.ts` asserts the shape is unchanged), so
+the only caller-visible change is the import source. `AABB` was **not** unified with kernel's nested
+`{ min, max }` shape — see `responsibility.md` §4 for why the flat form stays.
+
+### 3-1. Shape constants moved to `domain/shape-data.ts`
+
+`FULL_BLOCK_SHAPE`, `SLAB_SHAPE`, `PRESSURE_PLATE_SHAPE`, `CACTUS_SHAPE`, and their `CollisionShape ->
+AABB` lookup table used to live in `coordinates.ts` alongside the Y-convention types and the `intersects`/
+`collidesWith` predicates. They now live in their own module, separating shape **data** from coordinate
+**logic**; `coordinates.ts` imports from it internally (for `aabbOfCollisionShape` and `blockAABB`'s
+default), and `src/index.ts` re-exports both modules so the public surface is unchanged.
+
+```typescript
+export const FULL_BLOCK_SHAPE: AABB
+export const SLAB_SHAPE: AABB
+export const PRESSURE_PLATE_SHAPE: AABB
+export const CACTUS_SHAPE: AABB
+/** Newly public: the same table `aabbOfCollisionShape` consults internally. */
+export const COLLISION_SHAPE_AABBS: Readonly<Record<CollisionShape, AABB | null>>
 ```
 
 ### 参照実装は BODY-CENTRE Y 一本である（実測）
@@ -297,16 +340,41 @@ export type ResolveOptions = {
   /** 状態依存・複合形状。指定時は null も含めてこの結果を優先する。 */
   readonly blockShapeAt?: BlockShapeAt
   readonly stepHeight?: number        // 既定 0。参照実装の MAX_STEP_UP に相当するが「値」は mc-sim のもの
+  /**
+   * スライムブロック/ベッド式の着地バウンス。genuine な下向きの床衝突でだけ効き、resting
+   * contact や天井/壁の衝突には効かない。[0, 1] にクランプし、未指定または 0 は従来どおりの
+   * vy=0 クランプになる。
+   */
+  readonly bouncinessAt?: (bx: number, by: number, bz: number) => number
 }
 
 export type Resolution = { readonly body: Body; readonly isGrounded: boolean }
 
 export const resolveBody  = (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions): Resolution
 export const resolveWorld = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions): ReadonlyArray<Resolution>
-export const stepBody     = (body: Body, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number): Resolution
-export const stepWorld    = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number): ReadonlyArray<Resolution>
+export const stepBody = (
+  body: Body,
+  deltaTime: DeltaTimeSecs,
+  options: ResolveOptions,
+  gravityY?: number,
+  dragPerSecond?: number,        // §1 の integrateBody と同じ既定・意味
+  terminalVelocityY?: number,
+): Resolution
+export const stepWorld = (
+  bodies: ReadonlyArray<Body>,
+  deltaTime: DeltaTimeSecs,
+  options: ResolveOptions,
+  gravityY?: number,
+  dragPerSecond?: number,
+  terminalVelocityY?: number,
+): ReadonlyArray<Resolution>
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number
 ```
+
+`bouncinessAt` は `resolve-axis.ts` の `resolveVertical` が、下向き速度で床に接触した瞬間にだけ
+サンプルする。跳ね返った着地は `velocity: -state.velocity * bounciness` を返し、`resolveBody` は
+この反射（`bounced: true`）を見て `isGrounded: false` を返す —— 着地した位置はそのフレームの
+`isSupported` を満たすが、速度は面から離れる向きなので、接地とは読まない。
 
 `blockPropertiesAt` が `null` を返すセルは衝突しない。値があれば kernel の `collisionShape` を
 標準形状へ変換する。`blockShapeAt` を指定した場合はその戻り値を常に優先し、`null` または空配列は
@@ -389,22 +457,31 @@ export const voxelRaycast = (
 
 Hit 型は `voxel-raycast.ts:7-15`: `{ point, normal, distance, blockX, blockY, blockZ }`。
 
-本リポジトリ:
+本リポジトリ（`domain/dda.ts` が grid walk、narrow-phase は `domain/dda-shapes.ts` に分離）:
 
 ```typescript
+import type { BlockFace, Position } from '@nerima-games/mc-kernel'
+
 export type VoxelHit = {
   readonly bx: number; readonly by: number; readonly bz: number
-  readonly normal: Vec3
+  readonly normal: Position
+  /** Canonical Minecraft face the ray entered through. */
+  readonly face: BlockFace
   readonly distance: number
-  readonly point: Vec3
+  readonly point: Position
 }
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 export type RaycastShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 export const voxelRaycast = (
-  origin: Vec3, direction: Vec3, maxDistance: number, isTargetable: IsTargetable,
+  origin: Position, direction: Position, maxDistance: number, isTargetable: IsTargetable,
   shapeAt?: RaycastShapeAt,
 ): Option.Option<VoxelHit>
 ```
+
+`normal` と `point` はこの層のローカルな旧位置型ではなく kernel の `Position` を使う
+（§3 の座標語彙統一と同じ変更）。
+`face` は座標系に依存しない Minecraft の正準面名で、`normal` から導出可能な情報を、消費側が
+再導出せずに使えるようにするための追加フィールドである。
 
 第5引数を省略した既存呼び出しは従来どおりtargetable cell全体をunit cubeとして扱う。
 指定時はDDAで候補cellを列挙した後、cell-local AABBとのslab intersectionで実際の面を求める。
@@ -436,24 +513,34 @@ shapeは有限・正体積かつunit cell内でなければならず、不正値
 
 | モジュール | 公開している計算 |
 | --- | --- |
-| `environment` | kernel の `BlockProperties` / `BlockCapabilities` から surface effects、hazards、fluid effects をサンプリングし、surface motion を計算 |
-| `fluid` | 注入された fluid effects と係数から fluid motion を計算 |
-| `movement` | 移動入力、sprint、jump、knockback を速度へ適用 |
+| `environment` | kernel の `BlockProperties` / `BlockCapabilities` から surface effects（垂直ドラッグ `movementDragY` を含む）、hazards、fluid effects をサンプリングし、surface motion を計算 |
+| `fluid` | 注入された fluid effects と係数（垂直ドラッグ `dragPerSecondY` を含む）から fluid motion を計算 |
+| `movement` | 移動入力、sprint、jump、水泳上昇（`inFluid`）、knockback を速度へ適用 |
 | `falling-block` | kernel の `fallsWhenUnsupported` と支持側 `canSupportAttachments` から落下開始候補を判定 |
 | `landing` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 projection |
 | `kernel-world` | kernel の block ID lookup を `BlockAt` / `BlockPropertiesAt` / `BlockEnvironment` / `ResolveOptions` へ接続 |
-| `entity-collision` | 空間グリッド broad-phase、AABB narrow-phase、質量と反発係数を使う衝突解決 |
-| `projectile` | 矢の launch、drag / gravity / lifetime、ブロック / entity swept hit test |
-| `explosion` | 抵抗・遮蔽を考慮したブロック破壊と entity exposure / damage / knockback の bounded plan |
-| `primed-tnt` | bounded な fuse 進行、detonated への遷移、既存の explosion planner の再利用 |
-| `resolve` / `resolve-shapes` | block AABB の Y → X → Z 解決と標準形状 |
+| `entity-collision` | 空間グリッド broad-phase（`potentialPairs`）、AABB narrow-phase（`collisionOf`、`inverseMassOf`、`normalizedOptions`）を個別に公開 |
+| `entity-collision-resolve` | `entity-collision` の検出結果を使った、質量と反発係数ベースの解決（`resolveEntityCollisions`） |
+| `projectile` | `ProjectileProfile` を注入する一般化された launch / drag / gravity / lifetime、ブロック / entity swept hit test。`ARROW_PROFILE` / `SNOWBALL_PROFILE` / `EGG_PROFILE` / `TRIDENT_PROFILE` を既定プリセットとして提供 |
+| `glide` | エリトラ滑空 1 tick 分の速度変化（`glideStep`）。装備・耐久・grounded 判定は呼び出し側 |
+| `piston` | 移動するブロック AABB が静止エンティティを押し出す幾何（`pistonExtrusion`） |
+| `explosion` | mc-kernel が実装する、抵抗・遮蔽を考慮したブロック破壊と entity exposure / damage / knockback の bounded plan（§5-1） |
+| `primed-tnt` | mc-kernel が実装する、bounded な fuse 進行、detonated への遷移、既存の explosion planner の再利用（§5-2） |
+| `resolve` / `resolve-axis` / `resolve-sweep` / `resolve-support` / `resolve-shapes` / `resolve-types` | block AABB の Y → X → Z 解決、swept AABB による高速移動判定、step-up、標準形状。§3-2 |
+| `dda` / `dda-shapes` | voxel grid walk（`dda`）と、候補セルの narrow-phase 形状交差（`dda-shapes`）。§4 |
+| `shape-data` | `FULL_BLOCK_SHAPE` などの形状定数（§3-1） |
+| `coordinates` | `FootY` / `CentreY` / `HalfHeight`、`AABB`、`Position`/`position` の再 export（§3） |
 
 これらは状態を所有しない純粋関数である。`BlockEnvironment`、`FluidStateAt`、entity 集合、
 damage / health 更新、tick 順序は呼び出し側が注入・配線する。特に `stepBody` は積分と
 ブロック衝突の合成であり、環境・entity・projectile の各 helper を自動で呼び出す
 Minecraft 全体の tick 関数ではない。
 
-### 5-1. 爆発計画（`domain/explosion.ts`）
+### 5-1. 爆発計画（mc-kernel、`src/index.ts` から re-export）
+
+**この計算はもう本リポジトリの実装ではない。** 独自の `domain/explosion.ts` は、mc-kernel 0.5.0 が
+同じ計算を実装したことを受けて、入出力の等価性を確認したうえで削除した
+（`docs/porting.md` §7、`docs/responsibility.md` §2.1）。以下の契約自体は変わっていない。
 
 `planExplosion` は、ワールドの読み取りとエンティティ集合を注入して、爆発の結果を状態から分離した
 `ExplosionPlan` として返す。中心、半径、seed は有限値に正規化され、既定の訪問ブロック数・光線ステップ数・
@@ -469,9 +556,11 @@ mutation には入らない。`ExplosionPlan.entityEffects` は exposure、damag
 health・velocity・status の状態を変更しない。`applyExplosionPlan` は `destroyedBlocks` と `entityEffects` を
 commit callback へ渡すだけなので、ワールド書き込み、ダメージ適用、ドロップ生成は呼び出し側が実装する。
 
-### 5-2. 起爆済み TNT（`domain/primed-tnt.ts`）
+### 5-2. 起爆済み TNT（mc-kernel、`src/index.ts` から re-export）
 
-`primeTnt` は fuse を有限非負へ正規化する。`planPrimedTnt` は 1 回の呼び出しで fuse を進め、
+**この計算もこの層の実装ではない。** 独自の `domain/primed-tnt.ts` は、mc-kernel 0.5.0 の実装との
+等価性を確認したうえで削除した（`docs/porting.md` §7、`docs/responsibility.md` §2.1）。契約は変わって
+いない: `primeTnt` は fuse を有限非負へ正規化する。`planPrimedTnt` は 1 回の呼び出しで fuse を進め、
 `MAX_TNT_FUSE_ADVANCE_SECS` を超える delta は `deferredSecs` として返す。fuse が尽きたフレームでは
 既存の `planExplosion` を再利用し、`detonated` state と爆発計画を返す。detonated state に対する
 後続呼び出しは再爆発を生成しない。
@@ -494,6 +583,87 @@ grounded 状態から、実際の下向き移動距離を累積し、`!wasGround
 体力減算、ダメージイベント、teleport 時の state reset の配線は mc-sim が所有し、mc-physics は
 `FallTrackingState` と純粋な `LandingImpact` だけを扱う。
 
+### 5-4. `ProjectileProfile` を注入する投射体（`domain/projectile.ts`）
+
+Arrow に固定されていた旧 API（矢専用の launch/step 関数と定数群）を撤去し、
+`ProjectileProfile` を引数で受け取る一般エンジンに置き換えた。
+
+```typescript
+export type ProjectileProfile = Readonly<{
+  gravity: number
+  airDrag: number
+  waterDrag: number
+  maxLifetimeSeconds: number
+  shooterGraceSeconds: number
+}>
+
+export const ARROW_PROFILE: ProjectileProfile
+export const SNOWBALL_PROFILE: ProjectileProfile   // ARROW_PROFILE.gravity * 0.6（Java の比率）
+export const EGG_PROFILE: ProjectileProfile        // SNOWBALL_PROFILE と同一
+export const TRIDENT_PROFILE: ProjectileProfile    // ARROW_PROFILE の waterDrag だけ 0.99 に上書き
+
+export const launchProjectile: (launch: ProjectileLaunch) => Projectile
+export const stepProjectile: (
+  state: Projectile,
+  dt: number,
+  world: ProjectileWorld,
+  profile: ProjectileProfile,
+) => ProjectileStep
+```
+
+`ARROW_PROFILE` は kernel が実装する対応する矢の定数群とビット単位で一致し、`test/projectile.test.ts`
+がステップ毎の等価性を固定している。矢そのもの（`Arrow` 型、永続化、アイテム消費、ダメージ）が
+必要な消費者は引き続き kernel を直接使う。この層が提供するのは、どのプロファイルにも共有できる
+swept-segment 衝突と寿命の機構だけである。
+
+### 5-5. エリトラ滑空（`domain/glide.ts`）
+
+`glideStep` は 1 tick 分の滑空速度変化を計算する純関数である。装備・耐久・grounded の判定は
+呼び出し側の責務で、`applyMovementInput`（`domain/movement.ts`）が接地判定を呼び出し側に残すのと
+同じ切り分けである。
+
+```typescript
+export const glideStep: (
+  velocity: Position,
+  sight: GlideSight,          // { pitchRadians, yawRadians }
+  deltaTime: DeltaTimeSecs,
+  config?: GlideConfig,
+) => Position
+
+export const DEFAULT_GLIDE_CONFIG: GlideConfig
+```
+
+**この係数は公式 Mojang ソースの検証済み移植ではない。** モジュールヘッダが明記するとおり、
+Java の `LivingEntity.travel()` のエリトラ分岐は本リポジトリから参照できるソースとして存在しないため、
+係数はコミュニティによる逆解析（15w41b 時代のデコンパイル）と Minecraft Wiki の定性的な記述から
+この層が独自に校正した値である。再現しているのは数値そのものではなく、ダイブで速度を得る・水平飛行は
+緩やかに沈む・クライムで速度を消費する・重力はほぼだが完全ではなく打ち消される・水平速度は視線方向へ
+瞬間ではなく時間をかけて曲がる、という**挙動の形**である。
+
+### 5-6. ピストンのエンティティ押し出し（`domain/piston.ts`）
+
+```typescript
+export type PistonAxis = 'x' | 'y' | 'z'
+export type PistonBlockMove = Readonly<{ axis: PistonAxis; before: AABB; distance: number }>
+export type PistonExtrusion = Readonly<{ displacement: Position; crushed: boolean }>
+
+export const pistonExtrusion: (
+  entity: AABB,
+  move: PistonBlockMove,
+  obstacles?: ReadonlyArray<AABB>,
+) => PistonExtrusion
+```
+
+**この関数は本リポジトリの他のすべての解決関数と逆の前提で書かれている、文書化が必要な唯一の例外
+である。** `resolve.ts` / `entity-collision-resolve.ts` を含む他のすべての解決関数は「ステップ前に
+非めり込みであること」を前提とし、その不変条件を**維持する**だけである（`design-notes.md` P-9-7）。
+ピストンでは逆で、動いたのはブロックでエンティティは動いていないのに、両者は構築によって重なって
+いる —— `pistonExtrusion` はこの重なりを**解消して**非めり込みを**確立する**、唯一の関数である。
+`move.distance === 0` は（`before` がすでに重なっていても）押し出しとして扱わない。静的な重なりは
+一般の resolver が維持すべき前提であり、この例外が確立するものではないからである。`obstacles` に
+far-side の障害物を渡すと、full push の余地がない場合に `crushed: true` と部分的な変位を返す。
+どのブロックが動くか、通電判定、ブロック状態の書き換えは mc-redstone/mc-sim が所有する。
+
 ## 6. 参照実装との責務境界と未移植項目
 
 | 項目 | 参照実装 | LOC | 扱い |
@@ -508,3 +678,21 @@ grounded 状態から、実際の下向き移動距離を累積し、`!wasGround
 | プレイヤー物理の高レベル層 | `player-physics.ts` | 310 | mc-sim 寄り。切り分け要検討 |
 | `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。kernel の `BlockProperties` に置き換える（`responsibility.md` §3.1） |
 | Effect の Service / Layer 配線 | `physics-service.ts` ほか | 180 | 消費側（mc-sim）の責務 |
+
+## 7. 環境・移動の異方性ドラッグと水泳上昇
+
+参照実装の対応する箇所を持たない、公式 Java 版の挙動を追加で表現するための注入ポイント。
+既定値（未指定）はいずれも従来どおりの等方性・非上昇の挙動を保つので、既存の呼び出しは壊れない。
+
+- **`SurfaceEffects.movementDragY`**（`environment-types.ts`）: 水平の `movementDrag` とは別に
+  垂直速度だけを減衰させる係数。`applySurfaceMotion`（`environment.ts`）は未指定を「垂直速度は
+  変更しない」として扱う（`1 - 0` の乗算と bit-identical）。クモの巣やパウダースノーのような、
+  水平と垂直で抵抗が異なる材質を表現する。
+- **`FluidMotionCoefficients.water.dragPerSecondY` / `.lava.dragPerSecondY`**（同上）:
+  `applyFluidMotion`（`fluid.ts`）が水平ドラッグと独立に使う垂直ドラッグ。未指定は水平の
+  `dragPerSecond` にフォールバックする。溶岩のように沈降が水平移動と異なる速度で減衰する流体を
+  表現する。
+- **`applyMovementInput` の `inFluid` 引数**（`movement.ts`）: 接地していない状態でジャンプ入力が
+  押されているとき、`inFluid` が真なら `fluidAscentAcceleration` で `fluidAscentMaxSpeed` まで
+  上昇速度を積み上げる（Java: 約 0.04 blocks/tick² を 20 ticks/s に換算した 0.8 blocks/s²、上限は
+  約 0.2 blocks/tick を換算した 4 blocks/s）。接地ジャンプとは排他で、`isGrounded` が優先される。

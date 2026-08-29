@@ -434,6 +434,30 @@ P-6 が Y 軸の話として発見した問題は、実際には全軸の話だ�
   どんな許容誤差にも引っかからず、1 時間後のセーブデータには現れる
 - `resolving is a fixed point: a resolved body resolves to itself, bit for bit`
 
+### `resolve-axis.ts` 側の不変条件: `velocity === 0` は床テストに決して到達しない
+
+P-6 が確立した「`collidesWith` は `CONTACT_EPSILON` を超える重なりだけを衝突とみなす」という述語は、
+`resolveVertical`（`domain/resolve-axis.ts`）の垂直解決に、もう 1 つの不変条件を連鎖させている:
+**静止中の body（垂直速度が厳密に 0）は、床の衝突テストに一度も到達しない。**
+
+```typescript
+if (state.velocity === 0) {
+  return state
+}
+```
+
+静止中の body は contact skin の分だけ床から離れて（正確には `CONTACT_EPSILON` 未満の重なりで）
+静止しており、これは `collidesWith` が「衝突」と認めない側である。一方、床とみなす条件
+（`reach = -state.velocity * deltaTime + CONTACT_EPSILON` に収まる面）は `CONTACT_EPSILON` **以下**の
+到達しか許さないので、両者は同じ境界を挟んで逆側にある。速度 0 の body がこのテストを通過することは
+構造上ありえない。
+
+この早期リターンは最適化ではなく、その不変条件を**コードとして明示する**ためにある。無条件に
+テスト本体まで進ませても（bounce ガードが手前で弾くので）挙動は変わらないが、そうすると
+「なぜ速度 0 では絶対に一致しないのか」という理由が、到達しないガードの中に隠れてしまう。
+P-6 の「テストを緩めて済ませてはいけなかった」と同じ理由で、ここでも**症状を隠す近道ではなく
+不変条件を名前で言う**方を選んでいる。
+
 ---
 
 ## P-7 `physics-dda-skips-origin-cell` / `physics-dda-respects-max-distance`
@@ -717,6 +741,18 @@ opt-in にしてある 2 つ目の理由がこれで、既定の 0 でのみ「�
 
 めり込みゼロのプロパティテストはこの前提を明示的に扱う: 空中から始めて**毎ステップ**検査する
 （`a body walking over broken terrain never ends a step inside a block`）。
+
+**唯一の例外: `domain/piston.ts` の `pistonExtrusion`。**
+この本文が定める「維持であって確立ではない」は、`domain/resolve.ts` と
+`domain/entity-collision-resolve.ts` を含むこの層のすべての解決関数に当てはまるが、
+ピストンの押し出しだけは逆の前提で書かれている。動いたのはブロックであって
+エンティティは動いていないのに、両者は構築によって重なっている —— エンティティ側から見れば、
+自分は非めり込みの前提を一度も破っていないのに、外部から前提を壊された状態で関数が呼ばれる。
+`pistonExtrusion` はこの重なりを**確立し直す**（establish）唯一の関数であり、
+`public-api.md` §5-6 に契約を記載している。逆に言えば、この層のそれ以外のどの解決関数も
+「呼ばれた時点でめり込んでいる」状態を正しく扱うことは要求されておらず、要求してもいけない
+——それは `pistonExtrusion` のような専用の geometry の仕事であって、汎用リゾルバの仕事では
+ないことを、この 1 関数がはっきり示している。
 
 ---
 

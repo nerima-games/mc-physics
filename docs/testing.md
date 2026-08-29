@@ -172,20 +172,28 @@ step height を超える段差の拒否を固定している。
 
 `.github/workflows/ci.yaml` は `pnpm verify` の各ゲートを独立したステップとして job に展開し、
 カバレッジと changeset の付け忘れ検出も加えたものである
-（失敗箇所が step 名で分かるようにするため。組織共通のテスト標準 §1・§3）:
+（失敗箇所が step 名で分かるようにするため。組織共通のテスト標準 §1・§3）。
+job 全体に `timeout-minutes: 15`、**さらに各ステップにも個別の `timeout-minutes` を設定してある**
+（ハングした場合に、job 全体の予算を使い切る前に、どのステップが詰まったか特定できるようにするため）:
 
 1. Checkout（`actions/checkout`、commit SHA 固定。組織共通のサプライチェーン標準）
 2. Setup pnpm（`pnpm/action-setup`、commit SHA 固定）
 3. Setup Node.js 24（`actions/setup-node`、commit SHA 固定。pnpm キャッシュ有効）
-4. `pnpm install --frozen-lockfile --ignore-scripts`
-5. `pnpm typecheck`
-6. `pnpm lint`
-7. `pnpm test`
-8. `pnpm changeset status --since=main` —— ユーザー向け変更に changeset の付け忘れがないか検出する
-   （組織共通のリリース標準 §1.2）
-9. `pnpm test:coverage` —— **ハードゲート**。4 指標 100% のしきい値を下回れば非ゼロ終了する（§3）
-10. `pnpm build` —— 公開する ESM・型宣言・source map が生成できることを確認する
-11. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定。7 日保持）
+4. Configure GitHub Packages authentication（`GITHUB_TOKEN` を pnpm の user 設定へ渡す）
+5. `pnpm install --frozen-lockfile --ignore-scripts`
+6. `pnpm typecheck`
+7. Set up Nix（`./.github/actions/nix-setup`。oxlint は `package.json` の devDependency ではなく
+   `flake.nix` の devShell が提供する。理由は `flake.nix` のコメントと `architecture.md` §6 を参照）
+8. `nix develop --command pnpm lint`
+9. `pnpm test`
+10. `pnpm changeset status --since=origin/main` —— ユーザー向け変更に changeset の付け忘れがないか
+    検出する（組織共通のリリース標準 §1.2）
+11. `pnpm test:coverage` —— **ハードゲート**。4 指標 100% のしきい値を下回れば非ゼロ終了する（§3）
+12. `pnpm build` —— 公開する ESM・型宣言・source map が生成できることを確認する
+13. `pnpm peers check` —— peer dependency の整合性を確認する
+14. `pnpm pack --dry-run` —— 公開ファイルだけが npm 配布物に含まれることを確認する
+15. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定、`if: always()`。
+    7 日保持）
 
 `pnpm check:deps` と `pnpm api:check` の2ステップは、それぞれの裏付けとなる
 `scripts/check-dependency-whitelist.ts` と `api-lock.md` / `scripts/api-lock.ts` が
@@ -196,17 +204,21 @@ org 標準への移行で全廃されたため、CI から削除済みである�
 | ファイル | 内容 |
 | --- | --- |
 | `test/coordinates.test.ts` | foot/centre のラウンドトリップ、半分と全体の取り違え検出、ブロック占有 `[y,y+1]`、`surfaceY+1`、接地が衝突と読まれないこと、**浮動小数誤差の大きさの固定**、文書化された反例、`collidesWith` と `intersects` が食い違う唯一の場所、**`isRestingOn` が両側であること**、AABB の対称性 |
-| `test/resolve.test.ts` | **軸順序（継ぎ目・ledge・step-up・壁ずり・入隅）**、ground clamp とその順序（**逆順のコストを `g·dt²` で固定**）、天井、壁が床にならないこと、**着地状態が P-6 の反例と一致すること**、1000 フレームの無ドリフト、固定点、**めり込みゼロ**（起伏地形 / 任意高度からの落下 / 終端速度）、**エネルギー非増加**（および step-up がその唯一の例外であること）、**補正量の上限**、決定論と順序非依存、**問い合わせセルが箱の中に収まること**、形状注入 |
-| `test/integrate.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、**`DeltaTimeSecs` ブランドが kernel の refinement であること**（有限・非負。ゼロも 30 も通る）、**`clampDeltaTime` の出力が常に安全域に入ること**（プロパティテスト）、semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、DDA（原点セル除外・法線・maxDistance・退化入力・訪問順・決定論） |
+| `test/resolve.test.ts` | **軸順序（継ぎ目・ledge・step-up・壁ずり・入隅）**、ground clamp とその順序（**逆順のコストを `g·dt²` で固定**）、天井、壁が床にならないこと、**着地状態が P-6 の反例と一致すること**、1000 フレームの無ドリフト、固定点、**めり込みゼロ**（起伏地形 / 任意高度からの落下 / 終端速度）、**エネルギー非増加**（および step-up がその唯一の例外であること）、**補正量の上限**、決定論と順序非依存、**問い合わせセルが箱の中に収まること**、形状注入、着地バウンス（`bouncinessAt`。genuine な床衝突でだけ効くこと、接触した cell のサンプル、`0` が無指定と bit-identical であること、`1` へのクランプ、反射後 `isGrounded: false`） |
+| `test/integrate.test.ts` | semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、注入された `dragPerSecond` の連続減衰と既定値 1 が無注入と bit-identical であること、注入された `terminalVelocityY` とその既定値へのフォールバック |
+| `test/dda.test.ts` | voxel DDA（原点セル除外・法線・面・maxDistance・退化入力・step 予算の枯渇・訪問順・決定論）、負方向の走査、shape narrow-phase（slab/cactus/pressure plate の実形状、空隙通過、6 面、複合形状の最近傍選択、不正形状の無視） |
+| `test/delta-time.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、**`DeltaTimeSecs` ブランドが kernel の refinement であること**（有限・非負。ゼロも 30 も通る）、**`clampDeltaTime` の出力が常に安全域に入ること**（プロパティテスト） |
+| `test/glide.test.ts` | ダイブ/レベル/クライムでの速度変化の向き、視線方向への漸次的な旋回、決定論、非有限入力の無害化、有限入力が常に有限出力になること（プロパティテスト）、ゼロ delta が恒等写像であること、ダイブの反復変換が発散せず不動点に収束すること |
+| `test/piston.test.ts` | 押し出し距離と crush 判定、ゼロ移動・未到達を押し出しと数えないこと、負方向の押し出し、押し出し軸に直交する軸を変えないこと、押し出し後にめり込みが残らないこと、変位が押し出し軸だけに乗ること、決定論 |
 | `test/public-api.test.ts` | barrel の export、実測定数の固定、**ブランドが kernel 準拠でクランプが境界にあること**、終端速度と delta 上限の導出関係、`CONTACT_EPSILON` の桁 |
-| `test/entity-collision.test.ts` | entity と block の broad/narrow phase、衝突形状、接触法線、決定論 |
-| `test/environment.test.ts` | block query、形状 query、空気・未知ブロック・流体状態の環境境界 |
+| `test/entity-collision.test.ts` | entity 同士の broad-phase（`potentialPairs`）/ narrow-phase（`collisionOf`）検出、質量ベースの解決（`resolveEntityCollisions`）、接触法線、反発係数、決定論、解決結果のプロパティ |
+| `test/environment.test.ts` | block query、形状 query、空気・未知ブロック・流体状態の環境境界、`SurfaceEffects.movementDragY`（クモの巣/パウダースノー相当の異方性ドラッグ） |
 | `test/falling-block.test.ts` | falling capability、支持 capability、空気・未ロードセル・未知セル・非支持ブロック直下の落下開始候補 |
 | `test/landing.test.ts` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 |
-| `test/fluid.test.ts` | 水・溶岩の fluid state と流体判定、kernel registry との整合 |
+| `test/fluid.test.ts` | 水・溶岩の fluid state と流体判定、kernel registry との整合、`dragPerSecondY`（垂直ドラッグが水平と独立であること、未指定時のフォールバック） |
 | `test/kernel-world.test.ts` | mc-kernel の block id / properties / shape を参照するワールド境界 |
-| `test/movement.test.ts` | body の移動、衝突解決、step-up、sneak-edge の組み合わせ |
-| `test/projectile.test.ts` | projectile の積分、衝突、block/entity hit、voxel raycast |
+| `test/movement.test.ts` | body の移動、衝突解決、step-up、sneak-edge の組み合わせ、水泳上昇（`inFluid`、接地ジャンプとの排他） |
+| `test/projectile.test.ts` | `ARROW_PROFILE` が kernel の矢実装をステップ毎に再現すること、launch と積分、block/entity への継続的な swept 衝突、寿命・ワールド境界、プロファイルごとの挙動差、決定論 |
 | `test/explosion.test.ts` | 爆発の抵抗・遮蔽・上限・決定論、entity effect、commit projection |
 | `test/primed-tnt.test.ts` | fuse の既定値・正規化・bounded advance・detonate-once・爆発 planner 再利用・commit projection |
 

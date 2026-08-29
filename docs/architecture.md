@@ -224,7 +224,7 @@ THREE カメラはそのミラーである（plan.md §3.8）。参照実装は 
 
 ## 7. 依存宣言と公開成果物
 
-**`package.json` の `dependencies` は `@nerima-games/mc-kernel@0.4.0` と `effect` である。**
+**`package.json` の `dependencies` は `@nerima-games/mc-kernel@0.5.0` と `effect` である。**
 mc-kernel の共有データを直接利用し、同じ値オブジェクトやブロック特性をこのリポジトリへ複製しない。
 
 TypeScript のソースを実行時に公開するのではなく、`pnpm build` で ESM の `dist/index.js` と
