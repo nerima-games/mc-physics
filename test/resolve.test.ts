@@ -196,7 +196,7 @@ describe('standard non-cubic block shapes', () => {
       })
       const falling: Body = { ...standingOn(0), y: CentreY(Number(HALF_H) + 1 / 16 + 0.01), vy: -1 }
 
-      const stepped = stepBody(falling, DT, options, 0)
+      const stepped = stepBody(falling, DT, options, { gravityY: 0 })
 
       expect(stepped.isGrounded).toBe(false)
       expect(stepped.body.y).toBeLessThan(falling.y)
@@ -208,7 +208,7 @@ describe('standard non-cubic block shapes', () => {
       })
       const falling: Body = { ...standingOn(0), y: CentreY(Number(HALF_H) + 1 / 16 + 0.01), vy: -1 }
 
-      const stepped = stepBody(falling, DT, options, 0)
+      const stepped = stepBody(falling, DT, options, { gravityY: 0 })
 
       expect(stepped.body.y).toBe(Number(HALF_H) + 1 / 16)
       expect(stepped.body.vy).toBe(0)
@@ -222,8 +222,8 @@ describe('standard non-cubic block shapes', () => {
       const before: Body = { ...standingOn(0), x: 0.74, y: CentreY(1.5), vx: 1 }
       const crossing: Body = { ...before, x: 0.75 }
 
-      const unobstructed = stepBody(before, DT, options, 0)
-      const blocked = stepBody(crossing, DT, options, 0)
+      const unobstructed = stepBody(before, DT, options, { gravityY: 0 })
+      const blocked = stepBody(crossing, DT, options, { gravityY: 0 })
 
       expect(unobstructed.body.x).toBe(0.74 + DT)
       expect(unobstructed.body.vx).toBe(1)
@@ -237,7 +237,7 @@ describe('standard non-cubic block shapes', () => {
       })
       const body: Body = { ...standingOn(0), x: 0.75, y: CentreY(1.5), vx: 1 }
 
-      expect(stepBody(body, DT, options, 0)).toStrictEqual(stepBody(body, DT, options, 0))
+      expect(stepBody(body, DT, options, { gravityY: 0 })).toStrictEqual(stepBody(body, DT, options, { gravityY: 0 }))
   })
 
   it('resolves the nearest component of a compound block shape', () => {
@@ -251,7 +251,7 @@ describe('standard non-cubic block shapes', () => {
       })
       const body: Body = { ...standingOn(0), x: 0.5, y: CentreY(1.5), vx: 100 }
 
-      const result = stepBody(body, DT, options, 0)
+      const result = stepBody(body, DT, options, { gravityY: 0 })
 
       expect(result.body.x).toBe(1 - HALF_W)
       expect(result.body.vx).toBe(0)
@@ -573,7 +573,7 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) => by === 0 || (bx === 2 && by === 1 && bz === 0))
       const fast = standingOn(0, { vx: 100 })
 
-      const stepped = stepBody(fast, FAST_DT, options, 0)
+      const stepped = stepBody(fast, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
@@ -587,7 +587,7 @@ describe('continuous collision for high-speed steps', () => {
       })
       const fast = standingOn(0, { vx: 100 })
 
-      const stepped = stepBody(fast, FAST_DT, options, 0)
+      const stepped = stepBody(fast, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.x).toBeCloseTo(2.45 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
@@ -597,7 +597,7 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) => bx === 0 && by === 4 && bz === 0)
       const rising: Body = { ...standingOn(0), y: CentreY(1.5), vy: 100 }
 
-      const stepped = stepBody(rising, FAST_DT, options, 0)
+      const stepped = stepBody(rising, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
       expect(stepped.body.vy).toBe(0)
@@ -607,8 +607,8 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) => bx === 2 && by === 1 && bz === 2)
       const diagonal = standingOn(0, { vx: 100, vz: 100 })
 
-      const first = stepBody(diagonal, FAST_DT, options, 0)
-      const second = stepBody(diagonal, FAST_DT, options, 0)
+      const first = stepBody(diagonal, FAST_DT, options, { gravityY: 0 })
+      const second = stepBody(diagonal, FAST_DT, options, { gravityY: 0 })
 
       expect(first).toStrictEqual(second)
       expect(first.body.x).toBeCloseTo(2 - HALF_W, 12)
@@ -623,7 +623,7 @@ describe('continuous collision for high-speed steps', () => {
       )
       const diagonal: Body = { ...standingOn(0), y: CentreY(1.5), vx: 50, vy: 100 }
 
-      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+      const stepped = stepBody(diagonal, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
@@ -635,7 +635,7 @@ describe('continuous collision for high-speed steps', () => {
       )
       const diagonal: Body = { ...standingOn(0), y: CentreY(1.5), vx: 75, vy: 100 }
 
-      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+      const stepped = stepBody(diagonal, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
       expect(stepped.body.vy).toBe(0)
@@ -647,7 +647,7 @@ describe('continuous collision for high-speed steps', () => {
       )
       const diagonal = standingOn(0, { vx: 75, vz: 200 })
 
-      const stepped = stepBody(diagonal, FAST_DT, options, 0)
+      const stepped = stepBody(diagonal, FAST_DT, options, { gravityY: 0 })
 
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
@@ -657,8 +657,8 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
       const touching = standingOn(0, { x: 1 - HALF_W })
 
-      const inward = stepBody({ ...touching, vx: 100 }, FAST_DT, options, 0)
-      const outward = stepBody({ ...touching, vx: -100 }, FAST_DT, options, 0)
+      const inward = stepBody({ ...touching, vx: 100 }, FAST_DT, options, { gravityY: 0 })
+      const outward = stepBody({ ...touching, vx: -100 }, FAST_DT, options, { gravityY: 0 })
 
       expect(inward.body.x).toBe(touching.x)
       expect(inward.body.vx).toBe(0)
@@ -670,7 +670,7 @@ describe('continuous collision for high-speed steps', () => {
       const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
       const overlapping = standingOn(0, { x: 1.5, vx: -100 })
 
-      const escaped = stepBody(overlapping, FAST_DT, options, 0)
+      const escaped = stepBody(overlapping, FAST_DT, options, { gravityY: 0 })
 
       expect(escaped.body.x).toBeCloseTo(-3.5, 12)
       expect(escaped.body.vx).toBe(-100)
@@ -1221,7 +1221,7 @@ describe('bounce (FR-009)', () => {
       const options = withWorld(groundUpTo(63), { bouncinessAt: () => 0.5 })
       const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
 
-      const stepped = stepBody(falling, DT, options, 0)
+      const stepped = stepBody(falling, DT, options, { gravityY: 0 })
 
       expect(stepped.body.y).toBe(restingCentre(63))
       expect(stepped.body.vy).toBeCloseTo(2.5, 12)
@@ -1238,7 +1238,7 @@ describe('bounce (FR-009)', () => {
       })
       const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
 
-      stepBody(falling, DT, options, 0)
+      stepBody(falling, DT, options, { gravityY: 0 })
 
       expect(seen).toContainEqual([0, 63, 0])
   })
@@ -1255,7 +1255,7 @@ describe('bounce (FR-009)', () => {
       const options = withWorld(groundUpTo(63), { bouncinessAt: () => 5 })
       const falling = standingOn(63, { y: CentreY(restingCentre(63) + 0.05), vy: -5 })
 
-      const stepped = stepBody(falling, DT, options, 0)
+      const stepped = stepBody(falling, DT, options, { gravityY: 0 })
 
       expect(stepped.body.vy).toBeCloseTo(5, 12)
   })
@@ -1271,7 +1271,7 @@ describe('bounce (FR-009)', () => {
       const options = withWorld(groundUpTo(63), { bouncinessAt: () => 1 })
       const resting = standingOn(63)
 
-      const stepped = stepBody(resting, DT, options, 0)
+      const stepped = stepBody(resting, DT, options, { gravityY: 0 })
 
       expect(stepped.body.vy).toBe(0)
       expect(stepped.isGrounded).toBe(true)
@@ -1323,6 +1323,49 @@ describe('bounce (FR-009)', () => {
               }
             }
             return true
+          },
+        ),
+        { numRuns: 200 },
+      )
+  })
+
+  it('PROPERTY: on the frame a genuine downward floor impact is resolved, bounciness > 0 leaves the body moving away from the surface', () => {
+      // MUTATION-CAUGHT: the "never higher than it started" property above
+      // stays green even if the reflection in resolve-axis.ts
+      // (`velocity: -state.velocity * bounciness`) loses its negation — a
+      // body that never bounces also never rises above where it started, so
+      // that property cannot tell "no reflection" from "correct reflection".
+      // This asks the one-sided question directly: bouncinessAt is invoked
+      // (in resolveVertical) if and only if a genuine downward floor impact
+      // was just resolved, so using it as a marker isolates exactly the
+      // frame the reflection must have fired on, and checks vy on that frame
+      // is positive rather than merely non-increasing in energy.
+      FastCheck.assert(
+        FastCheck.property(
+          FastCheck.double({ min: 0.05, max: 1, noNaN: true, noDefaultInfinity: true }),
+          FastCheck.double({ min: 0.5, max: 6, noNaN: true, noDefaultInfinity: true }),
+          (bounciness, dropHeight) => {
+            let contactThisFrame = false
+            const options = withWorld(groundUpTo(63), {
+              bouncinessAt: () => {
+                contactThisFrame = true
+                return bounciness
+              },
+            })
+            let body = standingOn(63, { y: CentreY(restingCentre(63) + dropHeight) })
+            let observedContact = false
+            let vyAfterContact = 0
+
+            for (let frame = 0; frame < 500 && !observedContact; frame += 1) {
+              contactThisFrame = false
+              body = stepBody(body, DT, options).body
+              if (contactThisFrame) {
+                observedContact = true
+                vyAfterContact = body.vy
+              }
+            }
+
+            return observedContact && vyAfterContact > 0
           },
         ),
         { numRuns: 200 },

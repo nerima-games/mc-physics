@@ -35,6 +35,22 @@ export const DEFAULT_ENTITY_COLLISION_OPTIONS: EntityCollisionOptions = {
   restitution: 0,
 }
 
+/**
+ * A cell smaller than 1/4 block stops being a meaningful spatial-hash bucket
+ * and becomes purely a cost: `potentialPairs` registers an entity into every
+ * cell its AABB spans, so an arbitrarily small cellSize (PoC: 1e-6, ~6.5e17
+ * cell registrations for one entity) is a resource-exhaustion vector, not a
+ * finer broad phase.
+ */
+export const MIN_CELL_SIZE = 0.25
+
+/**
+ * `resolveEntityCollisions` loops up to `iterations` times over every
+ * potential pair per call; an unbounded iterations count (attacker-supplied
+ * or malformed config) turns one call into an unbounded amount of work.
+ */
+export const MAX_ITERATIONS = 64
+
 const finiteOr = (value: number, fallback: number): number => {
   if (Number.isFinite(value)) {
     return value
@@ -113,8 +129,8 @@ export const normalizedOptions = (options: EntityCollisionOptions): EntityCollis
     cellSize = normalizedCellSize
   }
   return {
-    cellSize,
-    iterations: Math.max(1, Math.floor(finiteOr(iterations, defaultIterations))),
+    cellSize: Math.max(MIN_CELL_SIZE, cellSize),
+    iterations: Math.min(MAX_ITERATIONS, Math.max(1, Math.floor(finiteOr(iterations, defaultIterations)))),
     restitution: Math.min(1, nonNegative(restitution)),
   }
 }

@@ -529,7 +529,7 @@ Performance (all browser-measured):
 
 ### 回帰テスト
 
-`test/integrate.test.ts`:
+`test/dda.test.ts`:
 
 - `never returns the cell the ray starts in, so you cannot mine the block you are inside`
 - `finds the first targetable cell along the ray and reports the face it entered through`

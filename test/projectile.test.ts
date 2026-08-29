@@ -46,6 +46,97 @@ const kernelWorld = (overrides: Partial<KernelProjectileWorld> = {}): KernelProj
   ...overrides,
 })
 
+/**
+ * Fixture-only helpers for the lockstep property test below. `boxAround` and
+ * `positionAfterOpenFlight` place collision geometry; they are never used to
+ * compute the value an assertion checks against — every assertion in the
+ * property compares `stepProjectile`/`launchProjectile` against the
+ * independent kernel `stepArrow`/`launchArrow` at every step.
+ */
+const boxAround = (centre: { x: number; y: number; z: number }, halfExtent: number): AABB => ({
+  maxX: centre.x + halfExtent,
+  maxY: centre.y + halfExtent,
+  maxZ: centre.z + halfExtent,
+  minX: centre.x - halfExtent,
+  minY: centre.y - halfExtent,
+  minZ: centre.z - halfExtent,
+})
+
+const OPEN_WORLD_BOUNDS: AABB = { maxX: 1e6, maxY: 1e6, maxZ: 1e6, minX: -1e6, minY: -1e6, minZ: -1e6 }
+
+/**
+ * Where the kernel arrow would be after `steps` open-flight ticks with no
+ * obstruction. Used only to *place* a small box exactly on the trajectory so
+ * a collision is guaranteed at a known age — not to predict what the
+ * assertion should see. If `stepProjectile` and `stepArrow` ever diverge
+ * before this point, the per-step `toStrictEqual` below still catches it.
+ */
+const positionAfterOpenFlight = (
+  launch: Parameters<typeof launchArrow>[0],
+  steps: number,
+  dt: number,
+): { x: number; y: number; z: number } | null => {
+  const openWorld = kernelWorld({ bounds: kernelPoint(OPEN_WORLD_BOUNDS) })
+  let state: Arrow = launchArrow(launch)
+  for (let i = 0; i < steps; i += 1) {
+    if (state.state !== 'flying') {
+      return null
+    }
+    state = stepArrow(state, dt, openWorld).arrow
+  }
+  return state.state === 'flying' ? state.position : null
+}
+
+const LOCKSTEP_SHOOTER_ID = 'lockstep-shooter'
+const LOCKSTEP_DT = 0.05
+const LOCKSTEP_STEPS = 20
+
+const arbitraryLaunch = FastCheck.record({
+  pitchRadians: FastCheck.double({ max: 1.2, min: -1.2, noDefaultInfinity: true, noNaN: true }),
+  position: FastCheck.record({
+    x: FastCheck.double({ max: 5, min: -5, noDefaultInfinity: true, noNaN: true }),
+    y: FastCheck.double({ max: 10, min: 2, noDefaultInfinity: true, noNaN: true }),
+    z: FastCheck.double({ max: 5, min: -5, noDefaultInfinity: true, noNaN: true }),
+  }),
+  shooterId: FastCheck.constant(LOCKSTEP_SHOOTER_ID),
+  speed: FastCheck.double({ max: 25, min: 8, noDefaultInfinity: true, noNaN: true }),
+  yawRadians: FastCheck.double({ max: Math.PI, min: -Math.PI, noDefaultInfinity: true, noNaN: true }),
+})
+
+type BlockSpec =
+  | Readonly<{ kind: 'targeted'; stepsAhead: number }>
+  | Readonly<{ kind: 'random'; offset: { x: number; y: number; z: number } }>
+
+const arbitraryOffset = FastCheck.record({
+  x: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
+  y: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
+  z: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
+})
+
+const arbitraryBlockSpec = FastCheck.oneof(
+  { arbitrary: FastCheck.integer({ max: 4, min: 1 }).map((stepsAhead): BlockSpec => ({ kind: 'targeted', stepsAhead })), weight: 2 },
+  { arbitrary: arbitraryOffset.map((offset): BlockSpec => ({ kind: 'random', offset })), weight: 1 },
+)
+const arbitraryBlocks = FastCheck.array(arbitraryBlockSpec, { maxLength: 3, minLength: 0 })
+
+/** One of the two entity slots can land on the shooter's own id, positioned so it is only re-entered after `ARROW_SHOOTER_GRACE_SECONDS` has elapsed. */
+type EntitySpec =
+  | Readonly<{ kind: 'shooterGrace'; stepsAhead: number }>
+  | Readonly<{ kind: 'random'; id: string; offset: { x: number; y: number; z: number } }>
+
+const arbitraryEntitySpec = FastCheck.oneof(
+  { arbitrary: FastCheck.integer({ max: 10, min: 7 }).map((stepsAhead): EntitySpec => ({ kind: 'shooterGrace', stepsAhead })), weight: 2 },
+  {
+    arbitrary: FastCheck.record({ id: FastCheck.constantFrom('bystander-a', 'bystander-b'), offset: arbitraryOffset }).map(
+      (value): EntitySpec => ({ id: value.id, kind: 'random', offset: value.offset }),
+    ),
+    weight: 1,
+  },
+)
+const arbitraryEntities = FastCheck.array(arbitraryEntitySpec, { maxLength: 2, minLength: 0 })
+
+const arbitraryWorldHalfExtent = FastCheck.double({ max: 200, min: 60, noDefaultInfinity: true, noNaN: true })
+
 describe('FR-007 acceptance: ARROW_PROFILE reproduces the kernel Arrow implementation exactly', () => {
   it('matches the constants launchArrow/stepArrow are built from', () => {
     expect(ARROW_PROFILE).toStrictEqual({
@@ -131,6 +222,150 @@ describe('FR-007 acceptance: ARROW_PROFILE reproduces the kernel Arrow implement
     const wetKernel = stepArrow(wet, 0.05, kernelWorld({ isInWater: () => true }))
     expect(wetLocal.projectile).toStrictEqual(wetKernel.arrow)
     expect(wetLocal.hit).toStrictEqual(wetKernel.hit)
+  })
+
+  it('matches stepArrow exactly when a block and an entity share the identical fractional hit point (block wins the tie)', () => {
+    const launch = { pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 }
+    const tiedBounds: AABB = { maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }
+    const localWorld = world({ blockBounds: () => [tiedBounds], entities: [{ bounds: tiedBounds, id: 'occupant' }] })
+    const kernelW = kernelWorld({
+      blockBounds: () => [kernelPoint(tiedBounds)],
+      entities: [{ bounds: kernelPoint(tiedBounds), id: 'occupant' }],
+    })
+
+    let local: Projectile = launchProjectile(launch)
+    let kernel: Arrow = launchArrow(launch)
+    expect(local).toStrictEqual(kernel)
+
+    for (let step = 0; step < 5 && local.state === 'flying'; step += 1) {
+      const localResult = stepProjectile(local, 0.05, localWorld, ARROW_PROFILE)
+      const kernelResult = stepArrow(kernel, 0.05, kernelW)
+      expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
+      expect(localResult.hit).toStrictEqual(kernelResult.hit)
+      local = localResult.projectile
+      kernel = kernelResult.arrow
+    }
+    expect(local).toMatchObject({ hit: { kind: 'block' }, state: 'stuck' })
+  })
+
+  it('matches stepArrow exactly when a step exits the world bounds (reason: world)', () => {
+    const launch = { pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 }
+    const tightBounds: AABB = { maxX: 0.1, maxY: 1, maxZ: 1, minX: -1, minY: -1, minZ: -1 }
+    const localWorld = world({ bounds: tightBounds })
+    const kernelW = kernelWorld({ bounds: kernelPoint(tightBounds) })
+
+    const local = launchProjectile(launch)
+    const kernel = launchArrow(launch)
+    expect(local).toStrictEqual(kernel)
+
+    const localResult = stepProjectile(local, 0.05, localWorld, ARROW_PROFILE)
+    const kernelResult = stepArrow(kernel, 0.05, kernelW)
+    expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
+    expect(localResult.hit).toStrictEqual(kernelResult.hit)
+    expect(localResult.projectile).toMatchObject({ reason: 'world', state: 'despawned' })
+  })
+
+  it('matches stepArrow exactly when a step overflows to a non-finite position (reason: invalid, including the resulting velocity)', () => {
+    const overflowing: Projectile = {
+      ageSeconds: 0,
+      position: { x: 0, y: 0, z: 0 },
+      state: 'flying',
+      velocity: { x: Number.MAX_VALUE, y: 0, z: 0 },
+    }
+    const localResult = stepProjectile(overflowing, 2, world(), ARROW_PROFILE)
+    const kernelResult = stepArrow(overflowing, 2, kernelWorld())
+    expect(localResult.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
+  })
+
+  it('property: launchProjectile/stepProjectile lockstep-matches launchArrow/stepArrow across randomized blocks, entities, and a grace-expired shooter self-hit', () => {
+    let blockHitObserved = false
+    let entityHitObserved = false
+    let graceExpiredEntityHitObserved = false
+
+    FastCheck.assert(
+      FastCheck.property(
+        arbitraryLaunch,
+        arbitraryWorldHalfExtent,
+        arbitraryBlocks,
+        arbitraryEntities,
+        (launch, worldHalfExtent, blockSpecs, entitySpecs) => {
+          const blocks: AABB[] = []
+          for (const spec of blockSpecs) {
+            if (spec.kind === 'targeted') {
+              const centre = positionAfterOpenFlight(launch, spec.stepsAhead, LOCKSTEP_DT)
+              if (centre !== null) {
+                blocks.push(boxAround(centre, 0.6))
+              }
+            } else {
+              blocks.push(boxAround({ x: launch.position.x + spec.offset.x, y: launch.position.y + spec.offset.y, z: launch.position.z + spec.offset.z }, 1))
+            }
+          }
+
+          const entities: Array<{ id: string; bounds: AABB }> = []
+          for (const spec of entitySpecs) {
+            if (spec.kind === 'shooterGrace') {
+              const centre = positionAfterOpenFlight(launch, spec.stepsAhead, LOCKSTEP_DT)
+              if (centre !== null) {
+                entities.push({ bounds: boxAround(centre, 0.6), id: LOCKSTEP_SHOOTER_ID })
+              }
+            } else {
+              entities.push({
+                bounds: boxAround({ x: launch.position.x + spec.offset.x, y: launch.position.y + spec.offset.y, z: launch.position.z + spec.offset.z }, 1),
+                id: spec.id,
+              })
+            }
+          }
+
+          const worldBounds: AABB = {
+            maxX: worldHalfExtent,
+            maxY: worldHalfExtent,
+            maxZ: worldHalfExtent,
+            minX: -worldHalfExtent,
+            minY: -worldHalfExtent,
+            minZ: -worldHalfExtent,
+          }
+          const localWorld = world({ blockBounds: () => blocks, bounds: worldBounds, entities })
+          const kernelW = kernelWorld({
+            blockBounds: () => blocks.map(kernelPoint),
+            bounds: kernelPoint(worldBounds),
+            entities: entities.map((entity) => ({ ...entity, bounds: kernelPoint(entity.bounds) })),
+          })
+
+          let local: Projectile = launchProjectile(launch)
+          let kernel: Arrow = launchArrow(launch)
+          expect(local).toStrictEqual(kernel)
+
+          for (let step = 0; step < LOCKSTEP_STEPS && local.state === 'flying'; step += 1) {
+            const localResult = stepProjectile(local, LOCKSTEP_DT, localWorld, ARROW_PROFILE)
+            const kernelResult = stepArrow(kernel, LOCKSTEP_DT, kernelW)
+            expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
+            expect(localResult.hit).toStrictEqual(kernelResult.hit)
+
+            const hit = localResult.hit
+            if (hit?.kind === 'block') {
+              blockHitObserved = true
+            }
+            if (hit?.kind === 'entity') {
+              entityHitObserved = true
+              if (hit.entityId === LOCKSTEP_SHOOTER_ID) {
+                graceExpiredEntityHitObserved = true
+              }
+            }
+
+            local = localResult.projectile
+            kernel = kernelResult.arrow
+          }
+
+          return true
+        },
+      ),
+      { numRuns: 150 },
+    )
+
+    expect(blockHitObserved).toBe(true)
+    expect(entityHitObserved).toBe(true)
+    expect(graceExpiredEntityHitObserved).toBe(true)
   })
 })
 

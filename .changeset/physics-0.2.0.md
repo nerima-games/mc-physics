@@ -33,6 +33,15 @@ Breaking changes:
   Both halves stay re-exported from the package root. Broad-phase and narrow-phase primitives
   (`potentialPairs`, `collisionOf`, `inverseMassOf`, `normalizedOptions`) that used to be internal are now
   public.
+- `integrateBody`/`integrate`/`stepBody`/`stepWorld` drop their trailing positional `gravityY`,
+  `dragPerSecond`, and `terminalVelocityY` arguments in favour of a single final `IntegrationOptions`
+  parameter (`Readonly<{ gravityY?: number; dragPerSecond?: number; terminalVelocityY?: number }>`).
+  Existing call sites passing those as positional arguments must switch to an options object.
+  `dragPerSecond` outside `[0, 1]` or non-finite now falls back to the existing default of 1 (no drag);
+  `terminalVelocityY`'s fallback rule is unchanged.
+- The `GLIDE_*` calibration constants are no longer re-exported from the package root. `glideStep`,
+  `DEFAULT_GLIDE_CONFIG`, and the `GlideConfig`/`GlideSight` types remain public; only the individual tuning
+  scalars that feed `DEFAULT_GLIDE_CONFIG` were dropped from the barrel.
 
 New features, all opt-in via injection with defaults matching vanilla Java behaviour:
 
@@ -44,6 +53,9 @@ New features, all opt-in via injection with defaults matching vanilla Java behav
   vertical resistance differs from horizontal.
 - `ResolveOptions.bouncinessAt` adds slime-block/bed-style landing bounce, sampled only on a genuine downward
   floor impact; a bounced landing reports `isGrounded: false`.
+- `normalizedOptions` (`entity-collision.ts`) now floors `cellSize` and caps `iterations`, so an extreme or
+  hostile `EntityCollisionOptions` can no longer drive broad-phase bucketing or resolver passes toward
+  unbounded work.
 - A new `domain/glide.ts` computes one elytra glide tick of velocity change (`glideStep`). The module header
   documents that its constants are this repository's own calibration toward the documented shape of vanilla
   elytra flight, sourced from community reverse-engineering rather than checked Mojang source.

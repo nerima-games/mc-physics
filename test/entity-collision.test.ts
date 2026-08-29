@@ -4,6 +4,9 @@ import {
   CentreY,
   detectEntityCollisions,
   HalfHeight,
+  MAX_ITERATIONS,
+  MIN_CELL_SIZE,
+  normalizedOptions,
   resolveEntityCollisions,
   type Body,
   type EntityCollider,
@@ -135,6 +138,47 @@ describe('entity collision resolution', () => {
     const result = resolveEntityCollisions(immovable, { cellSize: 0, iterations: 0, restitution: 2 })
     expect(result.entities).toEqual(immovable)
     expect(result.collisions).toHaveLength(1)
+  })
+})
+
+describe('resource exhaustion guards', () => {
+  it('REGRESSION: normalizedOptions floors an absurdly small cellSize instead of letting the spatial hash explode', () => {
+    // PoC: cellSize = 1e-6 makes a single entity register into ~6.5e17 cells.
+    // Asserted against normalizedOptions directly (pure, O(1)) rather than by
+    // timing a call that would hang the suite before this guard exists.
+    expect(normalizedOptions({ cellSize: 1e-6, iterations: 2, restitution: 0 }).cellSize).toBe(MIN_CELL_SIZE)
+    // A small but finite positive cellSize is not caught by finiteOr's
+    // non-finite fallback, so this is the case that actually exercises the
+    // floor rather than the pre-existing "invalid input" path.
+    expect(normalizedOptions({ cellSize: 0.01, iterations: 2, restitution: 0 }).cellSize).toBe(MIN_CELL_SIZE)
+  })
+
+  it('REGRESSION: normalizedOptions caps an absurdly large iterations count', () => {
+    expect(normalizedOptions({ cellSize: 2, iterations: 1e9, restitution: 0 }).iterations).toBe(MAX_ITERATIONS)
+    expect(normalizedOptions({ cellSize: 2, iterations: 1_000_000, restitution: 0 }).iterations).toBe(
+      MAX_ITERATIONS,
+    )
+  })
+
+  it('an absurdly small cellSize still completes and matches the MIN_CELL_SIZE result exactly', () => {
+    // Safe to call detectEntityCollisions with the extreme value directly now
+    // that normalizedOptions floors it before potentialPairs ever divides by
+    // it — pre-fix this call would have hung the suite instead of failing an
+    // assertion.
+    const entities = [entityOf('first'), entityOf('second', bodyOf('dynamic', 0.75))]
+    expect(detectEntityCollisions(entities, { cellSize: 1e-6, iterations: 2, restitution: 0 })).toEqual(
+      detectEntityCollisions(entities, { cellSize: MIN_CELL_SIZE, iterations: 2, restitution: 0 }),
+    )
+  })
+
+  it('an absurdly large iterations count still completes and matches the MAX_ITERATIONS result exactly', () => {
+    const entities = [
+      entityOf('first', bodyOf('dynamic', 0, 1, 0, 1)),
+      entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1)),
+    ]
+    expect(resolveEntityCollisions(entities, { cellSize: 1, iterations: 1e9, restitution: 1 })).toEqual(
+      resolveEntityCollisions(entities, { cellSize: 1, iterations: MAX_ITERATIONS, restitution: 1 }),
+    )
   })
 })
 

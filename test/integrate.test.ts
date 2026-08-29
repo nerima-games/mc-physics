@@ -136,7 +136,7 @@ describe('air drag (FR-004)', () => {
       const delta = clampDeltaTime(0.02)
       const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
       expect(integrateBody(body, delta)).toStrictEqual(
-        integrateBody(body, delta, GRAVITY_Y, 1, TERMINAL_VELOCITY_Y),
+        integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: TERMINAL_VELOCITY_Y }),
       )
   })
 
@@ -152,7 +152,7 @@ describe('air drag (FR-004)', () => {
           FastCheck.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
           (dragPerSecond, vx, vy, vz, rawDelta) => {
             const delta = clampDeltaTime(rawDelta)
-            const stepped = integrateBody(dynamicBody({ vx, vy, vz }), delta, 0, dragPerSecond)
+            const stepped = integrateBody(dynamicBody({ vx, vy, vz }), delta, { gravityY: 0, dragPerSecond })
             return (
               Math.abs(stepped.vx) <= Math.abs(vx) + 1e-9 &&
               Math.abs(stepped.vy) <= Math.abs(vy) + 1e-9 &&
@@ -170,10 +170,27 @@ describe('air drag (FR-004)', () => {
       // at an arbitrary dt rather than the tick boundary.
       const delta = clampDeltaTime(0.1)
       const dragPerSecond = 0.5
-      const stepped = integrateBody(dynamicBody({ vx: 4, vy: 0, vz: -4 }), delta, 0, dragPerSecond)
+      const stepped = integrateBody(dynamicBody({ vx: 4, vy: 0, vz: -4 }), delta, { gravityY: 0, dragPerSecond })
       const expectedFactor = dragPerSecond ** delta
       expect(stepped.vx).toBeCloseTo(4 * expectedFactor, 12)
       expect(stepped.vz).toBeCloseTo(-4 * expectedFactor, 12)
+  })
+
+  it('REGRESSION: an invalid dragPerSecond (negative, NaN, infinite, or >1) falls back to no drag (1) instead of poisoning the body with NaN', () => {
+      // A negative base raised to a non-integer exponent (a fractional
+      // deltaTime, the normal case) is NaN in IEEE 754, and NaN multiplies
+      // into every field of the body. >1 is rejected too: that is not "more
+      // resistance", it is velocity growing every step — energy from nowhere.
+      const delta = clampDeltaTime(0.02)
+      const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
+      const withNoDrag = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: TERMINAL_VELOCITY_Y })
+      for (const invalid of [-1, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, 2]) {
+        const stepped = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: invalid, terminalVelocityY: TERMINAL_VELOCITY_Y })
+        expect(stepped).toStrictEqual(withNoDrag)
+        for (const field of [stepped.vx, stepped.vy, stepped.vz, stepped.x, stepped.y, stepped.z] as const) {
+          expect(Number.isNaN(field)).toBe(false)
+        }
+      }
   })
 })
 
@@ -187,7 +204,7 @@ describe('injected terminal velocity (FR-005)', () => {
       const delta = clampDeltaTime(0.02)
       let body = dynamicBody()
       for (let step = 0; step < 400; step += 1) {
-        body = integrateBody(body, delta, GRAVITY_Y, 1, shallow)
+        body = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: shallow })
       }
       expect(body.vy).toBe(shallow)
   })
@@ -199,7 +216,7 @@ describe('injected terminal velocity (FR-005)', () => {
         // |TERMINAL_VELOCITY_Y| / |GRAVITY_Y| ≈ 3.26s to reach the asymptote;
         // 200 steps at this delta is ~10s, comfortably past it.
         for (let step = 0; step < 200; step += 1) {
-          body = integrateBody(body, delta, GRAVITY_Y, 1, invalid)
+          body = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: invalid })
         }
         return body.vy
       }

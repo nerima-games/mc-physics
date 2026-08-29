@@ -1,4 +1,4 @@
-import { type Body, GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody } from './integrate'
+import { type Body, type IntegrationOptions, integrateBody } from './integrate'
 import { DIAMETER_FACTOR, resolveSweptMotion } from './resolve-sweep'
 import type {
   HasGroundSupport,
@@ -117,11 +117,9 @@ export const stepBody = (
   body: Body,
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
-  gravityY: number = GRAVITY_Y,
-  dragPerSecond: number = 1,
-  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
+  integration: IntegrationOptions = {},
 ): Resolution => {
-  const integrated = integrateBody(body, deltaTime, gravityY, dragPerSecond, terminalVelocityY)
+  const integrated = integrateBody(body, deltaTime, integration)
   let collisionSafe = integrated
   if (body.kind === 'dynamic') {
     collisionSafe = resolveSweptMotion(body, integrated, options)
@@ -133,11 +131,8 @@ export const stepWorld = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
-  gravityY: number = GRAVITY_Y,
-  dragPerSecond: number = 1,
-  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
-): ReadonlyArray<Resolution> =>
-  bodies.map((body) => stepBody(body, deltaTime, options, gravityY, dragPerSecond, terminalVelocityY))
+  integration: IntegrationOptions = {},
+): ReadonlyArray<Resolution> => bodies.map((body) => stepBody(body, deltaTime, options, integration))
 
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number =>
   (blockThickness + DIAMETER_FACTOR * halfExtent) / maxDeltaSecs

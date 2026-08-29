@@ -60,19 +60,20 @@ export type Body = {
 }
 export const GRAVITY_Y = -9.82
 export const TERMINAL_VELOCITY_Y = -32
+export type IntegrationOptions = Readonly<{
+  gravityY?: number
+  dragPerSecond?: number        // default 1: no drag. Outside [0, 1] or non-finite falls back to 1.
+  terminalVelocityY?: number    // default TERMINAL_VELOCITY_Y
+}>
 export const integrateBody = (
   body: Body,
   deltaTime: DeltaTimeSecs,
-  gravityY?: number,
-  dragPerSecond?: number,        // default 1: no drag
-  terminalVelocityY?: number,    // default TERMINAL_VELOCITY_Y
+  options?: IntegrationOptions,
 ): Body
 export const integrate = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
-  gravityY?: number,
-  dragPerSecond?: number,
-  terminalVelocityY?: number,
+  options?: IntegrationOptions,
 ): ReadonlyArray<Body>
 export const maxFallPerStep = (maxDeltaSecs: number): number
 ```
@@ -81,8 +82,10 @@ export const maxFallPerStep = (maxDeltaSecs: number): number
 かつ純粋版を定義とする API の下に入れる。正しさが先、速さは後。しかも速い版はこれに対してテストできる。
 
 **`dragPerSecond` と `terminalVelocityY` は本ブランチで追加した注入ポイントで、既定値は公式 Java 版準拠**
-（`responsibility.md` の設計注意を参照）。`dragPerSecond`（既定 1、抵抗なし）は 1 tick あたりの
-乗算係数の連続版で、`v *= dragPerSecond ** dt` として全軸へ重力の前に適用する。`terminalVelocityY`
+（`responsibility.md` の設計注意を参照）。両方とも `gravityY` と合わせて、最終引数の `IntegrationOptions`
+（省略可）にまとめられている。`dragPerSecond`（既定 1、抵抗なし）は 1 tick あたりの
+乗算係数の連続版で、`v *= dragPerSecond ** dt` として全軸へ重力の前に適用する。`[0, 1]` の範囲外または
+非有限の値はモジュール既定の 1（抵抗なし）へフォールバックする。`terminalVelocityY`
 （既定 `TERMINAL_VELOCITY_Y`）は下向き速度の上限そのものを差し替える。有限かつ負の値だけを受け付け、
 それ以外（未指定、非有限、非負）はモジュール既定へフォールバックする。低速で落下するブロック
 （例: パラシュート的な挙動）を、公式値を変えずに表現できるようにする注入である。
@@ -141,7 +144,7 @@ export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: 
 `DeltaTimeSecs` は当初 `[MIN_DELTA_SECS, MAX_DELTA_SECS]` に refine してあり、
 「クランプを通らない値は構築できない」と説明していた。**それは誤りだった。**
 
-`DeltaTimeSecs` は `@nerima-games/mc-kernel@0.4.0` の資産であり、kernel は「有限かつ非負」に refine している
+`DeltaTimeSecs` は `@nerima-games/mc-kernel@0.5.0` の資産であり、kernel は「有限かつ非負」に refine している
 （`mc-kernel` の `quantities`。ゼロは合法）。本リポジトリはその値と型を直接再 export し、時間量の検証を複製しない。
 
 したがって kernel 経由で作った `DeltaTimeSecs(30)` は型上は受け取れるが、フレーム幅として安全かどうかは
@@ -356,17 +359,13 @@ export const stepBody = (
   body: Body,
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
-  gravityY?: number,
-  dragPerSecond?: number,        // §1 の integrateBody と同じ既定・意味
-  terminalVelocityY?: number,
+  integrationOptions?: IntegrationOptions,  // §1 の integrateBody と同じ既定・意味
 ): Resolution
 export const stepWorld = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
   options: ResolveOptions,
-  gravityY?: number,
-  dragPerSecond?: number,
-  terminalVelocityY?: number,
+  integrationOptions?: IntegrationOptions,
 ): ReadonlyArray<Resolution>
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number
 ```
@@ -500,7 +499,7 @@ shapeは有限・正体積かつunit cell内でなければならず、不正値
 2. **参照実装は direction を正規化しない。** したがって `maxDistance` は
    「呼び出し側のベクトルの長さ」単位であって、ブロック単位ではない。
    本リポジトリは正規化するので、`maxDistance` はブロック単位である。
-   `test/integrate.test.ts` の
+   `test/dda.test.ts` の
    `respects maxDistance measured in blocks, because the direction is normalised` が固定している。
 
 ### 原点セルは返さない
@@ -513,13 +512,13 @@ shapeは有限・正体積かつunit cell内でなければならず、不正値
 
 | モジュール | 公開している計算 |
 | --- | --- |
-| `environment` | kernel の `BlockProperties` / `BlockCapabilities` から surface effects（垂直ドラッグ `movementDragY` を含む）、hazards、fluid effects をサンプリングし、surface motion を計算 |
+| `environment` | kernel の `BlockProperties` / `BlockCapabilities` から surface effects（垂直ドラッグ `movementDragY` を含む）、hazards（`sampleBlockHazards`）、fluid effects（`sampleFluidEffects`）をサンプリングし、surface motion を計算 |
 | `fluid` | 注入された fluid effects と係数（垂直ドラッグ `dragPerSecondY` を含む）から fluid motion を計算 |
-| `movement` | 移動入力、sprint、jump、水泳上昇（`inFluid`）、knockback を速度へ適用 |
+| `movement` | 移動入力、sprint、jump、水泳上昇（`inFluid`）を速度へ適用（`applyMovementInput`）。knockback は別関数 `applyKnockback` |
 | `falling-block` | kernel の `fallsWhenUnsupported` と支持側 `canSupportAttachments` から落下開始候補を判定 |
-| `landing` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 projection |
+| `landing` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 projection。`resetFallTrackingState` は `createFallTrackingState` と同じ初期状態を返す、teleport 等の state reset 用の別名 |
 | `kernel-world` | kernel の block ID lookup を `BlockAt` / `BlockPropertiesAt` / `BlockEnvironment` / `ResolveOptions` へ接続 |
-| `entity-collision` | 空間グリッド broad-phase（`potentialPairs`）、AABB narrow-phase（`collisionOf`、`inverseMassOf`、`normalizedOptions`）を個別に公開 |
+| `entity-collision` | 空間グリッド broad-phase（`potentialPairs`）、AABB narrow-phase（`collisionOf`、`inverseMassOf`、`normalizedOptions`）を個別に公開。`detectEntityCollisions` はこの broad-phase と narrow-phase を合成した最上位関数 |
 | `entity-collision-resolve` | `entity-collision` の検出結果を使った、質量と反発係数ベースの解決（`resolveEntityCollisions`） |
 | `projectile` | `ProjectileProfile` を注入する一般化された launch / drag / gravity / lifetime、ブロック / entity swept hit test。`ARROW_PROFILE` / `SNOWBALL_PROFILE` / `EGG_PROFILE` / `TRIDENT_PROFILE` を既定プリセットとして提供 |
 | `glide` | エリトラ滑空 1 tick 分の速度変化（`glideStep`）。装備・耐久・grounded 判定は呼び出し側 |
@@ -611,6 +610,24 @@ export const stepProjectile: (
 ) => ProjectileStep
 ```
 
+`ProjectileWorld` は `resolve.ts` の `ResolveOptions` と同じく、ワールドの所有権を持たない注入インターフェースである。
+`entity-collision.ts` などと違い、ホットパス設計としてこの層に残す flat AABB（`docs/responsibility.md` §4）を
+そのまま使う:
+
+```typescript
+export type ProjectileEntity = Readonly<{ id: string; bounds: AABB }>
+export type ProjectileWorld = Readonly<{
+  /** start から end までの区間で候補になるブロック AABB。呼び出し側が cull 済みの集合を返す。 */
+  blockBounds: (start: Position, end: Position) => readonly AABB[]
+  /** 候補エンティティ。narrow-phase の対象はこの配列のみ。 */
+  entities: readonly ProjectileEntity[]
+  /** 位置が水中かどうか。`airDrag` と `waterDrag` の切り替えに使う。 */
+  isInWater: (position: Position) => boolean
+  /** ワールド境界。区間の終点がこの外に出ると `reason: 'world'` で despawn する。 */
+  bounds: AABB
+}>
+```
+
 `ARROW_PROFILE` は kernel が実装する対応する矢の定数群とビット単位で一致し、`test/projectile.test.ts`
 がステップ毎の等価性を固定している。矢そのもの（`Arrow` 型、永続化、アイテム消費、ダメージ）が
 必要な消費者は引き続き kernel を直接使う。この層が提供するのは、どのプロファイルにも共有できる
@@ -632,6 +649,11 @@ export const glideStep: (
 
 export const DEFAULT_GLIDE_CONFIG: GlideConfig
 ```
+
+**`GLIDE_*` の個々の校正定数はバレルから公開されない**（現在の個数は `grep -c '^export const GLIDE_' src/domain/glide.ts` で確認できる）。`src/index.ts` は `domain/glide.ts` から
+`glideStep` / `DEFAULT_GLIDE_CONFIG` / 型 `GlideConfig` / `GlideSight` だけを named export し、
+`DEFAULT_GLIDE_CONFIG` の導出に使う個々の `GLIDE_*` スカラーは公開面から外している —— それらは
+設定オブジェクトが提供する値の内訳であり、揃えて公開しても新しい能力は増えないため。
 
 **この係数は公式 Mojang ソースの検証済み移植ではない。** モジュールヘッダが明記するとおり、
 Java の `LivingEntity.travel()` のエリトラ分岐は本リポジトリから参照できるソースとして存在しないため、
@@ -696,3 +718,18 @@ far-side の障害物を渡すと、full push の余地がない場合に `crush
   押されているとき、`inFluid` が真なら `fluidAscentAcceleration` で `fluidAscentMaxSpeed` まで
   上昇速度を積み上げる（Java: 約 0.04 blocks/tick² を 20 ticks/s に換算した 0.8 blocks/s²、上限は
   約 0.2 blocks/tick を換算した 4 blocks/s）。接地ジャンプとは排他で、`isGrounded` が優先される。
+
+### 7-1. `drag` の数値規約は 2 系統ある —— 名前が同じでも意味は逆
+
+このパッケージには「drag」を名乗る数値が 2 つの異なる規約で存在し、両方とも `dragPerSecond` という
+同じ語を含む名前を持つ:
+
+| 系統 | 例 | 0 の意味 | 1 の意味 | 適用式（概形。厳密な式は各モジュールを参照） |
+| --- | --- | --- | --- | --- |
+| **保持率**（retention rate） | `integrate.ts` の `dragPerSecond`（`v *= rate ** dt`）、`ProjectileProfile.airDrag`/`waterDrag`（`v *= rate ** (dt · 20)`、Minecraft の 20 ticks/s換算を挟む） | 即座に速度ゼロ | 抵抗なし（既定） | `rate` を底とするべき乗 |
+| **減衰率**（decay rate） | `SurfaceEffects.movementDrag(Y)`（`v *= 1 - rate`、dt に依存しない） | 抵抗なし（既定） | 強い減衰 | `1 - rate` の乗算 |
+| **減衰率**（decay rate、時間依存） | `FluidMotionCoefficients.*.dragPerSecond(Y)`（`v *= exp(-rate * dt)`） | 抵抗なし（既定） | 強い減衰 | 指数減衰 |
+
+`integrate`/`projectile` 系は「1 に近いほど無抵抗」、`environment`/`fluid` 系は「0 に近いほど無抵抗」で
+向きが逆である。呼び出し側がこれらを取り違えると、無抵抗のつもりの値が強い抵抗になる
+（またはその逆）。値を渡す前に、渡し先がどちらの系統かをこの表で確認すること。

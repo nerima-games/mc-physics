@@ -369,7 +369,11 @@ export const stepProjectile = (
     z: state.position.z + velocity.z * dt,
   }
   if (!finiteVec(velocity) || !finiteVec(end)) {
-    return despawn({ ...state, ageSeconds }, 'invalid')
+    /*
+     * Kernel's stepArrow records the freshly computed velocity on this
+     * despawn; keeping the stale one broke bit-for-bit ARROW_PROFILE parity.
+     */
+    return despawn({ ...state, ageSeconds, velocity }, 'invalid')
   }
 
   const first = firstHit(state, end, world, profile)

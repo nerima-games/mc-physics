@@ -39,11 +39,10 @@ export default defineConfig({
       // type-only modules, which emit no runtime code. The remaining
       // unreachable points are documented `/* v8 ignore */` lines with a
       // written reachability proof at each site (not a blanket exemption) —
-      // currently one in
-      // src/domain/dda.ts (the raycast step loop's post-loop fallback) and
-      // one in src/domain/projectile.ts (the entity-hit `entityId` fallback),
-      // each proven unreachable from the algorithm's own invariants rather
-      // than merely hard to exercise. See each site's comment for the proof.
+      // currently in src/domain/dda.ts (the raycast step loop's post-loop
+      // fallback), proven unreachable from the algorithm's own invariants
+      // rather than merely hard to exercise. See that site's comment for the
+      // proof.
       thresholds: { branches: 100, functions: 100, lines: 100, statements: 100 },
     },
   },

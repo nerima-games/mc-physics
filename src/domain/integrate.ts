@@ -99,25 +99,42 @@ const normalizeTerminalVelocityY = (value: number): number => {
   return TERMINAL_VELOCITY_Y
 }
 
-export const integrateBody = (
-  body: Body,
-  deltaTime: DeltaTimeSecs,
-  gravityY: number = GRAVITY_Y,
-  dragPerSecond: number = 1,
-  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
-): Body => {
+/**
+ * Only a finite value in [0, 1] is a meaningful per-second drag multiplier.
+ * A negative base raised to a non-integer exponent (deltaTime is a fractional
+ * seconds value) is NaN in IEEE 754, and NaN then multiplies into every field
+ * of the body — position included — via `draggedVx/Vy/Vz`. Above 1 is
+ * rejected too: that is not "more resistance", it is velocity growing every
+ * step, i.e. energy injected from nowhere. Anything invalid falls back to 1
+ * (no drag).
+ */
+const normalizeDragPerSecond = (value: number): number => {
+  if (Number.isFinite(value) && value >= 0 && value <= 1) {
+    return value
+  }
+  return 1
+}
+
+export type IntegrationOptions = Readonly<{
+  gravityY?: number
+  dragPerSecond?: number
+  terminalVelocityY?: number
+}>
+
+export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, options: IntegrationOptions = {}): Body => {
   if (body.kind !== 'dynamic') {
     return body
   }
 
-  const drag = dragPerSecond ** deltaTime
+  const gravityY = options.gravityY ?? GRAVITY_Y
+  const drag = normalizeDragPerSecond(options.dragPerSecond ?? 1) ** deltaTime
   const draggedVx = body.vx * drag
   const draggedVy = body.vy * drag
   const draggedVz = body.vz * drag
 
   // Velocity first, position from the NEW velocity. See the file header.
   const acceleratedY = draggedVy + gravityY * deltaTime
-  const safeTerminalVelocityY = normalizeTerminalVelocityY(terminalVelocityY)
+  const safeTerminalVelocityY = normalizeTerminalVelocityY(options.terminalVelocityY ?? TERMINAL_VELOCITY_Y)
   let clampedY = acceleratedY
   if (acceleratedY < safeTerminalVelocityY) {
     clampedY = safeTerminalVelocityY
@@ -138,11 +155,8 @@ export const integrateBody = (
 export const integrate = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
-  gravityY: number = GRAVITY_Y,
-  dragPerSecond: number = 1,
-  terminalVelocityY: number = TERMINAL_VELOCITY_Y,
-): ReadonlyArray<Body> =>
-  bodies.map((body) => integrateBody(body, deltaTime, gravityY, dragPerSecond, terminalVelocityY))
+  options: IntegrationOptions = {},
+): ReadonlyArray<Body> => bodies.map((body) => integrateBody(body, deltaTime, options))
 
 /**
  * The largest distance a body can fall in one step.

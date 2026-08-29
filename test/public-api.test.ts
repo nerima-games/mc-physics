@@ -67,15 +67,7 @@ describe('public API surface', () => {
         'TRIDENT_PROFILE',
         'launchProjectile',
         'stepProjectile',
-        // glide
-        'GLIDE_CLIMB_CONVERSION_PER_SECOND',
-        'GLIDE_CLIMB_LIFT_MULTIPLIER',
-        'GLIDE_DIVE_CONVERSION_PER_SECOND',
-        'GLIDE_GRAVITY_PER_SECOND_SQUARED',
-        'GLIDE_HORIZONTAL_DRAG_PER_SECOND',
-        'GLIDE_LIFT_CANCEL_FACTOR',
-        'GLIDE_TURN_RATE_PER_SECOND',
-        'GLIDE_VERTICAL_DRAG_PER_SECOND',
+        // glide (calibration constants stay module-internal; the config object is the API)
         'DEFAULT_GLIDE_CONFIG',
         'glideStep',
         // piston
@@ -117,6 +109,8 @@ describe('public API surface', () => {
         'normalizedOptions',
         'potentialPairs',
         'DEFAULT_ENTITY_COLLISION_OPTIONS',
+        'MIN_CELL_SIZE',
+        'MAX_ITERATIONS',
       ]
       expect(Object.keys(physics).sort()).toEqual([...expected].sort())
   })

@@ -3,7 +3,9 @@
 ## 責務
 
 Euler 積分、ブロック / エンティティ AABB 衝突、voxel-DDA、環境効果、飛翔体、爆発、起爆済み TNT fuse の
-純粋な計算。**外部物理ライブラリなし**（plan.md §3.4）。
+純粋な計算。**外部物理ライブラリなし**（plan.md §3.4）。（爆発と起爆済み TNT の計算自体は
+mc-kernel への委譲であり、この層は再 export と bounded な呼び出し契約だけを持つ。
+`docs/public-api.md` §5-1/§5-2）
 
 ## 依存
 
@@ -125,7 +127,9 @@ const dt = clampDeltaTime(rawDeltaSecs)     // min(max(0.001, raw), 0.05)
 
 // 積分 → 解決。この順序は逆にできない（逆にすると 1 フレーム分の落下距離だけ床に沈む）。
 // stepBody がその合成に名前を与えているので、逆順は diff に現れる。
-// 第4〜6引数（gravityY, dragPerSecond, terminalVelocityY）は既定が公式 Java 版準拠で、注入で上書きできる。
+// 第4引数 IntegrationOptions（省略可、{ gravityY?, dragPerSecond?, terminalVelocityY? }）は
+// 既定が公式 Java 版準拠で、注入で上書きできる。dragPerSecond は [0, 1] 外・非有限なら
+// 既定の 1（無抵抗）へフォールバックする。
 const { body: next, isGrounded } = stepBody(body, dt, {
   halfWidth: PLAYER_HALF_WIDTH,
   halfHeight: PLAYER_HALF_HEIGHT,
@@ -133,6 +137,8 @@ const { body: next, isGrounded } = stepBody(body, dt, {
   // blockShapeAt,     // 状態依存・複合形状。単一AABBまたはAABB配列を返す
   // stepHeight: 0.6,  // ゲーム的なチューニング値。既定 0（= step-up 無し）
   // bouncinessAt,     // スライムブロック/ベッドの着地バウンス。[0,1]、反射時は isGrounded=false
+}, {
+  // dragPerSecond: 0.9, // 例: 低速で落下するブロック。省略時は 1（無抵抗）
 })
 
 // ブロック狙撃は DDA。原点セルは決して返さない。

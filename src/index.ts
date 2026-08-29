@@ -25,7 +25,14 @@ export * from './domain/environment'
 export * from './domain/environment-types'
 export * from './domain/falling-block'
 export * from './domain/fluid'
-export * from './domain/glide'
+/*
+ * Glide exports are named rather than starred: the GLIDE_* calibration
+ * constants exist for DEFAULT_GLIDE_CONFIG's derivation and its tests, and
+ * publishing eight tuning scalars alongside the config object they feed
+ * would double the surface without adding a capability.
+ */
+export { DEFAULT_GLIDE_CONFIG, glideStep } from './domain/glide'
+export type { GlideConfig, GlideSight } from './domain/glide'
 export * from './domain/integrate'
 export * from './domain/kernel-world'
 export * from './domain/landing'
