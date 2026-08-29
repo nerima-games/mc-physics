@@ -1,5 +1,6 @@
-import { CentreY, type HalfHeight, type Vec3, collidesWith, entityAABB } from './coordinates'
+import { CentreY, type HalfHeight, collidesWith, entityAABB } from './coordinates'
 import type { Body } from './integrate'
+import type { Position } from '@nerima-games/mc-kernel'
 
 export type EntityCollider = Readonly<{
   readonly id: string
@@ -13,7 +14,7 @@ export type EntityCollider = Readonly<{
 export type EntityCollision = Readonly<{
   readonly firstId: string
   readonly secondId: string
-  readonly normal: Vec3
+  readonly normal: Position
   readonly penetration: number
 }>
 
@@ -55,7 +56,7 @@ const inverseMassOf = (entity: EntityCollider): number => {
   return 0
 }
 
-const normalForAxis = (axis: 'x' | 'y' | 'z', delta: number): Vec3 => {
+const normalForAxis = (axis: 'x' | 'y' | 'z', delta: number): Position => {
   let sign = -1
   if (delta >= 0) {
     sign = 1
@@ -201,7 +202,7 @@ const translated = (entity: EntityCollider, dx: number, dy: number, dz: number):
   }
 }
 
-const velocityChanged = (entity: EntityCollider, impulse: Vec3, scale: number): EntityCollider => {
+const velocityChanged = (entity: EntityCollider, impulse: Position, scale: number): EntityCollider => {
   if (entity.body.kind !== 'dynamic' || scale === 0) {
     return entity
   }

@@ -14,16 +14,12 @@
 import { describe, expect, it } from 'vitest'
 import { FastCheck } from 'effect'
 import {
-  CACTUS_SHAPE,
   CONTACT_EPSILON,
   CentreY,
-  FULL_BLOCK_SHAPE,
   FootY,
   HalfHeight,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
-  PRESSURE_PLATE_SHAPE,
-  SLAB_SHAPE,
   blockAABB,
   centreOfFoot,
   collidesWith,
@@ -34,6 +30,12 @@ import {
   penetrationY,
   standingPlaneAbove,
 } from '../src/domain/coordinates'
+import {
+  CACTUS_SHAPE,
+  FULL_BLOCK_SHAPE,
+  PRESSURE_PLATE_SHAPE,
+  SLAB_SHAPE,
+} from '../src/domain/shape-data'
 
 const arbitraryY = FastCheck.double({ min: -1024, max: 1024, noNaN: true, noDefaultInfinity: true })
 const arbitraryHalfHeight = FastCheck.double({

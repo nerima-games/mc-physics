@@ -1,15 +1,13 @@
 import {
   type AABB,
   type BlockShape,
-  FULL_BLOCK_SHAPE,
-  type Vec3,
   aabbOfCollisionShape,
   aabbsOfBlockShape,
   blockAABB,
   collidesWith,
   intersects,
   isRestingOn,
-  vec3,
+  position,
 } from './coordinates'
 import type {
   BlockEnvironment,
@@ -20,6 +18,8 @@ import type {
   SurfaceEffects,
 } from './environment-types'
 import type { Body } from './integrate'
+import { FULL_BLOCK_SHAPE } from './shape-data'
+import type { Position } from '@nerima-games/mc-kernel'
 
 const DEFAULT_SURFACE_EFFECTS: SurfaceEffects = { friction: 1, movementDrag: 0 }
 
@@ -178,7 +178,7 @@ const overlapVolume = (a: AABB, b: AABB): number =>
   overlapLength(a.minY, a.maxY, b.minY, b.maxY) *
   overlapLength(a.minZ, a.maxZ, b.minZ, b.maxZ)
 
-const validFlow = (flow: Vec3): Vec3 => vec3(finiteOr(flow.x, 0), finiteOr(flow.y, 0), finiteOr(flow.z, 0))
+const validFlow = (flow: Position): Position => position(finiteOr(flow.x, 0), finiteOr(flow.y, 0), finiteOr(flow.z, 0))
 
 export const sampleFluidEffects = (
   box: AABB,
@@ -187,7 +187,7 @@ export const sampleFluidEffects = (
 ): FluidEffects => {
   const bodyVolume = Math.max(0, (box.maxX - box.minX) * (box.maxY - box.minY) * (box.maxZ - box.minZ))
   if (bodyVolume === 0) {
-    return { flow: vec3(0, 0, 0), lavaVolume: 0, waterVolume: 0 }
+    return { flow: position(0, 0, 0), lavaVolume: 0, waterVolume: 0 }
   }
 
   let waterVolume = 0
@@ -231,9 +231,9 @@ export const sampleFluidEffects = (
     flowZ += flow.z * volume
   })
 
-  let flow = vec3(0, 0, 0)
+  let flow = position(0, 0, 0)
   if (totalVolume !== 0) {
-    flow = vec3(flowX / totalVolume, flowY / totalVolume, flowZ / totalVolume)
+    flow = position(flowX / totalVolume, flowY / totalVolume, flowZ / totalVolume)
   }
   return { flow, lavaVolume: clampedUnit(lavaVolume), waterVolume: clampedUnit(waterVolume) }
 }

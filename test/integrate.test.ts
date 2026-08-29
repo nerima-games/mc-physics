@@ -12,16 +12,18 @@
 import { describe, expect, it } from 'vitest'
 import { FastCheck, Option } from 'effect'
 import {
-  CACTUS_SHAPE,
   CentreY,
   FootY,
-  FULL_BLOCK_SHAPE,
   PLAYER_HALF_HEIGHT,
+  type AABB,
+  position,
+} from '../src/domain/coordinates'
+import {
+  CACTUS_SHAPE,
+  FULL_BLOCK_SHAPE,
   PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
-  type AABB,
-  vec3,
-} from '../src/domain/coordinates'
+} from '../src/domain/shape-data'
 import { voxelRaycast } from '../src/domain/dda'
 import {
   DeltaTimeSecs,
@@ -219,12 +221,12 @@ describe('voxel DDA', () => {
     bx === target[0] && by === target[1] && bz === target[2]
 
   it('never returns the cell the ray starts in, so you cannot mine the block you are inside', () => {
-      const hit = voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 8, solidAt([0, 0, 0]))
+      const hit = voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([0, 0, 0]))
       expect(Option.isNone(hit)).toBe(true)
   })
 
   it('finds the first targetable cell along the ray and reports the face it entered through', () => {
-      const hit = voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 8, solidAt([3, 0, 0]))
+      const hit = voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([3, 0, 0]))
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([3, 0, 0])
@@ -238,16 +240,16 @@ describe('voxel DDA', () => {
 
   it('uses the canonical block face for every traversal direction', () => {
       const cases = [
-        { direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
-        { direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
-        { direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
-        { direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
-        { direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
-        { direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+        { direction: position(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { direction: position(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { direction: position(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { direction: position(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { direction: position(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { direction: position(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
       ] as const
 
       for (const testCase of cases) {
-        const hit = voxelRaycast(vec3(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
+        const hit = voxelRaycast(position(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
         expect(Option.isSome(hit)).toBe(true)
         if (Option.isSome(hit)) {
           expect(hit.value.face).toBe(testCase.face)
@@ -258,7 +260,7 @@ describe('voxel DDA', () => {
   it('continues through the empty part of a non-cubic targetable cell', () => {
       const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
       const shapeAt = (bx: number) => (bx === 1 ? SLAB_SHAPE : null)
-      const hit = voxelRaycast(vec3(0.5, 0.75, 0.5), vec3(1, 0, 0), 4, targetable, shapeAt)
+      const hit = voxelRaycast(position(0.5, 0.75, 0.5), position(1, 0, 0), 4, targetable, shapeAt)
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([2, 0, 0])
@@ -271,8 +273,8 @@ describe('voxel DDA', () => {
       const farther: AABB = { minX: 0.75, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
       const nearer: AABB = { minX: 0.25, minY: 0, minZ: 0, maxX: 0.5, maxY: 1, maxZ: 1 }
       const hit = voxelRaycast(
-        vec3(0, 0.5, 0.5),
-        vec3(1, 0, 0),
+        position(0, 0.5, 0.5),
+        position(1, 0, 0),
         4,
         targetable,
         () => [farther, nearer],
@@ -288,8 +290,8 @@ describe('voxel DDA', () => {
   it('treats an empty compound shape as a miss for that cell', () => {
       const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
       const hit = voxelRaycast(
-        vec3(0.5, 0.5, 0.5),
-        vec3(1, 0, 0),
+        position(0.5, 0.5, 0.5),
+        position(1, 0, 0),
         4,
         targetable,
         (bx) => (bx === 1 ? [] : FULL_BLOCK_SHAPE),
@@ -304,9 +306,9 @@ describe('voxel DDA', () => {
 
   it('hits slab, cactus and pressure-plate geometry at their actual surface', () => {
       const cases = [
-        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: SLAB_SHAPE, distance: 0.5 },
-        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), shape: CACTUS_SHAPE, distance: 1 + 1 / 16 },
-        { origin: vec3(1.5, 1, 0.5), direction: vec3(0, -1, 0), shape: PRESSURE_PLATE_SHAPE, distance: 15 / 16 },
+        { origin: position(1.5, 1, 0.5), direction: position(0, -1, 0), shape: SLAB_SHAPE, distance: 0.5 },
+        { origin: position(0, 0.5, 0.5), direction: position(1, 0, 0), shape: CACTUS_SHAPE, distance: 1 + 1 / 16 },
+        { origin: position(1.5, 1, 0.5), direction: position(0, -1, 0), shape: PRESSURE_PLATE_SHAPE, distance: 15 / 16 },
       ] as const
       for (const testCase of cases) {
         const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt([1, 0, 0]), () => testCase.shape)
@@ -318,12 +320,12 @@ describe('voxel DDA', () => {
   it('reports all six faces from the shape narrow phase', () => {
       const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
       const cases = [
-        { origin: vec3(0, 0.5, 0.5), direction: vec3(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
-        { origin: vec3(0, 0.5, 0.5), direction: vec3(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
-        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
-        { origin: vec3(0.5, 0, 0.5), direction: vec3(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
-        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
-        { origin: vec3(0.5, 0.5, 0), direction: vec3(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
+        { origin: position(0, 0.5, 0.5), direction: position(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
+        { origin: position(0, 0.5, 0.5), direction: position(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
+        { origin: position(0.5, 0, 0.5), direction: position(0, 1, 0), target: [0, 1, 0] as const, face: 'down' },
+        { origin: position(0.5, 0, 0.5), direction: position(0, -1, 0), target: [0, -1, 0] as const, face: 'up' },
+        { origin: position(0.5, 0.5, 0), direction: position(0, 0, 1), target: [0, 0, 1] as const, face: 'north' },
+        { origin: position(0.5, 0.5, 0), direction: position(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
       ] as const
       for (const testCase of cases) {
         const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt(testCase.target), () => shape)
@@ -333,28 +335,28 @@ describe('voxel DDA', () => {
   })
 
   it('applies maxDistance to the shape surface and stays deterministic', () => {
-      const ray = () => voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const ray = () => voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
       expect(Option.isNone(ray())).toBe(true)
-      const first = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
-      const second = voxelRaycast(vec3(0, 0.5, 0.5), vec3(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const first = voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const second = voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
       expect(first).toStrictEqual(second)
   })
 
   it('treats an invalid out-of-cell shape as a miss', () => {
       const invalid: AABB = { minX: -1, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
-      expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
   })
 
   it('rejects a diagonal ray whose per-axis shape intervals do not overlap', () => {
       const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
-      const hit = voxelRaycast(vec3(0, 0.9, 0.5), vec3(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
+      const hit = voxelRaycast(position(0, 0.9, 0.5), position(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
       expect(Option.isNone(hit)).toBe(true)
   })
 
   it('keeps an earlier entry interval when a later axis enters first', () => {
       const hit = voxelRaycast(
-        vec3(0, 0.5, 0.5),
-        vec3(1, 0.1, 0),
+        position(0, 0.5, 0.5),
+        position(1, 0.1, 0),
         3,
         solidAt([1, 0, 0]),
         () => ({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }),
@@ -368,24 +370,24 @@ describe('voxel DDA', () => {
       // caller's vector. Here 4.9 blocks short and 5.1 blocks long is the whole
       // difference, whatever length the direction vector happens to have.
       const target = solidAt([5, 0, 0])
-      for (const direction of [vec3(1, 0, 0), vec3(100, 0, 0)]) {
-        expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), direction, 4.4, target))).toBe(true)
-        expect(Option.isSome(voxelRaycast(vec3(0.5, 0.5, 0.5), direction, 4.6, target))).toBe(true)
+      for (const direction of [position(1, 0, 0), position(100, 0, 0)]) {
+        expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), direction, 4.4, target))).toBe(true)
+        expect(Option.isSome(voxelRaycast(position(0.5, 0.5, 0.5), direction, 4.6, target))).toBe(true)
       }
   })
 
   it('returns none for degenerate inputs instead of looping or throwing', () => {
       const anything = () => true
-      expect(Option.isNone(voxelRaycast(vec3(0, 0, 0), vec3(0, 0, 0), 8, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(vec3(0, 0, 0), vec3(1, 0, 0), 0, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(vec3(0, 0, 0), vec3(1, 0, 0), -1, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(vec3(Number.NaN, 0, 0), vec3(1, 0, 0), 8, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(vec3(0, 0, 0), vec3(Number.NaN, 0, 0), 8, anything))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(0, 0, 0), 8, anything))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(1, 0, 0), 0, anything))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(1, 0, 0), -1, anything))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(Number.NaN, 0, 0), position(1, 0, 0), 8, anything))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(Number.NaN, 0, 0), 8, anything))).toBe(true)
   })
 
   it('returns none when the walk exhausts its step budget without a targetable cell', () => {
       const nothing = () => false
-      expect(Option.isNone(voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 8, nothing))).toBe(true)
+      expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, nothing))).toBe(true)
   })
 
   it('visits cells in strictly increasing distance order, never skipping one', () => {
@@ -393,7 +395,7 @@ describe('voxel DDA', () => {
       // block you can shoot through. Recording the visit order is the only way
       // to see that from outside.
       const visited: Array<string> = []
-      voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(1, 0, 0), 5, (bx, by, bz) => {
+      voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 5, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -424,21 +426,21 @@ describe('voxel DDA', () => {
    */
   const NEGATIVE_AXES = [
     {
-      direction: vec3(-1, 0, 0),
+      direction: position(-1, 0, 0),
       cellAfter: (crossings: number) => [-crossings, 0, 0] as const,
       normal: { x: 1, y: 0, z: 0 },
       face: 'east',
       entryPoint: { x: -2, y: OFF_CENTRE, z: OFF_CENTRE },
     },
     {
-      direction: vec3(0, -1, 0),
+      direction: position(0, -1, 0),
       cellAfter: (crossings: number) => [0, -crossings, 0] as const,
       normal: { x: 0, y: 1, z: 0 },
       face: 'up',
       entryPoint: { x: OFF_CENTRE, y: -2, z: OFF_CENTRE },
     },
     {
-      direction: vec3(0, 0, -1),
+      direction: position(0, 0, -1),
       cellAfter: (crossings: number) => [0, 0, -crossings] as const,
       normal: { x: 0, y: 0, z: 1 },
       face: 'south',
@@ -446,7 +448,7 @@ describe('voxel DDA', () => {
     },
   ] as const
 
-  const offCentreOrigin = vec3(OFF_CENTRE, OFF_CENTRE, OFF_CENTRE)
+  const offCentreOrigin = position(OFF_CENTRE, OFF_CENTRE, OFF_CENTRE)
 
   it('walks the NEGATIVE direction on all three axes, one cell at a time', () => {
       // Looking down or backwards is not an exotic case — it is half of all
@@ -492,7 +494,7 @@ describe('voxel DDA', () => {
       // full cell instead, and the traversal would start one cell too far along
       // — a block you can stand against and not be able to hit.
       const visited: Array<string> = []
-      voxelRaycast(vec3(3, 0.5, 0.5), vec3(-1, 0, 0), 3, (bx, by, bz) => {
+      voxelRaycast(position(3, 0.5, 0.5), position(-1, 0, 0), 3, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -510,7 +512,7 @@ describe('voxel DDA', () => {
       // alternate. Get the -Y arm wrong and it starts 0.25 away instead, so the
       // very first cell is (0,-1,0) rather than (1,0,0).
       const visited: Array<string> = []
-      voxelRaycast(vec3(0.5, OFF_CENTRE, 0.5), vec3(1, -1, 0), 4, (bx, by, bz) => {
+      voxelRaycast(position(0.5, OFF_CENTRE, 0.5), position(1, -1, 0), 4, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -521,7 +523,7 @@ describe('voxel DDA', () => {
       // All three negative arms at once, plus the tie-break between them. The
       // three tMax values are equal at every step here, so the order in which
       // the axes are consulted is fully exposed: X, then Y, then Z.
-      const hit = voxelRaycast(offCentreOrigin, vec3(-1, -1, -1), 16, solidAt([-2, -2, -2]))
+      const hit = voxelRaycast(offCentreOrigin, position(-1, -1, -1), 16, solidAt([-2, -2, -2]))
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         // Z was the last axis stepped, so Z is the face that was entered. Get
@@ -562,8 +564,8 @@ describe('voxel DDA', () => {
           FastCheck.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
           (dx, dy, dz) => {
             const target = solidAt([4, 0, 0])
-            const first = voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(dx, dy, dz), 16, target)
-            const second = voxelRaycast(vec3(0.5, 0.5, 0.5), vec3(dx, dy, dz), 16, target)
+            const first = voxelRaycast(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
+            const second = voxelRaycast(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
             return JSON.stringify(first) === JSON.stringify(second)
           },
         ),

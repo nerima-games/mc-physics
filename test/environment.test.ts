@@ -14,7 +14,7 @@ import {
   sampleBlockHazards,
   sampleFluidEffects,
   sampleSurfaceEffects,
-  vec3,
+  position,
 } from '../src/index'
 import { sampleOf } from './helpers/kernel-block'
 
@@ -185,8 +185,8 @@ describe('fluid sampling', () => {
     expect(sampleFluidEffects(
       { ...fluidBox, maxY: 0 },
       environmentOf({ [keyOf(0, 0, 0)]: 'water' }),
-      () => ({ level: 1, flow: vec3(1, 2, 3) }),
-    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: vec3(0, 0, 0) })
+      () => ({ level: 1, flow: position(1, 2, 3) }),
+    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: position(0, 0, 0) })
   })
 
   it('combines water and lava volumes and averages finite flow', () => {
@@ -199,10 +199,10 @@ describe('fluid sampling', () => {
       }),
       (bx, _by, _bz, kind) => {
         if (kind === 'water') {
-          return { level: 2, flow: vec3(2, Number.NaN, 0) }
+          return { level: 2, flow: position(2, Number.NaN, 0) }
         }
         if (bx === 1) {
-          return { level: 0.5, flow: vec3(0, 1, Number.POSITIVE_INFINITY) }
+          return { level: 0.5, flow: position(0, 1, Number.POSITIVE_INFINITY) }
         }
         return null
       },
@@ -224,25 +224,25 @@ describe('fluid sampling', () => {
       }),
       (bx, _by, bz) => {
         if (bx === 0 && bz === 0) {
-          return { level: 1, flow: vec3(0, 0, 0) }
+          return { level: 1, flow: position(0, 0, 0) }
         }
         if (bx === 1) {
-          return { level: 1, flow: vec3(1, 0, 0) }
+          return { level: 1, flow: position(1, 0, 0) }
         }
         return null
       },
     )
-    expect(effects).toEqual({ waterVolume: 1, lavaVolume: 0, flow: vec3(0, 0, 0) })
+    expect(effects).toEqual({ waterVolume: 1, lavaVolume: 0, flow: position(0, 0, 0) })
     expect(sampleFluidEffects(
       fluidBox,
       environmentOf({ [keyOf(0, 0, 0)]: 'water' }),
-      () => ({ level: 0, flow: vec3(1, 0, 0) }),
-    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: vec3(0, 0, 0) })
+      () => ({ level: 0, flow: position(1, 0, 0) }),
+    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: position(0, 0, 0) })
     expect(sampleFluidEffects(
       fluidBox,
       environmentOf({ [keyOf(0, 0, 0)]: 'water' }),
       () => null,
-    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: vec3(0, 0, 0) })
+    )).toEqual({ waterVolume: 0, lavaVolume: 0, flow: position(0, 0, 0) })
   })
 })
 

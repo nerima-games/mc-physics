@@ -40,12 +40,11 @@
 import {
   type AABB,
   type BlockShape,
-  FULL_BLOCK_SHAPE,
-  type Vec3,
   aabbsOfBlockShape,
   blockAABB,
 } from './coordinates'
-import { type BlockFace } from '@nerima-games/mc-kernel'
+import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
+import { FULL_BLOCK_SHAPE } from './shape-data'
 import { Option } from 'effect'
 
 export type VoxelHit = {
@@ -54,13 +53,13 @@ export type VoxelHit = {
   readonly by: number
   readonly bz: number
   /** Unit normal of the face the ray entered through. Points back at the ray. */
-  readonly normal: Vec3
+  readonly normal: Position
   /** Canonical Minecraft face the ray entered through. */
   readonly face: BlockFace
   /** Distance from the origin along the normalised direction, in blocks. */
   readonly distance: number
   /** The exact point on the entered face. */
-  readonly point: Vec3
+  readonly point: Position
 }
 
 /** Asked once per candidate cell. Physics never sees a block id. */
@@ -97,7 +96,7 @@ const isCellShape = (shape: AABB): boolean =>
 
 /* eslint-disable complexity, max-statements, no-magic-numbers, no-ternary, no-nested-ternary, no-continue, curly */
 /** Ray/AABB slab intersection. Axis order is the deterministic X -> Y -> Z tie-break. */
-const intersectShape = (origin: Vec3, direction: Vec3, box: AABB): ShapeHit | null => {
+const intersectShape = (origin: Position, direction: Position, box: AABB): ShapeHit | null => {
   let nearDistance = -Infinity
   let farDistance = Infinity
   let face: BlockFace = 'west'
@@ -204,8 +203,8 @@ const crossingShapeHit = (crossing: AxisCrossing): ShapeHit => ({
 })
 
 const nearestShapeHit = (
-  origin: Vec3,
-  direction: Vec3,
+  origin: Position,
+  direction: Position,
   cellX: number,
   cellY: number,
   cellZ: number,
@@ -229,8 +228,8 @@ const nearestShapeHit = (
 }
 
 const shapeHitAt = (
-  origin: Vec3,
-  direction: Vec3,
+  origin: Position,
+  direction: Position,
   cellX: number,
   cellY: number,
   cellZ: number,
@@ -264,8 +263,8 @@ const STEP_BOUND_MARGIN = 3
  * exists to avoid.
  */
 export const voxelRaycast = (
-  origin: Vec3,
-  direction: Vec3,
+  origin: Position,
+  direction: Position,
   maxDistance: number,
   isTargetable: IsTargetable,
   shapeAt?: RaycastShapeAt,

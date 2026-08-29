@@ -4,7 +4,7 @@ import {
   CentreY,
   type Body,
   applyFluidMotion,
-  vec3,
+  position,
   type FluidEffects,
   type FluidMotionCoefficients,
 } from '../src/index'
@@ -19,7 +19,7 @@ const bodyOf = (kind: Body['kind'] = 'dynamic'): Body => ({
   vz: -3,
 })
 
-const effects: FluidEffects = { waterVolume: 0.5, lavaVolume: 0.25, flow: vec3(2, 7, -1) }
+const effects: FluidEffects = { waterVolume: 0.5, lavaVolume: 0.25, flow: position(2, 7, -1) }
 
 const coefficients: FluidMotionCoefficients = {
   water: { dragPerSecond: 2, buoyancyAcceleration: 3, flowAcceleration: 4 },
@@ -50,7 +50,7 @@ describe('fluid motion', () => {
     const actual = applyFluidMotion(
       bodyOf(),
       DeltaTimeSecs(0.5),
-      { waterVolume: Number.POSITIVE_INFINITY, lavaVolume: -1, flow: vec3(Number.NaN, Number.NaN, Number.POSITIVE_INFINITY) },
+      { waterVolume: Number.POSITIVE_INFINITY, lavaVolume: -1, flow: position(Number.NaN, Number.NaN, Number.POSITIVE_INFINITY) },
       {
         water: { dragPerSecond: Number.NaN, buoyancyAcceleration: -1, flowAcceleration: 4 },
         lava: { dragPerSecond: 1, buoyancyAcceleration: 1, flowAcceleration: 1 },
@@ -60,7 +60,7 @@ describe('fluid motion', () => {
   })
 
   it('handles zero duration and no fluid without changing velocity', () => {
-    const empty: FluidEffects = { waterVolume: 0, lavaVolume: 0, flow: vec3(4, 5, 6) }
+    const empty: FluidEffects = { waterVolume: 0, lavaVolume: 0, flow: position(4, 5, 6) }
     expect(applyFluidMotion(bodyOf(), DeltaTimeSecs(0), empty, coefficients)).toEqual(bodyOf())
   })
 })

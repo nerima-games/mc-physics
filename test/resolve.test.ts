@@ -16,13 +16,11 @@ import { describe, expect, it } from 'vitest'
 import { FastCheck } from 'effect'
 import { resolveBlockProperties, type BlockProperties, type CollisionShape } from '@nerima-games/mc-kernel'
 import {
-  CACTUS_SHAPE,
   CONTACT_EPSILON,
   CentreY,
   HalfHeight,
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
-  PRESSURE_PLATE_SHAPE,
   aabbOfCollisionShape,
   aabbsOfBlockShape,
   blockAABB,
@@ -34,6 +32,7 @@ import {
   penetrationY,
   standingPlaneAbove,
 } from '../src/domain/coordinates'
+import { CACTUS_SHAPE, PRESSURE_PLATE_SHAPE } from '../src/domain/shape-data'
 import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../src/domain/delta-time'
 import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
 import {

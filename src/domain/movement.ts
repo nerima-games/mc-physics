@@ -1,6 +1,5 @@
+import type { DeltaTimeSecs, Position } from '@nerima-games/mc-kernel'
 import type { Body } from './integrate'
-import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import type { Vec3 } from './coordinates'
 
 export type MovementInput = Readonly<{
   readonly forward: number
@@ -87,7 +86,7 @@ export const applyMovementInput = (
   return { ...body, vx: nextVx, vy: nextVy, vz: nextVz }
 }
 
-export const applyKnockback = (body: Body, impulse: Vec3): Body => {
+export const applyKnockback = (body: Body, impulse: Position): Body => {
   if (body.kind !== 'dynamic') {
     return body
   }

@@ -5,7 +5,7 @@ import {
   type Body,
   applyKnockback,
   applyMovementInput,
-  vec3,
+  position,
   type MovementConfig,
   type MovementInput,
 } from '../src/index'
@@ -111,9 +111,9 @@ describe('movement input', () => {
 
 describe('knockback', () => {
   it('adds finite impulse components only to dynamic bodies', () => {
-    expect(applyKnockback(bodyOf(), vec3(1, -2, 3))).toEqual({ ...bodyOf(), vx: 1, vy: -1, vz: 3 })
-    expect(applyKnockback(bodyOf(), vec3(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY))).toEqual(bodyOf())
+    expect(applyKnockback(bodyOf(), position(1, -2, 3))).toEqual({ ...bodyOf(), vx: 1, vy: -1, vz: 3 })
+    expect(applyKnockback(bodyOf(), position(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY))).toEqual(bodyOf())
     const staticBody = bodyOf('static')
-    expect(applyKnockback(staticBody, vec3(1, 2, 3))).toBe(staticBody)
+    expect(applyKnockback(staticBody, position(1, 2, 3))).toBe(staticBody)
   })
 })

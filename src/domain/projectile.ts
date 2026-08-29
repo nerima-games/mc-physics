@@ -1,5 +1,6 @@
 /* eslint-disable complexity, id-length, max-statements, no-continue, no-magic-numbers, no-ternary, no-undefined */
-import type { AABB, Vec3 } from './coordinates'
+import type { AABB } from './coordinates'
+import type { Position } from '@nerima-games/mc-kernel'
 
 export const ARROW_GRAVITY = 9.81
 export const ARROW_AIR_DRAG = 0.99
@@ -9,19 +10,19 @@ export const ARROW_SHOOTER_GRACE_SECONDS = 0.25
 
 export type ProjectileEntity = Readonly<{ id: string; bounds: AABB }>
 export type ProjectileWorld = Readonly<{
-  blockBounds: (start: Vec3, end: Vec3) => readonly AABB[]
+  blockBounds: (start: Position, end: Position) => readonly AABB[]
   entities: readonly ProjectileEntity[]
-  isInWater: (position: Vec3) => boolean
+  isInWater: (position: Position) => boolean
   bounds: AABB
 }>
 
 export type ProjectileHit =
-  | Readonly<{ kind: 'block'; point: Vec3; normal: Vec3; flightTimeSeconds: number }>
-  | Readonly<{ kind: 'entity'; entityId: string; point: Vec3; normal: Vec3; flightTimeSeconds: number }>
+  | Readonly<{ kind: 'block'; point: Position; normal: Position; flightTimeSeconds: number }>
+  | Readonly<{ kind: 'entity'; entityId: string; point: Position; normal: Position; flightTimeSeconds: number }>
 
 type ArrowBase = Readonly<{
-  position: Vec3
-  velocity: Vec3
+  position: Position
+  velocity: Position
   ageSeconds: number
   shooterId?: string
 }>
@@ -32,7 +33,7 @@ export type Arrow =
   | (ArrowBase & Readonly<{ state: 'despawned'; reason: 'invalid' | 'lifetime' | 'world' | 'entity-hit' }>)
 
 export type ArrowLaunch = Readonly<{
-  position: Vec3
+  position: Position
   yawRadians: number
   pitchRadians: number
   speed: number
@@ -41,9 +42,9 @@ export type ArrowLaunch = Readonly<{
 
 export type ProjectileStep = Readonly<{ arrow: Arrow; hit?: ProjectileHit }>
 
-type SegmentHit = Readonly<{ fraction: number; point: Vec3; normal: Vec3 }>
+type SegmentHit = Readonly<{ fraction: number; point: Position; normal: Position }>
 
-const finiteVec = (value: Vec3): boolean =>
+const finiteVec = (value: Position): boolean =>
   Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z)
 
 const validBox = (box: AABB): boolean =>
@@ -51,12 +52,12 @@ const validBox = (box: AABB): boolean =>
   Number.isFinite(box.maxX) && Number.isFinite(box.maxY) && Number.isFinite(box.maxZ) &&
   box.minX <= box.maxX && box.minY <= box.maxY && box.minZ <= box.maxZ
 
-const contains = (box: AABB, point: Vec3): boolean =>
+const contains = (box: AABB, point: Position): boolean =>
   point.x >= box.minX && point.x <= box.maxX &&
   point.y >= box.minY && point.y <= box.maxY &&
   point.z >= box.minZ && point.z <= box.maxZ
 
-const segmentAABB = (start: Vec3, end: Vec3, box: AABB): SegmentHit | null => {
+const segmentAABB = (start: Position, end: Position, box: AABB): SegmentHit | null => {
   if (!validBox(box)) {return null}
   const deltaX = end.x - start.x
   const deltaY = end.y - start.y

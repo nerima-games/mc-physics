@@ -10,6 +10,7 @@ const expectedExports = [
   'ARROW_SHOOTER_GRACE_SECONDS',
   'ARROW_WATER_DRAG',
   'CACTUS_SHAPE',
+  'COLLISION_SHAPE_AABBS',
   'CONTACT_EPSILON',
   'CentreY',
   'DEFAULT_ENTITY_COLLISION_OPTIONS',
@@ -63,6 +64,7 @@ const expectedExports = [
   'penetrationY',
   'planExplosion',
   'planPrimedTnt',
+  'position',
   'primeTnt',
   'resetFallTrackingState',
   'resolveBody',
@@ -76,7 +78,6 @@ const expectedExports = [
   'stepArrow',
   'stepBody',
   'stepWorld',
-  'vec3',
   'voxelRaycast',
 ]
 

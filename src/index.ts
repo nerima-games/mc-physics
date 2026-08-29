@@ -30,6 +30,7 @@ export * from './domain/landing'
 export * from './domain/movement'
 export * from './domain/projectile'
 export * from './domain/resolve'
+export * from './domain/shape-data'
 
 export {
   applyExplosionPlan,

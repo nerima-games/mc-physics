@@ -44,6 +44,7 @@
  * `FULL_BLOCK_SHAPE` below is the reference's `FULL_BLOCK_COLLISION_SHAPE`
  * (`packages/game/domain/aabb-collision-shapes.ts:16-23`).
  */
+import { COLLISION_SHAPE_AABBS, FULL_BLOCK_SHAPE } from './shape-data'
 import { Brand } from 'effect'
 import type { CollisionShape } from '@nerima-games/mc-kernel'
 
@@ -84,14 +85,9 @@ export const PLAYER_HALF_WIDTH = 0.3
 const PLAYER_HALF_HEIGHT_METRES = 0.9
 export const PLAYER_HALF_HEIGHT: HalfHeight = HalfHeight(PLAYER_HALF_HEIGHT_METRES)
 
-/** A continuous point. Y is up. */
-export type Vec3 = {
-  readonly x: number
-  readonly y: number
-  readonly z: number
-}
-
-export const vec3 = (x: number, y: number, z: number): Vec3 => ({ x, y, z })
+/** Structurally identical to this package's old `Vec3`/`vec3`; kernel owns the vocabulary now. */
+export type { Position } from '@nerima-games/mc-kernel'
+export { position } from '@nerima-games/mc-kernel'
 
 /** An axis-aligned bounding box. `min <= max` componentwise, by construction. */
 export type AABB = {
@@ -134,49 +130,6 @@ export const entityAABB = (
   minY: centreY - halfHeight,
   minZ: z - halfWidth,
 })
-
-/** The shape a full block occupies within its own cell: the whole unit cube. */
-export const FULL_BLOCK_SHAPE: AABB = {
-  maxX: 1,
-  maxY: 1,
-  maxZ: 1,
-  minX: 0,
-  minY: 0,
-  minZ: 0,
-}
-
-/** A slab: the bottom half of its cell. */
-export const SLAB_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: 0.5 }
-
-/**
- * One Minecraft "pixel": a sixteenth of a block, the finest granularity block
- * shapes are authored at. `0.0625` rather than `1 / 16`: a division expression
- * is not a bare-literal `const` initializer, so the linter cannot see it as
- * the named constant it is meant to be — and unlike most fractions, sixteenths
- * are exact in IEEE-754 (16 is a power of two), so the decimal form loses
- * nothing.
- */
-const SIXTEENTH = 0.0625
-
-/** A pressure plate: the bottom sixteenth of its cell. */
-export const PRESSURE_PLATE_SHAPE: AABB = { ...FULL_BLOCK_SHAPE, maxY: SIXTEENTH }
-
-/** A cactus: a full-height block inset one sixteenth on both horizontal axes. */
-export const CACTUS_SHAPE: AABB = {
-  ...FULL_BLOCK_SHAPE,
-  maxX: 1 - SIXTEENTH,
-  maxZ: 1 - SIXTEENTH,
-  minX: SIXTEENTH,
-  minZ: SIXTEENTH,
-}
-
-const COLLISION_SHAPE_AABBS: Readonly<Record<CollisionShape, AABB | null>> = {
-  cactus: CACTUS_SHAPE,
-  full: FULL_BLOCK_SHAPE,
-  none: null,
-  pressurePlate: PRESSURE_PLATE_SHAPE,
-  slab: SLAB_SHAPE,
-}
 
 export const aabbOfCollisionShape = (shape: CollisionShape): AABB | null =>
   COLLISION_SHAPE_AABBS[shape]

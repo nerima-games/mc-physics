@@ -1,5 +1,5 @@
-import type { BlockCapabilities, BlockProperties, FluidKind } from '@nerima-games/mc-kernel'
-import type { BlockShape, Vec3 } from './coordinates'
+import type { BlockCapabilities, BlockProperties, FluidKind, Position } from '@nerima-games/mc-kernel'
+import type { BlockShape } from './coordinates'
 
 export type BlockSample = Readonly<{
   readonly properties: BlockProperties
@@ -30,7 +30,7 @@ export type FluidKindWithVolume = Exclude<FluidKind, 'none'>
 
 export type FluidState = Readonly<{
   readonly level: number
-  readonly flow: Vec3
+  readonly flow: Position
 }>
 
 export type FluidStateAt = (
@@ -43,7 +43,7 @@ export type FluidStateAt = (
 export type FluidEffects = Readonly<{
   readonly waterVolume: number
   readonly lavaVolume: number
-  readonly flow: Vec3
+  readonly flow: Position
 }>
 
 export type FluidMotionCoefficients = Readonly<{
