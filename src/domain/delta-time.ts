@@ -1,8 +1,6 @@
 /**
  * The frame delta, clamped.
  *
- * FIRST CUT (叩き台).
- *
  * ---------------------------------------------------------------------------
  * The exact expression, and why each half of it is load-bearing
  * ---------------------------------------------------------------------------
@@ -38,16 +36,15 @@
  * WHY THE BRAND IS LOOSE AND THE CLAMP IS A FUNCTION
  * ---------------------------------------------------------------------------
  *
- * `DeltaTimeSecs` belongs to `@nerima-games/mc-kernel`
- * (`mc-kernel/domain/quantities.ts:37-42`), which refines it to "finite and
- * non-negative" and says so explicitly: a ZERO delta is legal, because a frame
- * may be scheduled twice inside one clock tick. This declaration mirrors that
- * refinement exactly, error message included.
+ * `DeltaTimeSecs` belongs to `@nerima-games/mc-kernel`, which refines it to
+ * "finite and non-negative". A ZERO delta is legal, because a frame may be
+ * scheduled twice inside one clock tick. This module imports and re-exports
+ * that type and constructor directly.
  *
  * It used to refine to `[0.001, 0.05]` instead, and that was a defect rather
  * than a stricter-is-safer choice. `Brand.Brand<'DeltaTimeSecs'>` is keyed by
- * the STRING `'DeltaTimeSecs'`, so kernel's brand and this one are the SAME
- * TYPE to TypeScript however differently they validate. A `DeltaTimeSecs(30)`
+ * the STRING `'DeltaTimeSecs'`, so two declarations with different
+ * refinements would still be the SAME TYPE to TypeScript. A `DeltaTimeSecs(30)`
  * constructed through kernel — legal there — therefore satisfied
  * `integrateBody`'s parameter type while violating the invariant its comment
  * claimed, and no compiler nor constructor would say a word. Two nominally
@@ -65,7 +62,9 @@
  * (`mc-sim/domain/frame-timing.ts`). `isClampedDelta` below makes the invariant
  * assertable at the points that actually depend on it.
  */
-import { Brand } from 'effect'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+
+export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 /**
  * Elapsed simulation time for one frame, in seconds. Finite and non-negative.
@@ -73,8 +72,6 @@ import { Brand } from 'effect'
  * Kernel's refinement, verbatim. NOT clamped — see the module header, and use
  * `clampDeltaTime` before handing one to the integrator.
  */
-export type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>
-
 export const MIN_DELTA_SECS = 0.001
 export const MAX_DELTA_SECS = 0.05
 
@@ -82,13 +79,6 @@ export const MAX_DELTA_SECS = 0.05
 export const FIRST_FRAME_DELTA_SECS = 0.016
 
 /** The brand's own floor — any non-negative delta is legal, even outside the clamp range below (see the module header). */
-const BRAND_MIN_SECS = 0
-
-export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
-  (value) => Number.isFinite(value) && value >= BRAND_MIN_SECS,
-  (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
-)
-
 /**
  * Is this delta inside the integrator's safe step range?
  *
@@ -118,11 +108,9 @@ export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
  * The delta for a frame, given the previous and current monotonic readings in
  * seconds. `previousSecs === undefined` means "first frame".
  *
- * Takes readings rather than reading a clock: `Date.now()` and
- * `performance.now()` are banned repository-wide as a matter of policy (see
- * docs/responsibility.md §3.2; there is currently no automated check for this
- * ban — `pnpm check:deps`, which used to enforce it, was removed org-wide).
- * Time is injected, so a replay produces the same simulation.
+ * Takes readings rather than reading a clock. Production simulation code does
+ * not access a clock, so a replay produces the same simulation; the benchmark
+ * harness is the only code that measures elapsed wall time.
  */
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs => {
   if (typeof previousSecs === 'undefined') {

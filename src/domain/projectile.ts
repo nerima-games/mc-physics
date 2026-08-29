@@ -108,21 +108,6 @@ const segmentAABB = (start: Vec3, end: Vec3, box: AABB): SegmentHit | null => {
     far = Math.min(far, Math.max(low, high))
     if (near > far) {return null}
   }
-  /*
-   * PROOF this check's condition is unreachable, not merely untested: `near`
-   * starts at 0 and is only ever replaced by a strictly larger `entering`
-   * value, so `near >= 0` holds for the rest of the function. `far` starts at
-   * 1 and is only ever narrowed by `Math.min`, so `far <= 1` holds throughout
-   * too. If `near` had ever exceeded 1 it would also have exceeded `far`
-   * (since `far <= 1 < near` at that point), and the `near > far` check two
-   * lines above would already have returned `null` on that same axis's
-   * iteration — this line is only reached when the loop completes without
-   * that happening, i.e. when `near <= far <= 1` held on every axis. So at
-   * this point `0 <= near <= far <= 1`, making `near < 0 || near > 1`
-   * provably always false.
-   */
-  /* v8 ignore next */
-  if (near < 0 || near > 1) {return null}
   return {
     fraction: near,
     normal: { x: normalX, y: normalY, z: normalZ },
@@ -149,11 +134,12 @@ export const launchArrow = (launch: ArrowLaunch): Arrow => {
 
 export const stepArrow = (arrow: Arrow, world: ProjectileWorld, dt: number): ProjectileStep => {
   if (arrow.state !== 'flying') {return { arrow }}
-  if (!finiteVec(arrow.position) || !finiteVec(arrow.velocity) || !Number.isFinite(dt) || dt <= 0 || !validBox(world.bounds)) {
+  if (!finiteVec(arrow.position) || !finiteVec(arrow.velocity) || !Number.isFinite(arrow.ageSeconds) || arrow.ageSeconds < 0 || !Number.isFinite(dt) || dt <= 0 || !validBox(world.bounds)) {
     return despawn(arrow, 'invalid')
   }
   const ageSeconds = arrow.ageSeconds + dt
-  if (!Number.isFinite(ageSeconds) || ageSeconds >= ARROW_MAX_LIFETIME_SECONDS) {return despawn({ ...arrow, ageSeconds }, 'lifetime')}
+  if (!Number.isFinite(ageSeconds)) {return despawn({ ...arrow, ageSeconds }, 'invalid')}
+  if (ageSeconds >= ARROW_MAX_LIFETIME_SECONDS) {return despawn({ ...arrow, ageSeconds }, 'lifetime')}
 
   const drag = (world.isInWater(arrow.position) ? ARROW_WATER_DRAG : ARROW_AIR_DRAG) ** (dt * 20)
   const velocity = {

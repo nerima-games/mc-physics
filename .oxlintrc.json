@@ -3,7 +3,7 @@
   // oxlint is the ONLY lint/format configuration in this repository.
   // There is deliberately no prettier, no biome and no .editorconfig.
   //
-  // NOTE on the `Date.now()` ban: oxlint 0.12 does not implement
+  // NOTE on the simulation-source clock ban: oxlint 0.12 does not implement
   // `no-restricted-syntax` or `no-restricted-properties`, and while
   // `no-restricted-globals` is listed by `oxlint --rules` it is not
   // implemented either (no checkmark). Verified empirically against oxlint
@@ -14,15 +14,17 @@
   // DEPENDENCY_POLICY.md §5). The org standard leaves a replacement for this
   // specific check ("checks not expressible as no-restricted-imports") to
   // each repository's discretion and does not require one. There is
-  // currently no automated enforcement of the `Date.now()` ban in this
-  // repository. When oxlint gains `no-restricted-syntax`, enforce it here.
+  // currently no automated enforcement of the simulation-source clock ban in
+  // this repository. The benchmark harness is the explicit measurement
+  // exception. When oxlint gains `no-restricted-syntax`, enforce the ban for
+  // src/ here.
   "env": {
     "es2022": true,
     "node": true
   },
   "settings": {
     "typescript": {
-      "version": "5.9"
+      "version": "7.0"
     }
   },
   "plugins": [],
@@ -104,10 +106,10 @@
     // object-curly-spacing, one-var, operator-linebreak, padded-blocks,
     // quote-props, semi-spacing, space-before-blocks, space-infix-ops,
     // space-unary-ops and spaced-comment. Those were written for oxlint 0.12
-    // (see the `Date.now()` NOTE above) but this repo's `oxlint.json` was
+    // (see the clock-ban NOTE above) but this repo's `oxlint.json` was
     // never actually loaded by oxlint until it was renamed to `.oxlintrc.json`
     // (oxlint only auto-discovers the latter; verified empirically). Loading
-    // it for real against oxlint 1.76.0 fails `--print-config` with
+    // it for real against oxlint 1.75.0 fails `--print-config` with
     // `Rule '<name>' not found in plugin 'eslint'` for every rule in the list
     // above: oxc removed these pure-formatting rules from oxlint (they are
     // now the domain of the separate `oxfmt` formatter, not in scope here).

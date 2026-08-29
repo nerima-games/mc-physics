@@ -21,8 +21,10 @@
 
 ## 2. 責務の言い換え
 
-**エンティティの位置・速度と、注入された「このセルは solid か」の答えだけを入力とし、
-次の位置・速度を返す純粋関数の集合。**
+**エンティティの位置・速度と、注入された `BlockProperties | null` の答えだけを入力とし、
+次の位置・速度を返す純粋関数の集合。** `BlockProperties` は mc-kernel の共有データ契約であり、
+チャンク座標から ID を読む処理と state の解決は呼び出し側が行う。registry の ID 解決は
+`kernel-world` helper で mc-kernel に直接委譲できる。
 
 - 座標規約（`FootY` / `CentreY` / `HalfHeight`）とその変換
 - ブロック占有規約（`[y, y+1]`）と AABB 構築
@@ -30,18 +32,34 @@
 - semi-implicit Euler 積分 + 終端速度
 - voxel-DDA レイキャスト
 - **AABB 衝突リゾルバ（`domain/resolve.ts`。このリポジトリの本体）**
+- kernel の `BlockProperties` / `BlockCapabilities` を使う環境効果のサンプリング
+  （摩擦、movement drag、接触ダメージ、窒息、climbable、流体 volume / flow）
+- `fallsWhenUnsupported` と `canSupportAttachments` を使う落下ブロック開始候補の判定
+- 積分前後の body と解決後の接地状態から、実移動距離ベースの着地衝撃 projection
+- 入力移動、jump、sprint、knockback の速度計算
+- entity broad-phase / narrow-phase 衝突検出と質量ベースの解決
+- 矢の飛翔、寿命、ブロック / エンティティとの swept hit test
+- 爆発のブロック破壊対象、遮蔽、entity exposure / damage / knockback の bounded plan
+- 起爆済み TNT の fuse 進行と爆発計画への遷移（状態の所有・entity lifecycle は除く）
 
 ## 3. 明示的にスコープ外のもの
 
 | 項目 | どこが所有するか | 理由 |
 | --- | --- | --- |
-| **どのブロックが solid か** | mc-kernel（能力フラグ）+ mc-sim | 注入される。§3.1 |
+| **どのブロックが衝突するか** | mc-kernel の `BlockProperties` + mc-sim | `BlockProperties | null` として注入される。ID lookup からの registry 解決には `kernel-world` を使える。§3.1 |
 | チャンクデータへのアクセス | mc-worldgen / mc-sim | mc-physics はコールバック越しにしか世界を見ない |
 | エンティティの管理（`EntityManager`） | mc-sim | plan.md §3.8。物理は状態を所有しない |
 | ゲームループそのもの | mc-sim | plan.md §3.8。`forkDaemon` と `stop()` の話は mc-sim の責務 |
 | クロック（時刻の取得） | mc-kernel（Clock Port）+ 呼び出し側 | `deltaTimeBetween` は**読み取り値**を受け取る。§3.2 |
-| 落下ブロック（砂・砂利）のルール | mx-gameplay | plan.md §3.11。イベント駆動であることも含めて gameplay の責務 |
+| 落下ブロックの開始候補判定 | mc-physics | `fallingBlockCandidateAt` が kernel capability を直接使う。未知・未ロードの扱いも注入 query の契約に従う |
+| 落下ブロックの除去・entity 生成・着地配置 | mc-sim / mx-gameplay | イベント駆動の lifecycle とワールド状態更新は物理計算の責務ではない |
 | 流体伝播 | mx-gameplay | plan.md §3.11 |
+| 流体のブロック間伝播・状態更新 | mx-gameplay | 本層は注入された `FluidStateAt` をサンプリングし、移動量を計算するだけ |
+| health / status への接触ダメージ・窒息の適用 | mc-sim / mx-gameplay | 本層は hazard 値を返すが、状態を所有しない |
+| 爆発のブロック除去、health / status / velocity への効果適用、ドロップ生成 | mc-sim / mx-gameplay | 本層は `ExplosionPlan` を返すが、ワールドとエンティティの状態を所有しない |
+| TNT entity の spawn / lifecycle / fuse tick 配線 | mc-sim | 本層は fuse と爆発計画の projection を返すが、entity の状態と tick 順序を所有しない |
+| entity collection の lifecycle と tick 順序 | mc-sim | 本層は衝突ペアと解決結果を返すが、集合を所有しない |
+| Edition / version 別の公式 tuning とデータセット | mc-kernel / mx-gameplay | この層は値を固定せず、状態と係数を注入する |
 | step-up / sneak-edge の**ゲーム的な値** | mc-sim | 高さ 0.6 や足場探索深度などのチューニング値。機構はここ。**実装済み**: `ResolveOptions.stepHeight`（既定 0）と `clampSneakEdge`（足場判定 callback を注入）。参照実装の定数は持ち込まない |
 | 乗り物（ボート / トロッコ）の物理 | mx-gameplay | plan.md §3.11 |
 | 外部物理ライブラリ | 使わない | plan.md §3.4 が明示 |
@@ -83,17 +101,25 @@ const PASSABLE_BLOCK_IDS: ReadonlySet<number> = new Set([
 本リポジトリの設計:
 
 ```typescript
-export type IsTargetable = (bx: number, by: number, bz: number) => boolean
+import type { BlockProperties } from '@nerima-games/mc-kernel'
+
+export type BlockPropertiesAt = (bx: number, by: number, bz: number) => BlockProperties | null
+export type BlockShape = AABB | ReadonlyArray<AABB>
+export type BlockShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 ```
 
-mc-physics は boolean と形状しか見ない。能力フラグを解決するのは呼び出し側である。
+mc-physics は kernel の `collisionShape` を標準 AABB に変換する。チャンク座標から ID を読む
+処理は呼び出し側に残るが、registry の解決は `kernel-world` から mc-kernel に直接委譲できる。
+状態依存・複合形状を扱う場合だけ呼び出し側が `blockShapeAt` を追加し、単一 AABB または AABB 配列を
+返す。その戻り値（`null` または空配列を含む）を標準形状より優先させ、衝突形状の有無を明示できる。
 
 ### 3.2 時刻を読まない
 
-`Date.now()` / `new Date()` / `performance.now()` はリポジトリ全体で禁止という方針である。
-かつては `pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)が機械的に強制していたが、
-このスクリプトは org 標準への移行で全廃された(PACKAGE_STANDARD.md)。現時点でこの禁止を
-自動検出する仕組みはなく、レビューで担保する。したがって:
+`src/` のシミュレーションコードは `Date.now()` / `new Date()` / `performance.now()` を読まない。
+ベンチマーク（`scripts/benchmark.mjs`）だけは計測のため `performance.now()` を使う。
+かつては `pnpm check:deps`（`scripts/check-dependency-whitelist.ts`）がこの方針を機械的に強制していたが、
+このスクリプトは組織共通の標準移行に伴って廃止された。現時点で自動検出する仕組みはなく、レビューで担保する。
+したがって:
 
 ```typescript
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs
@@ -129,26 +155,29 @@ mc-physics に世界の床の概念は無い。
 | 親（依存先） | `mc-kernel` のみ |
 | 子（依存元） | `mc-sim` のみ |
 
-現時点では `mc-kernel` すら `package.json` に入っていない（まだ publish されていないため）。
-`architecture.md` §7 を参照。
+`@nerima-games/mc-kernel@0.4.0` を実行時依存として直接利用し、`BlockProperties` と
+`DeltaTimeSecs` を再利用する。`architecture.md` §7 を参照。
 
-`domain/coordinates.ts` の `Vec3` / `AABB` は mc-kernel が本来所有する型
-（plan.md §3.1: 「`Position` / `AABB` / チャンク座標系」）だが、
-まだ publish されていないのでローカルに宣言してある。
+`domain/coordinates.ts` の `Vec3` / `AABB` は、この物理層の平坦な形状計算とブランド付きボディ座標に
+合わせたローカル表現である。kernel のネストした AABB は `BlockProperties` のデータ境界であり、
+この層のホットパスへ不要な変換を持ち込まない。
 
-**ただし `FootY` / `CentreY` / `HalfHeight` は mc-kernel に上げるべきかもしれない。**
-plan.md §3.4 の「座標規約を型で区別する」は、区別が mc-physics の中だけで有効なら
-半分の価値しか無い。mc-sim も同じ区別を必要とする。
-mc-kernel の界面が固まったときの検討事項として `design-notes.md` P-1 に記録した。
+**`FootY` / `CentreY` / `HalfHeight` は mc-physics に残す。**
+これらは kernel の共有ワールドデータではなく、ボディの足元原点・AABB 中心・半高という
+物理アルゴリズム固有の意味を表すためである。
 
 ## 5. 完成条件
 
 `testing.md` §4 に詳細。要約:
 
 - プロパティテスト（エネルギー非増加、めり込みゼロ、決定論）
-- 参照実装で発見された不変条件の回帰テスト（`design-notes.md` P-1〜P-8）
-- **AABB 衝突リゾルバの実装**（現在は積分・座標規約・DDA のみ）
+- 参照実装で発見された不変条件の回帰テスト（`design-notes.md` P-1〜P-9）
+- **AABB 衝突リゾルバの実装**（kernel の `BlockProperties` と標準形状を接続）
+- **環境・移動・entity・矢の純粋なプリミティブ**（kernel の共有データを直接利用）
+- **爆発の bounded plan**（抵抗・遮蔽・露出から破壊対象と entity effect を決定論的に計算）
+- **起爆済み TNT の bounded fuse plan**（fuse を進め、爆発 plan と `detonated` state を返す）
+- **落下ブロック開始候補の純粋な判定**（`fallsWhenUnsupported` と支持側 capability を直接利用）
 
-mc-physics は**プレビューを持たない**。安定ライブラリ層は操作できる成果物を持たない。
-物理を体で確認するのは mc-sim の内蔵障害物コースプレビュー
-（歩く / 泳ぐ / 跳ぶ / スニーク、plan.md §3.8）である。
+mc-physics は**ゲームプレビューを持たない**。公開用の ESM / 型宣言成果物は `pnpm build` で生成するが、
+歩く / 泳ぐ / 跳ぶ / スニークを含むゲームプレイの tick 配線、状態更新、公式 tuning の確認は
+mc-sim / mx-gameplay の責務である。

@@ -1,8 +1,6 @@
 /**
  * The Y convention, made impossible to get wrong.
  *
- * FIRST CUT (叩き台).
- *
  * ---------------------------------------------------------------------------
  * THIS FILE EXISTS BECAUSE OF ONE BUG CLASS (plan.md §3.4)
  * ---------------------------------------------------------------------------
@@ -47,6 +45,7 @@
  * (`packages/game/domain/aabb-collision-shapes.ts:16-23`).
  */
 import { Brand } from 'effect'
+import type { CollisionShape } from '@nerima-games/mc-kernel'
 
 /** Y of the plane an entity's feet rest on. What spawn logic and game rules speak. */
 export type FootY = number & Brand.Brand<'FootY'>
@@ -102,6 +101,16 @@ export type AABB = {
   readonly maxX: number
   readonly maxY: number
   readonly maxZ: number
+}
+
+/** One or more collision boxes authored in a block's local unit cell. */
+export type BlockShape = AABB | ReadonlyArray<AABB>
+
+export const aabbsOfBlockShape = (shape: BlockShape): ReadonlyArray<AABB> => {
+  if ('minX' in shape) {
+    return [shape]
+  }
+  return shape
 }
 
 /**
@@ -160,6 +169,17 @@ export const CACTUS_SHAPE: AABB = {
   minX: SIXTEENTH,
   minZ: SIXTEENTH,
 }
+
+const COLLISION_SHAPE_AABBS: Readonly<Record<CollisionShape, AABB | null>> = {
+  cactus: CACTUS_SHAPE,
+  full: FULL_BLOCK_SHAPE,
+  none: null,
+  pressurePlate: PRESSURE_PLATE_SHAPE,
+  slab: SLAB_SHAPE,
+}
+
+export const aabbOfCollisionShape = (shape: CollisionShape): AABB | null =>
+  COLLISION_SHAPE_AABBS[shape]
 
 /** The world-space AABB of the block at integer cell (bx, by, bz), given its shape. */
 export const blockAABB = (bx: number, by: number, bz: number, shape: AABB = FULL_BLOCK_SHAPE): AABB => ({

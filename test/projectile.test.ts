@@ -1,5 +1,5 @@
 /* eslint-disable id-length, no-magic-numbers, sort-imports */
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, it } from 'vitest'
 import {
   ARROW_AIR_DRAG,
   ARROW_MAX_LIFETIME_SECONDS,
@@ -159,6 +159,14 @@ describe('continuous projectile collisions', () => {
     expect(result.hit).toMatchObject({ kind: 'block', point: { x: 1 } })
   })
 
+  it('keeps an earlier block hit ahead of a later entity hit', () => {
+    const arrow = launchArrow({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 })
+    const block: AABB = { maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }
+    const entity = { bounds: { maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }, id: 'later' }
+    const result = stepArrow(arrow, world({ blockBounds: () => [block], entities: [entity] }), 0.05)
+    expect(result.hit).toMatchObject({ kind: 'block', point: { x: 1 } })
+  })
+
   it('picks the closer of two candidate entities regardless of array order', () => {
     const arrow = launchArrow({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 })
     const farther = { bounds: { maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }, id: 'far' }
@@ -183,6 +191,13 @@ describe('projectile boundaries', () => {
     expect(stepArrow(arrow, world(), 0).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
     expect(stepArrow(arrow, world(), -1).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
     expect(stepArrow(arrow, world(), Number.NaN).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('rejects malformed or overflowing arrow ages as invalid state', () => {
+    const arrow = launchArrow({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 })
+    expect(stepArrow({ ...arrow, ageSeconds: Number.NaN }, world(), 0.05).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepArrow({ ...arrow, ageSeconds: -1 }, world(), 0.05).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepArrow({ ...arrow, ageSeconds: Number.MAX_VALUE }, world(), Number.MAX_VALUE).arrow).toMatchObject({ reason: 'invalid', state: 'despawned' })
   })
 
   it('keeps every finite boundary sample finite', () => {

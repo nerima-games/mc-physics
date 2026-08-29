@@ -103,12 +103,11 @@ export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs.make(0.016)
 本リポジトリ（`domain/delta-time.ts`）:
 
 ```typescript
-export type DeltaTimeSecs = number & Brand.Brand<'DeltaTimeSecs'>
+export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+export type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 export const MIN_DELTA_SECS = 0.001
 export const MAX_DELTA_SECS = 0.05
 export const FIRST_FRAME_DELTA_SECS = 0.016
-// kernel の refinement 逐語: 有限かつ非負。ゼロは合法。範囲は要求しない
-export const DeltaTimeSecs: Brand.Brand.Constructor<DeltaTimeSecs>
 export const isClampedDelta = (deltaSecs: number): boolean          // [MIN, MAX] に入っているか
 export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs // 境界。出力は常に isClampedDelta
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs
@@ -123,14 +122,12 @@ export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: 
 `DeltaTimeSecs` は当初 `[MIN_DELTA_SECS, MAX_DELTA_SECS]` に refine してあり、
 「クランプを通らない値は構築できない」と説明していた。**それは誤りだった。**
 
-`DeltaTimeSecs` は `@nerima-games/mc-kernel` の資産であり、kernel は「有限かつ非負」に refine している
-（`mc-kernel/domain/quantities.ts:37-42`。ゼロは合法 —— 1 クロック tick に 2 回フレームが
-スケジュールされうるため）。そして `Brand.Brand<'DeltaTimeSecs'>` は**文字列でキーされる**ので、
-kernel のブランドと本リポジトリのブランドは**検証の中身が違っても TypeScript にとって同じ型**である。
+`DeltaTimeSecs` は `@nerima-games/mc-kernel@0.4.0` の資産であり、kernel は「有限かつ非負」に refine している
+（`mc-kernel` の `quantities`。ゼロは合法）。本リポジトリはその値と型を直接再 export し、時間量の検証を複製しない。
 
-したがって kernel 経由で作った `DeltaTimeSecs(30)` は `integrateBody` の引数として型検査を通り、
-コンストラクタも何も言わない。狭いほうのブランドが買っていたのは安全ではなく**偽の保証**だった。
-（`Context.Tag` のキー衝突と同じ根である。詳細は [design-notes.md](./design-notes.md) P-5。）
+したがって kernel 経由で作った `DeltaTimeSecs(30)` は型上は受け取れるが、フレーム幅として安全かどうかは
+`clampDeltaTime` / `isClampedDelta` の責務である。狭いローカルブランドを重ねて別の保証を作らない。
+（詳細は [design-notes.md](./design-notes.md) P-5。）
 
 **クランプは弱まっていない。属すべき場所に移った。**
 
@@ -287,13 +284,17 @@ export const FULL_BLOCK_COLLISION_SHAPE: BlockCollisionShape = {
 （`packages/game/domain/aabb-collision.ts:41-50`, `:325-337`）に対応する。
 
 ```typescript
-export type IsBlockSolid = (bx: number, by: number, bz: number) => boolean
-export type BlockShapeAt = (bx: number, by: number, bz: number) => AABB | null
+import type { BlockProperties } from '@nerima-games/mc-kernel'
+
+export type BlockPropertiesAt = (bx: number, by: number, bz: number) => BlockProperties | null
+export type BlockShape = AABB | ReadonlyArray<AABB>
+export type BlockShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 
 export type ResolveOptions = {
   readonly halfWidth: number
   readonly halfHeight: HalfHeight
-  readonly isBlockSolid: IsBlockSolid
+  readonly blockPropertiesAt: BlockPropertiesAt
+  /** 状態依存・複合形状。指定時は null も含めてこの結果を優先する。 */
   readonly blockShapeAt?: BlockShapeAt
   readonly stepHeight?: number        // 既定 0。参照実装の MAX_STEP_UP に相当するが「値」は mc-sim のもの
 }
@@ -306,6 +307,12 @@ export const stepBody     = (body: Body, deltaTime: DeltaTimeSecs, options: Reso
 export const stepWorld    = (bodies: ReadonlyArray<Body>, deltaTime: DeltaTimeSecs, options: ResolveOptions, gravityY?: number): ReadonlyArray<Resolution>
 export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: number, maxDeltaSecs: number): number
 ```
+
+`blockPropertiesAt` が `null` を返すセルは衝突しない。値があれば kernel の `collisionShape` を
+標準形状へ変換する。`blockShapeAt` を指定した場合はその戻り値を常に優先し、`null` または空配列は
+「このセルに衝突形状はない」という明示的な結果として扱う。単一 AABB と複合形状の配列はどちらも
+cell-local 座標で指定する。チャンク座標から ID を読む処理と state 依存形状の解決は呼び出し側に残る。
+registry の ID 解決だけなら、次の `kernel-world` helper を使える。
 
 **`stepBody` が plan.md §3.4 の `step(state, world, dt)` である。**
 中身は「積分 → 必要なら swept AABB → endpoint 解決」である。
@@ -327,6 +334,45 @@ export const maxSpeedWithoutTunnelling = (halfExtent: number, blockThickness: nu
 
 `deltaTime` を受け取るのは、床とみなす条件がこのステップの変位を必要とするからである。
 積分に使ったのと同じ delta を渡すこと —— 別の値を渡すのは丸め誤差ではなく、別の問いへの答えになる。
+
+## 3-3. mc-kernel 直結のワールド境界（`domain/kernel-world.ts`）
+
+チャンクやワールドの所有権は持たず、ブロック座標から ID を読む関数だけを受け取る。
+ID の registry 解決は `mc-kernel` の `resolvedBlockOfId` を直接使うため、ブロック定義を
+本リポジトリへ複製しない。空気、未知 ID、未ロードセルは `null` として扱う。
+
+```typescript
+export type BlockIdAt = (bx: number, by: number, bz: number) => number | null
+
+export const blockAtFromKernel: (blockIdAt: BlockIdAt) => BlockAt
+export const blockPropertiesAtFromKernel: (blockIdAt: BlockIdAt) => BlockPropertiesAt
+export const blockEnvironmentFromKernel: (
+  blockIdAt: BlockIdAt,
+  blockShapeAt?: EnvironmentBlockShapeAt,
+) => BlockEnvironment
+export const resolveOptionsFromKernel: (options: KernelResolveOptions) => ResolveOptions
+```
+
+`blockShapeAt` は state 依存・複合形状を持つワールドが必要な場合だけ注入する。
+標準の性質、能力、`collisionShape` は kernel の解決済みブロックからそのまま利用される。
+
+落下ブロックの開始候補も kernel の capability から直接判定できる。
+
+```typescript
+export type FallingBlockCandidate = Readonly<{
+  readonly id: BlockId
+  readonly position: BlockPosition
+}>
+
+export const fallingBlockCandidateAt: (
+  blockIdAt: BlockIdAt,
+  position: BlockPosition,
+) => FallingBlockCandidate | null
+```
+
+現在位置が既知の非空ブロックで `fallsWhenUnsupported` を持ち、直下が空気・未知・未ロード、
+または `canSupportAttachments` を持たない場合に候補を返す。それ以外は `null` である。
+候補のブロックを除去して falling entity を生成し、衝突後に配置するライフサイクルは mc-sim が所有する。
 
 ## 4. voxel-DDA（`domain/dda.ts`）
 
@@ -353,7 +399,7 @@ export type VoxelHit = {
   readonly point: Vec3
 }
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
-export type RaycastShapeAt = (bx: number, by: number, bz: number) => AABB | null
+export type RaycastShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 export const voxelRaycast = (
   origin: Vec3, direction: Vec3, maxDistance: number, isTargetable: IsTargetable,
   shapeAt?: RaycastShapeAt,
@@ -362,7 +408,8 @@ export const voxelRaycast = (
 
 第5引数を省略した既存呼び出しは従来どおりtargetable cell全体をunit cubeとして扱う。
 指定時はDDAで候補cellを列挙した後、cell-local AABBとのslab intersectionで実際の面を求める。
-空隙を通った場合は次のcellへ進む。`null` はfull cubeであり、targetableかどうかは第4引数だけが決める。
+空隙を通った場合は次のcellへ進む。`null` はfull cube、空配列は衝突なしであり、targetableかどうかは
+第4引数だけが決める。
 shapeは有限・正体積かつunit cell内でなければならず、不正値はhitにせず無視する。
 
 ### 参照実装への訂正 2 点
@@ -385,16 +432,79 @@ shapeは有限・正体積かつunit cell内でなければならず、不正値
 原点セルを返すと、頭が入っているブロックを掘れてしまう。
 参照実装も同じ規則とテストを持つ（`packages/world/domain/voxel-raycast.test.ts`）。
 
-## 5. 参照実装にあって本リポジトリにまだ無いもの
+## 5. 現在公開している実装
+
+| モジュール | 公開している計算 |
+| --- | --- |
+| `environment` | kernel の `BlockProperties` / `BlockCapabilities` から surface effects、hazards、fluid effects をサンプリングし、surface motion を計算 |
+| `fluid` | 注入された fluid effects と係数から fluid motion を計算 |
+| `movement` | 移動入力、sprint、jump、knockback を速度へ適用 |
+| `falling-block` | kernel の `fallsWhenUnsupported` と支持側 `canSupportAttachments` から落下開始候補を判定 |
+| `landing` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 projection |
+| `kernel-world` | kernel の block ID lookup を `BlockAt` / `BlockPropertiesAt` / `BlockEnvironment` / `ResolveOptions` へ接続 |
+| `entity-collision` | 空間グリッド broad-phase、AABB narrow-phase、質量と反発係数を使う衝突解決 |
+| `projectile` | 矢の launch、drag / gravity / lifetime、ブロック / entity swept hit test |
+| `explosion` | 抵抗・遮蔽を考慮したブロック破壊と entity exposure / damage / knockback の bounded plan |
+| `primed-tnt` | bounded な fuse 進行、detonated への遷移、既存の explosion planner の再利用 |
+| `resolve` / `resolve-shapes` | block AABB の Y → X → Z 解決と標準形状 |
+
+これらは状態を所有しない純粋関数である。`BlockEnvironment`、`FluidStateAt`、entity 集合、
+damage / health 更新、tick 順序は呼び出し側が注入・配線する。特に `stepBody` は積分と
+ブロック衝突の合成であり、環境・entity・projectile の各 helper を自動で呼び出す
+Minecraft 全体の tick 関数ではない。
+
+### 5-1. 爆発計画（`domain/explosion.ts`）
+
+`planExplosion` は、ワールドの読み取りとエンティティ集合を注入して、爆発の結果を状態から分離した
+`ExplosionPlan` として返す。中心、半径、seed は有限値に正規化され、既定の訪問ブロック数・光線ステップ数・
+影響エンティティ数の上限で計算量を bounded にする。上限に達した場合は `truncated: true` になる。
+
+```typescript
+export const planExplosion: (request: ExplosionRequest) => ExplosionPlan
+export const applyExplosionPlan: (plan: ExplosionPlan, commit: ExplosionCommit) => void
+```
+
+`ExplosionBlockReader` が `undefined` を返すセルは未ロードとして扱い、破壊対象にはしない。非破壊ブロックも
+mutation には入らない。`ExplosionPlan.entityEffects` は exposure、damage、knockback の計算結果であり、
+health・velocity・status の状態を変更しない。`applyExplosionPlan` は `destroyedBlocks` と `entityEffects` を
+commit callback へ渡すだけなので、ワールド書き込み、ダメージ適用、ドロップ生成は呼び出し側が実装する。
+
+### 5-2. 起爆済み TNT（`domain/primed-tnt.ts`）
+
+`primeTnt` は fuse を有限非負へ正規化する。`planPrimedTnt` は 1 回の呼び出しで fuse を進め、
+`MAX_TNT_FUSE_ADVANCE_SECS` を超える delta は `deferredSecs` として返す。fuse が尽きたフレームでは
+既存の `planExplosion` を再利用し、`detonated` state と爆発計画を返す。detonated state に対する
+後続呼び出しは再爆発を生成しない。
+
+```typescript
+export const primeTnt: (fuseSecs?: number) => PrimedTntState
+export const planPrimedTnt: (request: PrimedTntRequest) => PrimedTntPlan
+export const applyPrimedTntPlan: (plan: PrimedTntPlan, commit: PrimedTntCommit) => void
+```
+
+`applyPrimedTntPlan` は state と爆発計画の projection を commit callback に渡すだけで、TNT entity の
+lifecycle、ワールド書き込み、health / status / velocity、ドロップ生成を所有しない。
+
+### 5-3. 着地衝撃の projection（`domain/landing.ts`）
+
+`createFallTrackingState` と `advanceFallTracking` は、積分前の body、積分後の Y 速度、衝突解決後の
+grounded 状態から、実際の下向き移動距離を累積し、`!wasGrounded && isGrounded` の一フレームだけ
+`LandingImpact` を返す。上昇距離や接地済みの接触は落下距離に含めない。
+
+体力減算、ダメージイベント、teleport 時の state reset の配線は mc-sim が所有し、mc-physics は
+`FallTrackingState` と純粋な `LandingImpact` だけを扱う。
+
+## 6. 参照実装との責務境界と未移植項目
 
 | 項目 | 参照実装 | LOC | 扱い |
 | --- | --- | --- | --- |
 | ~~**AABB 衝突リゾルバ本体**~~ | `packages/game/domain/aabb-collision.ts` | 361 | **実装済み**（`domain/resolve.ts`）。§3-2 |
 | `resolveBlockCollisionsInto`（ゼロ割り当て版） | `aabb-collision.ts:41-50` | — | **移植しない（今は）**。純粋版が定義であり、in-place 版はベンチマークができてから。`integrate.ts` と同じ方針 |
+| 落下ブロックの開始候補 | `falling-block.ts` | — | **実装済み**。`fallingBlockCandidateAt` が kernel capability を直接参照する。除去・entity 生成・着地配置は mc-sim |
 | `clampSneakEdge` | `aabb-collision.ts:352-360` | — | **実装済み**。X/Z を独立に clamp して edge 沿いの移動を保つ。スニーク状態と足場探索深度は mc-sim（`responsibility.md` §3） |
-| step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | 未着手。Y フェーズの reach 上限だけで slab への step-up は成立するので、再実行が要るケースを再現するテストが書けてから（`testing.md` §4） |
-| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `CACTUS_SHAPE` / `PRESSURE_PLATE_SHAPE` として移植済み。ID との対応付けは `BlockShapeAt` を実装する呼び出し側の責務 |
+| step-up の水平フェーズ再実行 | `aabb-collision.ts:303-318` | — | **実装済み**。`resolve-support.ts` の `tryStepUp` が `stepHeight` 分だけ持ち上げて水平移動を再試行し、再試行後に衝突する場合は採用しない。完全な player policy とチューニング値は mc-sim 側 |
+| `BlockCollisionShape` の可変形状（cactus / pressure plate） | `aabb-collision-shapes.ts` | 56 | `CACTUS_SHAPE` / `PRESSURE_PLATE_SHAPE` として移植済み。state 依存・複合形状との対応付けは `BlockShapeAt` を実装する呼び出し側の責務。registry の ID 解決には `kernel-world` を使える |
 | ~~step-up（`MAX_STEP_UP = 0.6`）~~ | `aabb-collision.ts:32` | — | **定数としては移植しない**。`ResolveOptions.stepHeight`（既定 0）として注入する |
 | プレイヤー物理の高レベル層 | `player-physics.ts` | 310 | mc-sim 寄り。切り分け要検討 |
-| `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。能力フラグに置き換える（`responsibility.md` §3.1） |
+| `isBlockSolid` / `PASSABLE_BLOCK_IDS` | `block-collision-predicates.ts` | 208 | **移植しない**。kernel の `BlockProperties` に置き換える（`responsibility.md` §3.1） |
 | Effect の Service / Layer 配線 | `physics-service.ts` ほか | 180 | 消費側（mc-sim）の責務 |

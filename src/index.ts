@@ -1,28 +1,33 @@
 /**
- * @nerima-games/mc-physics — Euler integration and AABB collision, no engine.
+ * Pure voxel physics primitives: semi-implicit Euler integration, AABB
+ * collision resolution, voxel traversal, projectile intersection, explosion
+ * and primed-TNT planning, and environment/entity interaction.
  *
- * FIRST CUT (叩き台). See README.md 現状.
+ * The world boundary is an injected query returning mc-kernel's
+ * `BlockProperties` (or `null`). `kernel-world` connects a block-id query to
+ * that contract without copying registry data. A caller may provide
+ * state-specific or compound geometry, fluid state, and entity collections
+ * separately. Chunk lookup, clocks, rendering, and entity orchestration
+ * remain outside this package; block properties, capabilities, and basic
+ * collision shapes come directly from mc-kernel.
  *
- * A tier-1 stable library (plan.md §2.2). It asks the world exactly one
- * question — "is this cell solid, and what shape does it collide with?" — and
- * receives the answer as an injected callback. It therefore depends on no
- * world, no chunk manager, no renderer and no clock.
- *
- * Two rules from plan.md are structural here rather than advisory:
- *
- *   - NO BLOCK-ID NAME CHECKS (§3.4). Passability arrives as a boolean the
- *     caller derived from mc-kernel's capability flags. The reference did the
- *     opposite — a hand-maintained `PASSABLE_BLOCK_IDS` denylist at
- *     `packages/game/domain/block-collision-predicates.ts:16-42`, which shipped
- *     with leaves wrongly listed and let players fall through tree canopies.
- *   - FOOT-ORIGIN Y AND CENTRE Y ARE DIFFERENT TYPES (§3.4). Every "things
- *     float" bug in the reference was a confusion between them. See
- *     domain/coordinates.ts.
+ * Body-coordinate brands in `domain/coordinates.ts` keep foot-origin Y,
+ * centre Y, and half-height distinct throughout the physics path.
  */
 
 export * from './domain/coordinates'
 export * from './domain/dda'
 export * from './domain/delta-time'
+export * from './domain/entity-collision'
+export * from './domain/explosion'
+export * from './domain/environment'
+export * from './domain/environment-types'
+export * from './domain/falling-block'
+export * from './domain/fluid'
 export * from './domain/integrate'
+export * from './domain/kernel-world'
+export * from './domain/landing'
+export * from './domain/movement'
+export * from './domain/primed-tnt'
 export * from './domain/projectile'
 export * from './domain/resolve'

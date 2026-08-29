@@ -8,42 +8,41 @@
 | --- | --- |
 | `pnpm typecheck` | `tsconfig.build.json`（出荷ソース）と `tsconfig.test.json`（テスト・ツール）の両方 |
 | `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 40 ルールが `warn`、`error` は 2 つだけ。このフラグが無かった頃は実質その 2 つしかゲートになっていなかった） |
-| `pnpm test` | vitest。`@effect/vitest` の `it.effect` が主 API |
-| `pnpm test:coverage` | カバレッジ計測。4 指標 99% のしきい値を強制する(§3 参照) |
-| `pnpm verify` | `typecheck` / `lint` / `test` を直列実行。**CI と同じ内容**。カバレッジは別ゲート |
+| `pnpm test` | Vitest の同期テストと property-based test |
+| `pnpm test:coverage` | カバレッジ計測。4 指標 100% のしきい値を強制する(§3 参照) |
+| `pnpm build` | ESM 実行成果物・型宣言・source map を `dist/` に生成する |
+| `pnpm verify:package` | package export map 経由で生成済み `dist/` を import し、公開 runtime export を検査する |
+| `pnpm benchmark` | ビルド済み ESM 成果物を使う決定論的な衝突ベンチマーク |
+| `pnpm pack --dry-run` | npm 配布物に含まれるファイルを確認する |
+| `pnpm peers check` | peer dependency の整合性を確認する |
+| `nix flake check --all-systems` | 宣言した全システムの flake 評価を確認する |
+| `pnpm verify` | `typecheck` / `lint` / `test` / `test:coverage` / `build` / `verify:package` を直列実行する |
 
-`pnpm check:deps`(`scripts/check-dependency-whitelist.ts`)と `pnpm api:check` / `pnpm api:update`
-(`api-lock.md` + `scripts/api-lock.ts`)は org 標準への移行に伴い全廃された
-(PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts` の廃止」、API_STANDARD.md §4)。
-依存の許可グラフは `.oxlintrc.json` の `no-restricted-imports` が(DEPENDENCY_POLICY.md)、
+`pnpm check:deps`（`scripts/check-dependency-whitelist.ts`）と `pnpm api:check` / `pnpm api:update`
+（`api-lock.md` + `scripts/api-lock.ts`）は組織共通の標準移行に伴い廃止された。
+依存の許可グラフは `.oxlintrc.json` の `no-restricted-imports` が（組織共通の依存ポリシー）、
 破壊的変更の判定は人間のレビュー([versioning.md](./versioning.md) §5-6)がそれぞれ引き継ぐ。
 
 セットアップ:
 
 ```console
-$ direnv allow          # flake.nix の devShell で nodejs_22 + corepack が入る
+$ direnv allow          # flake.nix の devShell で Node.js 24 + corepack が入る
 $ pnpm install
 ```
 
-Nix を使わない場合は Node.js 22 以上と pnpm 9.15.0 が要る。
+Nix を使わない場合は Node.js 24 以上と pnpm 11.17.0 が要る。
 `package.json` の `packageManager` が版を pin しているので `corepack pnpm ...` でよい。
 
-> ツールチェーンは `devenv.nix` から `flake.nix` + `flake.lock` に移行済みである。
+> ツールチェーンは `flake.nix` + `flake.lock` で管理する。
 > `flake.lock` はコミットされているので、`nix develop`（`.envrc` は `use flake`）は
-> 誰の手元でも同じ nixpkgs に解決される。`devenv.nix` / `devenv.lock` はもう存在しない。
+> 誰の手元でも同じ nixpkgs に解決される。このリポジトリには別の Nix 環境定義を置かない。
 
 ## 2. テストの方針
 
-### `it.effect` を使う
+### 同期テストは Vitest を直接使う
 
-`@effect/vitest` の `it.effect` が主 API である。純粋な同期アサーションでも
-`Effect.sync(() => { ... })` で包む。理由は一貫性であり、
-Effect を要求するコードが後から入ったときにテストの書き方が変わらないためである。
-
-**例外**（参照実装で確立済み、plan.md §3.13）: DOM イベントフローのテストで
-`Effect.fork` + `Deferred.await` を `it.effect` の中に書くとデッドロックする。
-そのときはプレーンな `it` + `Effect.runPromise` を使う。
-mc-physics は DOM を触らないので現時点では該当しない。
+mc-physics の公開 API は純粋関数なので、テストも Vitest の `it` / `expect` を直接使う。
+Effect の実行ランナーや test adapter を挟まず、失敗した入力と返り値がそのまま見える形にする。
 
 ### プロパティテストを優先する
 
@@ -69,25 +68,34 @@ mc-physics で最も価値が高いのは**座標と AABB の不変条件**で�
 `design-notes.md` の各項目には**回帰テスト名**が振ってあり、ソースのコメントからも
 同じ名前で参照している。テストを消すときは design-notes 側も同時に更新すること。
 
-## 3. カバレッジ閾値は有効化済み(org 標準、TEST_STANDARD.md §3)
+## 3. カバレッジ閾値は有効化済み（組織共通のテスト標準 §3）
 
-branches / functions / lines / statements の4指標すべてに **99%** のしきい値を、
+branches / functions / lines / statements の4指標すべてに **100%** のしきい値を、
 voxel raycastはunit cube互換経路に加え、slab/cactus/pressure plateの実形状、空隙通過、
 6面、実形状面でのmaxDistance、反復決定性を固定している。
 
-org の即時・全リポジトリ一律ロールアウト方針(TEST_STANDARD.md §3)に従い有効化している。
+組織共通の即時・全リポジトリ一律ロールアウト方針（テスト標準 §3）に従い有効化している。
 猶予期間・段階ロールアウトはない。
 
 `vitest.config.ts`:
 
 ```typescript
-thresholds: { branches: 99, functions: 99, lines: 99, statements: 99 },
+thresholds: { branches: 100, functions: 100, lines: 100, statements: 100 },
 ```
 
-org 標準への移行時点の実測: statements 99.41%、branches 99.35%、functions 100%、
-lines 99.41%(`src/domain/dda.ts` の raycast ループ末尾、実質到達不能なフォールバックの
-`Option.none()` 1 行のみ未到達)。4 指標とも 99% を上回っており、この移行時点で
-CI が赤くなる側の3リポジトリ(MIGRATION_RUNBOOK.md 手順7)には含まれない。
+`pnpm test:coverage` は statements / branches / functions / lines の 4 指標すべてに
+100% のしきい値を設定している。`resolve-types.ts` は型だけを宣言し実行時コードを出さないため
+計測対象から除外し、DDA の実質到達不能な終端フォールバックは V8 の ignore 注釈で
+アルゴリズムの他の部分を除外せずに扱っている。
+
+`test/falling-block.test.ts` は、既知・未知・空気の現在ブロック、支持側 capability、
+空気・未ロードセル・非支持ブロック直下の落下開始候補を抽象化した座標 query で検証する。
+
+`test/explosion.test.ts` は、抵抗による破壊、遮蔽、未ロードセル、非有限入力、訪問・光線・エンティティ数の
+上限、大半径のキャッシュ、entity exposure / damage / knockback、commit callback を検証する。
+
+`test/primed-tnt.test.ts` は、既定 fuse、有限非負への正規化、bounded advance、detonate-once、爆発 planner
+の再利用、commit projection を検証する。
 
 ## 4. 完成条件
 
@@ -104,7 +112,7 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
 
 - **プロパティテスト**（エネルギー非増加、めり込みゼロ、決定論）—— plan.md §3.4 の要求。
   **3 つとも `test/resolve.test.ts` にある**（§6 の表）
-- **参照実装で発見された不変条件の回帰テスト** —— `design-notes.md` の P-1〜P-8。
+- **参照実装で発見された不変条件の回帰テスト** —— `design-notes.md` の P-1〜P-9。
   リゾルバ待ちだった P-3 の 2 本と P-6 のリゾルバ側 3 本が埋まり、**全項目にテストがある**
 - **AABB 衝突リゾルバの実装** —— **実装済み**（`domain/resolve.ts`）。満たしている条件:
   - ground clamp を内部に持ち、`step()` の後に走る（`design-notes.md` P-3）。
@@ -118,35 +126,31 @@ plan.md §2.3-4 が「プレビューは検証対象と同居する」と定め�
   - `stepBody` は body span を超える変位を swept AABB で連続判定する。
     高速な水平・垂直・斜め移動、薄い collision shape、接触状態からの内向き／外向き移動、
     既存のめり込みからの離脱を回帰テストで固定している（P-9-2）
-- **`isBlockSolid` を能力フラグ経由にする** —— mc-kernel が publish されてから。
-  現状は `IsBlockSolid` / `BlockShapeAt` として**注入**されており、
-  `domain/` にブロック ID の語彙は 1 つも無い。repoint は mc-sim 側の 1 行になる（P-8）
+- **ブロックの共有データを mc-kernel と直接共有する** —— 実装済み。
+  `BlockPropertiesAt` は `BlockProperties | null` を返し、標準形状は
+  `BlockProperties.collisionShape` から解決する。状態依存・複合形状が必要な呼び出し側だけ
+  `BlockShapeAt` を任意注入できる。戻り値は単一 AABB または AABB 配列で、`null`/空配列は
+  衝突形状なしを表す。ID・registry・chunk の解決は上位層が所有する（P-8）。DDA の shape callback
+  だけは `null` を full cube、空配列を非ヒットとして扱う。
+- **爆発計画の純粋性と上限** —— 実装済み。`ExplosionBlockReader` と entity 集合を読み取り専用で受け取り、
+  mutation は `ExplosionPlan` に収集する。未ロードセルの遮蔽、決定論、各上限による truncation、commit の
+  状態非所有を `test/explosion.test.ts` で固定する。
+- **起爆済み TNT の純粋な fuse plan** —— 実装済み。fuse の進行を bounded に計画し、尽きたフレームで
+  `planExplosion` を再利用する。detonated state の再爆発禁止と commit の状態非所有を
+  `test/primed-tnt.test.ts` で固定する。
 
-**残っているもの**（2026-07-28 に 2 件を分離した。かつては 1 文に同居しており、
-**片方はもう残っていない**）。
+**確認済みの移植境界**:
 
-#### (a) step-up の「水平フェーズ再実行」 —— **入れない。条件が構造的に起きない**
+#### (a) step-up の「水平フェーズ再実行」 —— **実装済み**
 
-参照実装 `aabb-collision.ts:303-318` の再実行は入れていない。
-かつてここには「再実行が要るのは『水平フェーズが先に体を止めてしまい Y が持ち上げる機会を失う』
-ケースだけである。**そのケースを再現するテストが書けたときに入れる**」と書いてあった。
+`resolve-support.ts` の `tryStepUp` は、Y 解決後の水平衝突を入力にして、
+`stepHeight` 分だけ持ち上げた位置で X と Z の解決を再試行する。持ち上げ後にも
+衝突が残る場合は step-up を採用せず、通常の水平解決結果を返す。
 
-**そのケースは、この設計では起こらない。** `domain/resolve.ts` の `resolveBody` は
-Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平フェーズが見るのは
-`boxAfterY`、すなわち持ち上げ後の位置である）。
-「水平フェーズが先に体を止める」状態は、軸の順序が逆でなければ到達できない。
-
-つまりこれは「テストがまだ書けない」項目ではなく、
-**Y-before-X の帰結として不要になった**項目である。しかも既に固定されている ——
-`test/resolve.test.ts:184` の
-
-> `Y before X is what makes step-up work without a second horizontal pass`
-
-がまさにそれを主張しており、P-9-1 の表は
-「X 先にすると step-up が全く効かなくなる」を**実測で**確認している。
-
-**再び検討すべきなのは軸の順序が変わったときだけである。** そのとき上記テストが落ち、
-この節に導かれる。順序が立っている限り、ここに残作業は無い。
+Y → X → Z の順序は、水平フェーズが Y の解決前に体を止めることを防ぐ。
+そのうえで、step-up に必要な水平再試行は `tryStepUp` に分離されている。
+`test/resolve.test.ts` は片軸・両軸の再試行、持ち上げ後の衝突による棄却、
+step height を超える段差の拒否を固定している。
 
 #### (b) sneak-edge（`clampSneakEdge`） —— **実装済み**
 
@@ -158,19 +162,19 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 `resolveBody` / `stepBody` の結果を変えないためである。呼び出し側は grounded かつ sneaking の
 ときだけ適用し、`hasGroundSupport` callback 内でゲーム値の探索深度を使う。
 
-到達時に行うこと:
+現在のリリース前チェック:
 
-1. `vitest.config.ts` と `.github/workflows/ci.yaml` で 99% 閾値を有効化
-2. ビルド / publish パイプラインを追加（`versioning.md` §3）
-3. `0.x` → `1.0.0`（mc-sim が実際に消費して契約を確認したら）
+1. `pnpm verify` で型検査・lint・通常テスト・カバレッジ・ビルド・package export smoke を実行する
+2. `pnpm pack --dry-run` で `dist/` を含む公開ファイルだけを確認する
+3. `0.x` → `1.0.0` の昇格は、mc-sim が実際に消費して契約を確認した後に判断する
 
 ## 5. CI
 
-`.github/workflows/ci.yaml` は `pnpm verify` の3ゲート(typecheck/lint/test)に加え、
-カバレッジと changeset の付け忘れ検出を独立したステップとして job に展開したものである
-（失敗箇所が step 名で分かるようにするため。TEST_STANDARD.md §1・§3）:
+`.github/workflows/ci.yaml` は `pnpm verify` の各ゲートを独立したステップとして job に展開し、
+カバレッジと changeset の付け忘れ検出も加えたものである
+（失敗箇所が step 名で分かるようにするため。組織共通のテスト標準 §1・§3）:
 
-1. Checkout(`actions/checkout`、commit SHA 固定。SUPPLY_CHAIN.md)
+1. Checkout（`actions/checkout`、commit SHA 固定。組織共通のサプライチェーン標準）
 2. Setup pnpm（`pnpm/action-setup`、commit SHA 固定）
 3. Setup Node.js 24（`actions/setup-node`、commit SHA 固定。pnpm キャッシュ有効）
 4. `pnpm install --frozen-lockfile --ignore-scripts`
@@ -178,9 +182,10 @@ Y → X → Z の順に解決し、**Y は無条件に最初に走る**（水平
 6. `pnpm lint`
 7. `pnpm test`
 8. `pnpm changeset status --since=main` —— ユーザー向け変更に changeset の付け忘れがないか検出する
-   (RELEASE_STANDARD.md §1.2)
-9. `pnpm test:coverage` —— **ハードゲート**。4 指標 99% のしきい値を下回れば非ゼロ終了する（§3）
-10. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定。7 日保持）
+   （組織共通のリリース標準 §1.2）
+9. `pnpm test:coverage` —— **ハードゲート**。4 指標 100% のしきい値を下回れば非ゼロ終了する（§3）
+10. `pnpm build` —— 公開する ESM・型宣言・source map が生成できることを確認する
+11. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定。7 日保持）
 
 `pnpm check:deps` と `pnpm api:check` の2ステップは、それぞれの裏付けとなる
 `scripts/check-dependency-whitelist.ts` と `api-lock.md` / `scripts/api-lock.ts` が
@@ -194,6 +199,16 @@ org 標準への移行で全廃されたため、CI から削除済みである�
 | `test/resolve.test.ts` | **軸順序（継ぎ目・ledge・step-up・壁ずり・入隅）**、ground clamp とその順序（**逆順のコストを `g·dt²` で固定**）、天井、壁が床にならないこと、**着地状態が P-6 の反例と一致すること**、1000 フレームの無ドリフト、固定点、**めり込みゼロ**（起伏地形 / 任意高度からの落下 / 終端速度）、**エネルギー非増加**（および step-up がその唯一の例外であること）、**補正量の上限**、決定論と順序非依存、**問い合わせセルが箱の中に収まること**、形状注入 |
 | `test/integrate.test.ts` | deltaTime クランプの厳密一致 / 上下限 / NaN / 初回フレーム、**`DeltaTimeSecs` ブランドが kernel の refinement であること**（有限・非負。ゼロも 30 も通る）、**`clampDeltaTime` の出力が常に安全域に入ること**（プロパティテスト）、semi-implicit Euler の順序、終端速度、**トンネリング不変条件**、static/kinematic 不変、決定論と順序非依存、DDA（原点セル除外・法線・maxDistance・退化入力・訪問順・決定論） |
 | `test/public-api.test.ts` | barrel の export、実測定数の固定、**ブランドが kernel 準拠でクランプが境界にあること**、終端速度と delta 上限の導出関係、`CONTACT_EPSILON` の桁 |
+| `test/entity-collision.test.ts` | entity と block の broad/narrow phase、衝突形状、接触法線、決定論 |
+| `test/environment.test.ts` | block query、形状 query、空気・未知ブロック・流体状態の環境境界 |
+| `test/falling-block.test.ts` | falling capability、支持 capability、空気・未ロードセル・未知セル・非支持ブロック直下の落下開始候補 |
+| `test/landing.test.ts` | 実移動距離ベースの落下距離累積と一回限りの着地衝撃 |
+| `test/fluid.test.ts` | 水・溶岩の fluid state と流体判定、kernel registry との整合 |
+| `test/kernel-world.test.ts` | mc-kernel の block id / properties / shape を参照するワールド境界 |
+| `test/movement.test.ts` | body の移動、衝突解決、step-up、sneak-edge の組み合わせ |
+| `test/projectile.test.ts` | projectile の積分、衝突、block/entity hit、voxel raycast |
+| `test/explosion.test.ts` | 爆発の抵抗・遮蔽・上限・決定論、entity effect、commit projection |
+| `test/primed-tnt.test.ts` | fuse の既定値・正規化・bounded advance・detonate-once・爆発 planner 再利用・commit projection |
 
 > **「`DeltaTimeSecs` の構築拒否」は現在テストしていない。** ブランドはクランプ範囲を要求しない
 > ——要求しても意味が無かったからである（[design-notes.md](./design-notes.md) P-5、
@@ -201,60 +216,17 @@ org 標準への移行で全廃されたため、CI から削除済みである�
 > クランプが**何を返すか**を別々のテストが主張している。
 
 `test/check-dependency-whitelist.test.ts`(16 リポジトリ roster の完全性・非循環・推移閉包の拒否
-などを検査していたテスト)は、裏付けの `scripts/check-dependency-whitelist.ts` が org 標準への
-移行で全廃されたため、同時に削除した。代替は `.oxlintrc.json` の `no-restricted-imports`
-(DEPENDENCY_POLICY.md)で、これはテストコードではなく lint 設定なのでこの一覧には現れない。
+などを検査していたテスト)は、裏付けの `scripts/check-dependency-whitelist.ts` が組織共通の
+標準移行に伴って廃止されたため、同時に削除した。代替は `.oxlintrc.json` の
+`no-restricted-imports`（組織共通の依存ポリシー）で、これはテストコードではなく lint 設定なので
+この一覧には現れない。
 
-## 7. リゾルバのテストは mutation で確かめてある
+## 7. テストの健全性
 
-「落ちるはずのテストが実際に落ちるか」を、対象のコードを壊して確認した。
-**102 本 → 133 本**（`test/resolve.test.ts` が 29 本、`test/coordinates.test.ts` が +2 本）。
+軸順序、接触 skin、ground clamp、支持判定、step-up、swept collision などの
+不変条件について、対象実装を意図的に変更したときに対応するテストが失敗することを
+確認している。検証用の変更は作業ツリーに残していない。
 
-| # | 壊した箇所 | 落ちたテスト |
-| --: | --- | --: |
-| 1 | 水平フェーズを Y の**前**に動かす | 4 |
-| 2 | `collidesWith` から contact skin を外す（`> CONTACT_EPSILON` → `> 0`） | 3 |
-| 3 | ground clamp の**位置**に epsilon を足す（`floorTop + halfHeight + CONTACT_EPSILON`） | **16** |
-| 4 | 床判定の reach 上限を外す（重なっている全ブロックを床とみなす） | 6 |
-| 5 | `isRestingOn` を旧・片側実装に戻す | 2 |
-| 6 | `clampAxis` の face-span ガードを外す | 2 |
-| 7 | `stepBody` を「解決 → 積分」の順にする | 16 |
-| 8 | `isGrounded` をプローブでなく Y フェーズのフラグにする | 2 |
-| 9 | ground clamp で `vy = 0` をやめる | 6 |
-| 10 | Z フェーズを X 補正**前**の箱に対して走らせる | 1 |
-
-**6・8・10 は最初 1 本以下しか落とせず、テストのほうを直した。**
-
-- 6 と 10 は当初どちらも「入隅」の 1 シナリオに相乗りしていた。
-  6 には不変条件そのもの（`no phase moves a body further than that phase can justify`）を書き、
-  10 には**壁ずり**という別シナリオ（`a body slides along a wall`）を用意した。
-  入隅のケースは X 補正の有無で答えが変わらないので、10 を区別できていなかった。
-- 8 は固定点のプロパティテストが**空中の body ばかり生成していた**ため素通りしていた。
-  接地フラグの新旧が分かれるのは「実際に着地した body をもう一度解決したとき」だけなので、
-  生成器に積分を 1 回挟むよう直した。
-
-mutation が 1 本しか落とせないときは、テストが**シナリオを**押さえていて
-**不変条件を**押さえていない兆候である、というのが今回の教訓である。
-
-## 直前のカバレッジ拡張について — コミットメッセージの数字が誤っている
-
-`test: cover the code the suites were walking past` のコミットメッセージは
-「added 107 tests」と書いているが、**正しくは 27 本**である
-(mc-noise 8 + mc-meshing 13 + mc-physics 6)。本リポジトリの実測は **96 → 102**。
-
-107 は 1 日古いレビューの baseline (53/53/68) から引いた差であり、
-その時点から 3 リポジトリはすでに 79/79/96 まで育っていた。
-16 リポジトリ合計も 2,771 → 2,798 で、差は 27 と一致する。
-
-**この誤りをここに残すのは、それが本プロジェクトで最も多く記録されている欠陥だからである** ——
-「結論は正しく、証拠が間違っている」。`CONTINENTALNESS_CONTRAST`、`SETTLE_TICK_LIMIT`、
-mc-meshing の HashSet 主張、`setDayLength → setTimeOfDay` の作業例に続く 5 例目で、
-しかも**テストカバレッジを説明する文章の中で**やっている。
-default branch は `non_fast_forward` で保護されているため履歴は書き換えられない。
-書き換えられないこと自体は正しい設計であり、だから訂正はここに置く。
-
-> **6 例目が出た。** `design-notes.md` P-3 が「積分と解決の順序を崩すと物体は床の上に**浮く**」と
-> 書いていたが、リゾルバを実装して測ると**沈む**（1 フレーム分の落下距離ぶん、恒久的に）。
-> 順序が load-bearing だという結論は正しく、症状の記述だけが逆だった。
-> 「浮く」は P-1 のバグクラス名からの引き写しと思われる。訂正は P-3 の中に置き、
-> 実測した側（沈む、`g·dt²`）を回帰テストが assert している。
+新しいテストは、代表的なシナリオだけでなく、実装の順序や境界を直接検出する不変条件も
+含める。これにより、テストが通ることだけでなく、壊れた実装をテストが検出することも
+リゾルバの変更時に確認できる。

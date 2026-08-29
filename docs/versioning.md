@@ -2,7 +2,7 @@
 
 - 上位仕様: plan.md §6 Step 0 / Step 3、§9
 
-## 1. 現在のバージョン: `0.1.0`
+## 1. 現在のバージョン: `0.1.7`
 
 **1.0.0 にするのは、上流の消費者が実際にこのリポジトリを消費して契約を確認したときである。**
 
@@ -16,45 +16,41 @@
 「新規構築初期は全界面が高 churn」を挙げ、その対策として
 「npm 公開を遅らせ dev-meta workspace で開発」を指定しているのはこの理由による。
 
-## 2. なぜ今は publish しないのか（plan.md §6 Step 0-2）
+## 2. 現在の公開方針（plan.md §6 Step 0-2）
 
 **旧方針(廃止済み)**: かつては「npm公開・バージョンbump運用は界面安定（4週間APIロック無変更）まで
 開始しない」という、`api-lock.md` の最終更新日からの経過日数を起点にした freeze-clock 方式だった。
-`api-lock.md` / `scripts/api-lock.ts` は org 標準から全廃され(API_STANDARD.md §4)、この日数計測
+`api-lock.md` / `scripts/api-lock.ts` は org 標準から全廃され（組織共通のAPI標準 §4）、この日数計測
 ベースの自動ゲートも合わせて廃止した。
 
 **現行方針**: 1.0.0 への昇格に代替の自動ゲート(日数・利用実績などの定量基準)は設けず、
-maintainer(take)による裁量判断のみで行う(RELEASE_STANDARD.md §4.2)。0.x の間 publish
-しない理由そのもの(下記)は変わらない。
-
-16 リポジトリが互いを pin したバージョンで参照し合っている状態で界面が動くと、
-1 つの変更が bump の連鎖を引き起こす。初期は全界面が高 churn なので、これは常時起きる。
-
-対策は **mc-dev-meta workspace**（plan.md §6 Step 0-2）:
-16 リポジトリの clone を `repos/` 配下に並べて 1 つの pnpm workspace として束ねる薄いリポジトリ。
-開発中は `workspace:*` 解決でモノレポ同等の DX が得られ、bump 連鎖が構造的に発生しない。
+maintainer による裁量判断のみで行う（組織共通のリリース標準 §4.2）。0.x の間は、下流の
+消費者が公開契約を実際に確認するまで互換性を保証しない。
 
 したがって現在の `package.json` は:
 
-- `dependencies` に `effect` だけを宣言する。`@nerima-games/*` は 1 つも入っていない。
-- `exports` は **TypeScript ソースを直接指す**（`./src/index.ts`）。ビルド成果物ではない。
-- ビルド / publish パイプラインは存在しない。
+- `dependencies` に `mc-kernel@0.4.0` と `effect` を直接宣言し、共有データ契約を重複定義しない。
+- `exports` は `dist/index.js` と `dist/index.d.ts` を指し、利用者の実行時に TypeScript
+  ソースを読み込まない。
+- `prepublishOnly` は `pnpm verify` を実行し、公開前に型・lint・テスト・カバレッジ・ビルド・package export smoke を検証する。
+- 実際の publish はリリース担当が行い、通常の CI は公開せず、成果物の生成とパッケージ内容を検証する。
 
-## 3. ビルドと publish は完成条件到達時に追加する
+## 3. ビルドと publish
 
-`tsconfig.base.json` は `"noEmit": true` である（コメントで理由を明記している）。
-`.gitignore` の `dist/` には `# Build outputs (none yet — the build pipeline is added at completion)` と書いてある。
+`tsconfig.base.json` は開発時の型検査用に `"noEmit": true` である。
+出荷用の `tsconfig.build.json` は型宣言を `dist/` に出力し、esbuild が ESM 実行成果物と
+source map を生成する。`dist/` は生成物なので git 管理しない。
 
-完成条件（`testing.md` §4）に到達した時点で追加するもの:
+現在の出荷経路:
 
-1. `tsconfig.build.json` の `noEmit` を外し、`dist/` に `.js` + `.d.ts` + source map を出す
-2. `package.json` の `exports` を `dist/` に向ける（`files` も同様）
-3. `prepublishOnly` で `pnpm verify` を強制
-4. CI に publish job を追加（`.github/workflows/ci.yaml` は現在 typecheck / lint / test / coverage /
-   changeset status のみ。publish ジョブの設計は RELEASE_STANDARD.md §3 を参照）
+1. `pnpm build` で `dist/` に `.js` + `.d.ts` + source map を出す
+2. `package.json` の `exports` と `files` は `dist/` を指す
+3. `prepublishOnly` で `pnpm verify` を強制する
+4. CI で `pnpm build` まで確認する。publish job は認証・リリース承認を伴うため CI の通常 job には置かない
 
 `@changesets/cli` はバージョニング・CHANGELOG 生成の入り口として既に導入済みである
-（`.changeset/config.json`、RELEASE_STANDARD.md §1）。残っているのはビルド/publish パイプラインのみ。
+（`.changeset/config.json`、組織共通のリリース標準 §1）。変更内容に応じて changeset を追加し、
+リリース担当がバージョン更新と publish を行う。
 
 ## 4. 公開先: GitHub Packages
 
@@ -77,22 +73,21 @@ Step 0 の実装として GitHub Packages を選んである。組織 `nerima-ga
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 ```
 
-（本リポジトリの `.npmrc` には**この設定は入っていない**。今は誰も `@nerima-games/*` を
-解決しないためである。現在の `.npmrc` の中身は `fast-check` / `pure-rand` の hoist だけで、
-これは `effect/FastCheck` の型解決のために必要な設定である。）
+（本リポジトリの `.npmrc` には認証情報を置かない。CI は workflow 内で読み取り専用の認証を
+設定し、ローカルの `.npmrc` は `fast-check` / `pure-rand` の hoist だけを管理する。）
 
 ## 5. 何が破壊的変更なのか
 
 > **`0.x` の間の読み替え（全 16 リポジトリ共通の方針）**
 >
-> 本リポジトリは `0.1.0` であり、下流が契約を実際に消費して確認するまで `0.x` から出ない。
-> **semver では `0.x` の破壊的変更は major bump ではなく minor bump である**（`0.1.0` → `0.2.0`）。
+> 本リポジトリは `0.1.7` であり、下流が契約を実際に消費して確認するまで `0.x` から出ない。
+> **semver では `0.x` の破壊的変更は major bump ではなく minor bump である**（`0.1.7` → `0.2.0`）。
 > したがって以下の MAJOR / MINOR / PATCH は **`1.0.0` 到達後の分類**であり、
 > `0.x` の間は次のように読み替える。
 >
 > | 分類 | `1.0.0` 到達後 | `0.x` の間（現在） |
 > | --- | --- | --- |
-> | MAJOR | major bump | **minor bump**（`0.1.0` → `0.2.0`） |
+> | MAJOR | major bump | **minor bump**（`0.1.7` → `0.2.0`） |
 > | MINOR | minor bump | patch bump |
 > | PATCH | patch bump | patch bump |
 >
@@ -136,16 +131,16 @@ plan.md §6 Step 0-3 は「初回コミットに ... APIロックファイル（
 
 **この仕組みは org 標準として全廃された。** `api-lock.md` / `scripts/api-lock.ts` /
 `test/api-lock.test.ts` は削除済みで、`pnpm api:check` / `pnpm api:update` も
-`package.json#scripts` から削除済みである。理由と経緯は API_STANDARD.md §4 が正本であり、
+`package.json#scripts` から削除済みである。理由と経緯は組織共通のAPI標準 §4 が正本であり、
 ここでは繰り返さない。要点だけ書くと:
 
 - 「公開 API」とは `src/index.ts` が re-export するものそのものであり、それ以上でもそれ以下でもない
-  (API_STANDARD.md §1)。
-- 破壊的変更かどうかの判定は、自動スナップショット/diff ツールではなく、API_STANDARD.md §3 の基準に
+  （組織共通のAPI標準 §1）。
+- 破壊的変更かどうかの判定は、自動スナップショット/diff ツールではなく、組織共通のAPI標準 §3 の基準に
   基づく**人間のレビュー**で行う。上の §5 の MAJOR/MINOR/PATCH 分類がその判断材料である。
 - `@microsoft/api-extractor` を含む新しいスナップショット/diff ツールの再導入は、
   `Context.Tag` のサービスクラスが「forgotten export」として写らない欠陥が実測されていたため、
-  org として不採用と決定済みである(API_STANDARD.md §4 の歴史的経緯)。
+  org として不採用と決定済みである（組織共通のAPI標準 §4 の歴史的経緯）。
 
 `test/public-api.test.ts` は残っているし、消す理由もない。あれは barrel の export 名を
 明示的に列挙してピン留めし、**名前の消失**を実行時に落とすテストである。`GRAVITY_Y` /

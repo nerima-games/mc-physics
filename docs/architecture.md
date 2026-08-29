@@ -80,9 +80,9 @@ graph BT
 
 実線 = 実行時依存（`dependencies`）、点線 = プレビュー起動時のみ（`devDependencies`）。
 plan.md §2.1 は 15 リポジトリを図示しているが、Step 0 で **mc-dev-meta**（開発用 workspace、実行時依存なし）が加わるため、
-org 全体の roster は **16 行**である(DEPENDENCY_POLICY.md §1。かつては
+org 全体の roster は **16 行**である（組織共通の依存ポリシー §1。かつては
 `scripts/check-dependency-whitelist.ts` がこの roster を保持していたが、org 標準への移行で
-全廃され、DEPENDENCY_POLICY.md がグラフの正典を引き継いだ)。
+全廃され、組織共通の依存ポリシーがグラフの正典を引き継いだ）。
 
 ## 4. このリポジトリの位置
 
@@ -91,12 +91,14 @@ org 全体の roster は **16 行**である(DEPENDENCY_POLICY.md §1。かつ�
 - **親（このリポジトリが依存してよい先）**: `mc-kernel` のみ。
 - **子（このリポジトリに依存する側）**: `mc-sim` ただ 1 つ。
 
-mc-physics がワールドに問うことは 1 つしかない —— 「このセルは solid か、どの形状で当たるか」。
-その答えは注入されたコールバックとして受け取るので、ワールドにもチャンクマネージャにも
-レンダラにも依存しない。
+mc-physics がワールドに問うことは 1 つしかない —— 「このセルの
+`BlockProperties` は何か」。`null` は衝突しないセルを表す。状態依存・複合形状は別の
+コールバックで注入できるので、ワールドにもチャンクマネージャにもレンダラにも依存しない。
 
 この注入方式は、plan.md §3.4 の「ブロックID名指し禁止」を強制可能にする仕組みでもある。
-呼び出し側が能力フラグを解決し、mc-physics は boolean と形状しか見ない。
+チャンク座標から ID を読む処理と state の解決は呼び出し側に残るが、`kernel-world` は
+mc-kernel の registry を直接使って `BlockProperties | null` を返せる。mc-physics は
+kernel の `collisionShape` と必要なら注入された形状だけを見る。
 参照実装は逆をやっていた（`packages/game/domain/block-collision-predicates.ts:16-42` の
 手書き denylist `PASSABLE_BLOCK_IDS`）。詳細は `responsibility.md` と `design-notes.md`。
 
@@ -112,7 +114,7 @@ mc-physics がワールドに問うことは 1 つしかない —— 「この�
 mc-sim の `InventoryService` を経由して実現する。
 
 このルールは各体験モジュールの `.oxlintrc.json` の `no-restricted-imports` が個別に強制する
-(DEPENDENCY_POLICY.md §2 ルール2)。かつては 16 リポジトリ共通の
+（組織共通の依存ポリシー §2 ルール2）。かつては 16 リポジトリ共通の
 `scripts/check-dependency-whitelist.ts` の roster に埋め込まれ、
 `test/check-dependency-whitelist.test.ts` の「has no edges between experience modules」が
 アサーションとして保持していたが、この2ファイルは org 標準への移行で全廃された(§6 参照)。
@@ -135,7 +137,7 @@ mc-playground-kit は「ミニ平地ワールド + カメラ + レンダラ + �
 - `mc-playground-kit` が `dependencies` に現れる、または出荷ソース
   （`src/index.ts` と `src/domain/`）から import されることは、その消費側リポジトリの
   `.oxlintrc.json` の `no-restricted-imports` が禁止する
-  (DEPENDENCY_POLICY.md §3。かつては `check-dependency-whitelist.ts` の
+  （組織共通の依存ポリシー §3。かつては `check-dependency-whitelist.ts` の
   `DEV_ONLY_PACKAGES`、rule 6 が同じ役割を担っていた)。
 - devDependency は実行時の辺を作らないので、循環にも参加しない。
 
@@ -181,25 +183,24 @@ THREE カメラはそのミラーである（plan.md §3.8）。参照実装は 
 
 ## 6. 依存の実効機構（§2.3-5、廃止と移行）
 
-**`scripts/check-dependency-whitelist.ts`(+ `test/check-dependency-whitelist.test.ts` +
-`pnpm check:deps`)は org 標準への移行に伴い全廃された。** これは 16 リポジトリ共通の
+**`scripts/check-dependency-whitelist.ts`（+ `test/check-dependency-whitelist.test.ts` +
+`pnpm check:deps`）は組織共通の標準移行に伴い廃止された。** これは 16 リポジトリ共通の
 テンプレートで、移植時に書き換えるのは冒頭で囲ってある `REPOSITORY_POLICY` の
-`thisPackage` だけでよい設計だったが、PACKAGE_STANDARD.md「`scripts/check-dependency-whitelist.ts`
-の廃止」の決定により削除済みである。
+`thisPackage` だけでよい設計だったが、組織共通のパッケージ標準で廃止が決まり、削除済みである。
 
 **代替は各リポジトリの `.oxlintrc.json` に書く `no-restricted-imports` である**
-(DEPENDENCY_POLICY.md §5)。旧スクリプトが担っていたルールのうち、この移行後にどう
+（組織共通の依存ポリシー §5）。旧スクリプトが担っていたルールのうち、この移行後にどう
 担保されるかを以下に示す。
 
 | ルール | 旧: check-dependency-whitelist.ts | 新: .oxlintrc.json |
 | --- | --- | --- |
 | 許可されない `@nerima-games/*` import の禁止 | roster 全体を持つ共通スクリプトが判定 | 自リポジトリの `no-restricted-imports`(`patterns`/`group`)が判定。mc-physics は Tier1 なので `mc-kernel` を除く全 `@nerima-games/*` を禁止する |
-| 循環禁止 | `findCycles` が全リポジトリの roster に対して判定 | 個々の `.oxlintrc.json` では検出できない(自リポジトリの許可先しか見えない)。DEPENDENCY_POLICY.md がグラフの正典として非循環性を保証する |
+| 循環禁止 | `findCycles` が全リポジトリの roster に対して判定 | 個々の `.oxlintrc.json` では検出できない(自リポジトリの許可先しか見えない)。組織共通の依存ポリシーがグラフの正典として非循環性を保証する |
 | 推移閉包の禁止 | `findTransitivePath` が判定 | 同上。`no-restricted-imports` は直接 import のみを見るので、そもそも許可されていない先への import は直接 import 時点で弾かれる |
-| kernel は例外 | ハードコードされた例外処理 | `no-restricted-imports` の `patterns[].group` に gitignore 風の否定パターン(`!@nerima-games/mc-kernel`)を書いて表現(正規表現の否定先読みは oxlint 1.76.0 の regex エンジンが未実装で使えないと判明した) |
-| 宣言と実体の一致(`package.json` と import の一致) | `checkDeclaredDependencies` が判定 | oxlint では表現できない。org 標準としては要求しない(PACKAGE_STANDARD.md) |
+| kernel は例外 | ハードコードされた例外処理 | `no-restricted-imports` の `patterns[].group` に gitignore 風の否定パターン(`!@nerima-games/mc-kernel`)を書いて表現(正規表現の否定先読みは oxlint 1.75.0 の regex エンジンが未実装で使えないと判明した) |
+| 宣言と実体の一致(`package.json` と import の一致) | `checkDeclaredDependencies` が判定 | oxlint では表現できない。組織共通のパッケージ標準としては要求しない |
 | kit は devDependency 専用 | `DEV_ONLY_PACKAGES` | 消費側リポジトリの `.oxlintrc.json` に個別のパターンとして書く(mc-physics は kit を使わないため該当なし) |
-| `Date.now()` 禁止 | `findBannedTimeSources` | oxlint では表現できない(oxlint 1.76 時点でも `no-restricted-syntax` 等が未実装。`.oxlintrc.json` 冒頭コメント参照)。org 標準としては代替を要求せず、現時点で自動検出する仕組みは無い |
+| シミュレーションコードの時計アクセス禁止 | `findBannedTimeSources` | oxlint では表現できない(oxlint 1.75 時点でも `no-restricted-syntax` 等が未実装。`.oxlintrc.json` 冒頭コメント参照)。`src/` はレビューで担保し、計測専用の `scripts/benchmark.mjs` は例外として `performance.now()` を使う |
 
 **`mc-physics` の現在の `.oxlintrc.json`**:
 
@@ -207,35 +208,34 @@ THREE カメラはそのミラーである（plan.md §3.8）。参照実装は 
 "no-restricted-imports": ["warn", {
   "patterns": [{
     "group": ["@nerima-games/**", "!@nerima-games/mc-kernel", "!@nerima-games/mc-kernel/**"],
-    "message": "mc-physics is a Tier1 library (DEPENDENCY_POLICY.md) and must not depend on any other @nerima-games/* package. mc-kernel is universally importable and exempt."
+    "message": "mc-physics is a Tier1 library and must not depend on any other @nerima-games/* package. mc-kernel is universally importable and exempt."
   }]
 }]
 ```
 
 `group` はイグノアファイル風(gitignore-style)のグロブで、`!` プレフィックスが例外を表す。
 以前は `regex` 一本で `^@nerima-games/(?!mc-kernel\b).+`(否定先読み)を使っていたが、oxlint
-1.76.0 のレギュラーエクスプレッションエンジンは先読み(lookahead)を実装しておらず、この
+1.75.0 のレギュラーエクスプレッションエンジンは先読み(lookahead)を実装しておらず、この
 パターンは**常にマッチしない**(エラーにもならず静かに無効化される)ことを実際に確認した:
 `@nerima-games/mc-worldgen` を import するファイルに対して 0 件の診断が出た。`group` 形式に
 切り替えたところ、禁止対象(`mc-worldgen` のルートとサブパス)は検出し、例外
 (`mc-kernel` のルートとサブパス)は素通しし、`mc-kernel-evil` のような紛らわしい名前は
 引き続き検出することを確認済み。
 
-## 7. スケルトン段階の依存宣言について
+## 7. 依存宣言と公開成果物
 
-**現時点で `package.json` の `dependencies` は `effect` だけである。**
-`@nerima-games/mc-kernel` は入っていない。理由は 2 つ:
+**`package.json` の `dependencies` は `@nerima-games/mc-kernel@0.4.0` と `effect` である。**
+mc-kernel の共有データを直接利用し、同じ値オブジェクトやブロック特性をこのリポジトリへ複製しない。
 
-1. まだ何も publish されていない（bottom-up に publish してから pin する方式）。
-2. スケルトンには import すべき兄弟コードがまだ存在しない。
+TypeScript のソースを実行時に公開するのではなく、`pnpm build` で ESM の `dist/index.js` と
+型宣言・source map を生成し、`package.json` の `exports` / `files` は `dist` に固定する。
 
-意図されたグラフは DEPENDENCY_POLICY.md(org 共通の正典)と本ドキュメントに記録されている。
-グラフは仕様であり、最初の publish より前にこの記録があること自体が、
-将来の循環検出やレビューを意味あるものにする。
+依存グラフは組織共通の依存ポリシー（org 共通の正典）と本ドキュメントに記録されている。
+公開操作そのものはリリース担当者の手順に残し、パッケージ生成と `prepublishOnly` の検証はこのリポジトリで担保する。
 
 ## 参照
 
 - `responsibility.md` — このリポジトリの責務と、意図的に含めないもの
 - `public-api.md` — 公開 API と参照実装での裏付け
 - `design-notes.md` — 設計注意とその回帰テスト名
-- `versioning.md` — 0.x → 1.0.0 の方針と publish
+- `versioning.md` — 0.x → 1.0.0 の方針と公開成果物

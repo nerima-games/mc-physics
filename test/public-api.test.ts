@@ -6,13 +6,11 @@
  * It also pins the constants that plan.md §3.4 records as measured facts about
  * the reference implementation, so that changing one is a deliberate act.
  */
-import { describe, expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { describe, expect, it } from 'vitest'
 import * as physics from '../src/index'
 
 describe('public API surface', () => {
-  it.effect('re-exports every value mc-sim is expected to import', () =>
-    Effect.sync(() => {
+  it('re-exports every public runtime value', () => {
       const expected = [
         // coordinates
         'FootY',
@@ -26,8 +24,12 @@ describe('public API surface', () => {
         'vec3',
         'entityAABB',
         'blockAABB',
+        'aabbsOfBlockShape',
+        'aabbOfCollisionShape',
         'FULL_BLOCK_SHAPE',
         'SLAB_SHAPE',
+        'CACTUS_SHAPE',
+        'PRESSURE_PLATE_SHAPE',
         'intersects',
         'penetrationY',
         'collidesWith',
@@ -56,23 +58,58 @@ describe('public API surface', () => {
         'clampSneakEdge',
         // dda
         'voxelRaycast',
+        // projectile
+        'ARROW_AIR_DRAG',
+        'ARROW_GRAVITY',
+        'ARROW_MAX_LIFETIME_SECONDS',
+        'ARROW_SHOOTER_GRACE_SECONDS',
+        'ARROW_WATER_DRAG',
+        'launchArrow',
+        'stepArrow',
+        // movement
+        'applyMovementInput',
+        'applyKnockback',
+        // kernel-world
+        'blockAtFromKernel',
+        'blockPropertiesAtFromKernel',
+        'blockEnvironmentFromKernel',
+        'resolveOptionsFromKernel',
+        'fallingBlockCandidateAt',
+        // landing
+        'createFallTrackingState',
+        'resetFallTrackingState',
+        'advanceFallTracking',
+        // environment
+        'sampleSurfaceEffects',
+        'applySurfaceMotion',
+        'sampleBlockHazards',
+        // fluid
+        'sampleFluidEffects',
+        'applyFluidMotion',
+        // explosion and primed TNT
+        'planExplosion',
+        'applyExplosionPlan',
+        'DEFAULT_EXPLOSION_LIMITS',
+        'DEFAULT_TNT_FUSE_SECS',
+        'MAX_TNT_FUSE_ADVANCE_SECS',
+        'primeTnt',
+        'planPrimedTnt',
+        'applyPrimedTntPlan',
+        // entity interaction
+        'detectEntityCollisions',
+        'resolveEntityCollisions',
+        'DEFAULT_ENTITY_COLLISION_OPTIONS',
       ]
-      const actual = new Set(Object.keys(physics))
-      for (const name of expected) {
-        expect(actual.has(name)).toBe(true)
-      }
-    }),
-  )
+      expect(Object.keys(physics).sort()).toEqual([...expected].sort())
+  })
 })
 
 describe('the measured constants plan.md §3.4 carries over', () => {
-  it.effect('pins the delta clamp bounds and the first-frame delta', () =>
-    Effect.sync(() => {
+  it('pins the delta clamp bounds and the first-frame delta', () => {
       expect(physics.MIN_DELTA_SECS).toBe(0.001)
       expect(physics.MAX_DELTA_SECS).toBe(0.05)
       expect(physics.FIRST_FRAME_DELTA_SECS).toBe(0.016)
-    }),
-  )
+  })
 
   // REGRESSION: the clamp bounds above are the INTEGRATOR's safe range, and the
   // `DeltaTimeSecs` brand deliberately does not enforce them — it mirrors
@@ -81,8 +118,7 @@ describe('the measured constants plan.md §3.4 carries over', () => {
   // and are therefore one type to TypeScript. Pinned in the barrel as well as
   // in domain/delta-time.ts, because a consumer meets it through the barrel.
   // See domain/delta-time.ts for why the clamp belongs at the boundary instead.
-  it.effect('pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary', () =>
-    Effect.sync(() => {
+  it('pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary', () => {
       expect(physics.DeltaTimeSecs(0)).toBe(0)
       expect(physics.DeltaTimeSecs(30)).toBe(30)
       expect(() => physics.DeltaTimeSecs(-1)).toThrow()
@@ -90,33 +126,26 @@ describe('the measured constants plan.md §3.4 carries over', () => {
 
       expect(physics.isClampedDelta(physics.clampDeltaTime(30))).toBe(true)
       expect(physics.isClampedDelta(30)).toBe(false)
-    }),
-  )
+  })
 
-  it.effect('pins gravity, terminal velocity and the player half-extents', () =>
-    Effect.sync(() => {
+  it('pins gravity, terminal velocity and the player half-extents', () => {
       expect(physics.GRAVITY_Y).toBe(-9.82)
       expect(physics.TERMINAL_VELOCITY_Y).toBe(-32)
       expect(physics.PLAYER_HALF_WIDTH).toBe(0.3)
       expect(Number(physics.PLAYER_HALF_HEIGHT)).toBe(0.9)
-    }),
-  )
+  })
 
-  it.effect('keeps terminal velocity strictly inside what the delta cap allows the resolver to catch', () =>
-    Effect.sync(() => {
+  it('keeps terminal velocity strictly inside what the delta cap allows the resolver to catch', () => {
       // 1.8 / 0.05 = 36 is the largest safe magnitude; -32 leaves headroom.
       // Asserting the derivation, not just the number, so that changing either
       // constant without the other fails here.
       const bodyHeight = 2 * Number(physics.PLAYER_HALF_HEIGHT)
       expect(Math.abs(physics.TERMINAL_VELOCITY_Y)).toBeLessThan(bodyHeight / physics.MAX_DELTA_SECS)
       expect(physics.maxFallPerStep(physics.MAX_DELTA_SECS)).toBeLessThanOrEqual(bodyHeight)
-    }),
-  )
+  })
 
-  it.effect('the contact epsilon is far above the float error and far below anything perceivable', () =>
-    Effect.sync(() => {
+  it('the contact epsilon is far above the float error and far below anything perceivable', () => {
       expect(physics.CONTACT_EPSILON).toBeGreaterThan(Number.EPSILON * 1000)
       expect(physics.CONTACT_EPSILON).toBeLessThan(1e-6)
-    }),
-  )
+  })
 })

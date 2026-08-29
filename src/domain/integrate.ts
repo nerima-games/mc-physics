@@ -1,8 +1,7 @@
 /**
  * Semi-implicit Euler integration.
  *
- * FIRST CUT (叩き台). Integration is complete; the AABB collision resolver that
- * must run after it is the next piece of work — see README 現状.
+ * Integration is composed with AABB collision resolution by `stepBody`.
  *
  * ---------------------------------------------------------------------------
  * The order matters, twice over
@@ -39,7 +38,7 @@
  * `physics-resolve-runs-after-integrate`.
  */
 import { CentreY } from './coordinates'
-import type { DeltaTimeSecs } from './delta-time'
+import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 /** Reference gravity (`packages/game/application/game-state-support.ts:10`). */
 export const GRAVITY_Y = -9.82

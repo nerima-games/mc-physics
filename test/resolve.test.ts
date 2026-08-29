@@ -12,8 +12,9 @@
  *   physics-resolve-y-before-x
  *   physics-no-block-id-name-checks
  */
-import { describe, expect, it } from '@effect/vitest'
-import { Effect, FastCheck } from 'effect'
+import { describe, expect, it } from 'vitest'
+import { FastCheck } from 'effect'
+import { resolveBlockProperties, type BlockProperties, type CollisionShape } from '@nerima-games/mc-kernel'
 import {
   CACTUS_SHAPE,
   CONTACT_EPSILON,
@@ -22,7 +23,8 @@ import {
   PLAYER_HALF_HEIGHT,
   PLAYER_HALF_WIDTH,
   PRESSURE_PLATE_SHAPE,
-  SLAB_SHAPE,
+  aabbOfCollisionShape,
+  aabbsOfBlockShape,
   blockAABB,
   centreOfFoot,
   collidesWith,
@@ -41,9 +43,9 @@ import {
   resolveWorld,
   stepBody,
   stepWorld,
-  type IsBlockSolid,
   type ResolveOptions,
 } from '../src/domain/resolve'
+import { tryStepUp } from '../src/domain/resolve-support'
 
 const HALF_W = PLAYER_HALF_WIDTH
 const HALF_H = PLAYER_HALF_HEIGHT
@@ -59,15 +61,24 @@ const DT = clampDeltaTime(0.02)
 const REFERENCE_TOP_SPEED = 5.612 * 1.2
 
 /** Solid everywhere up to and including `topCell`; air above. A world floor. */
+type SolidPredicate = (bx: number, by: number, bz: number) => boolean
+
 const groundUpTo =
-  (topCell: number): IsBlockSolid =>
-  (_bx, by) =>
+  (topCell: number): SolidPredicate =>
+  (_bx, by, _bz) =>
     by <= topCell
 
-const withWorld = (isBlockSolid: IsBlockSolid, extra: Partial<ResolveOptions> = {}): ResolveOptions => ({
+const FULL_BLOCK_PROPERTIES = resolveBlockProperties({ collisionShape: 'full' })
+const propertiesFor = (collisionShape: CollisionShape): BlockProperties =>
+  resolveBlockProperties({ collisionShape })
+
+const propertiesAt = (isSolid: SolidPredicate) => (bx: number, by: number, bz: number): BlockProperties | null =>
+  isSolid(bx, by, bz) ? FULL_BLOCK_PROPERTIES : null
+
+const withWorld = (isSolid: SolidPredicate, extra: Partial<ResolveOptions> = {}): ResolveOptions => ({
   halfWidth: HALF_W,
   halfHeight: HALF_H,
-  isBlockSolid,
+  blockPropertiesAt: propertiesAt(isSolid),
   ...extra,
 })
 
@@ -92,12 +103,20 @@ const boxOf = (body: Body, halfHeight = HALF_H, halfWidth = HALF_W) =>
 const penetratesSomething = (body: Body, options: ResolveOptions): boolean => {
   const box = boxOf(body, options.halfHeight, options.halfWidth)
   for (let bx = Math.floor(box.minX) - 1; bx <= Math.floor(box.maxX) + 1; bx += 1) {
-    for (let by = Math.floor(box.minY) - 1; by <= Math.floor(box.maxY) + 1; by += 1) {
+      for (let by = Math.floor(box.minY) - 1; by <= Math.floor(box.maxY) + 1; by += 1) {
       for (let bz = Math.floor(box.minZ) - 1; bz <= Math.floor(box.maxZ) + 1; bz += 1) {
-        const shape = options.blockShapeAt?.(bx, by, bz) ?? null
-        const solid = shape !== null || options.isBlockSolid(bx, by, bz)
-        if (solid && collidesWith(box, blockAABB(bx, by, bz, shape ?? undefined))) {
-          return true
+        const shape = options.blockShapeAt === undefined
+          ? (() => {
+              const properties = options.blockPropertiesAt(bx, by, bz)
+              return properties === null ? null : aabbOfCollisionShape(properties.collisionShape)
+            })()
+          : options.blockShapeAt(bx, by, bz)
+        if (shape !== null) {
+          for (const part of aabbsOfBlockShape(shape)) {
+            if (collidesWith(box, blockAABB(bx, by, bz, part))) {
+              return true
+            }
+          }
         }
       }
     }
@@ -116,8 +135,7 @@ describe('sneak edge prevention', () => {
   const supported = (positionX: number, positionZ: number): boolean =>
     positionX <= supportLimit && positionZ <= supportLimit
 
-  it.effect('keeps movement on supported ground unchanged', () =>
-    Effect.sync(() => {
+  it('keeps movement on supported ground unchanged', () => {
       expect(
         clampSneakEdge(
           { x: insideSupport, z: insideSupport },
@@ -128,11 +146,9 @@ describe('sneak edge prevention', () => {
         x: insideSupport,
         z: supportLimit,
       })
-    }),
-  )
+  })
 
-  it.effect('clamps only the axis that would cross an unsupported edge', () =>
-    Effect.sync(() => {
+  it('clamps only the axis that would cross an unsupported edge', () => {
       expect(
         clampSneakEdge(
           { x: insideSupport, z: insideSupport },
@@ -143,11 +159,9 @@ describe('sneak edge prevention', () => {
         x: insideSupport,
         z: supportLimit,
       })
-    }),
-  )
+  })
 
-  it.effect('clamps both axes when each independent move loses support', () =>
-    Effect.sync(() => {
+  it('clamps both axes when each independent move loses support', () => {
       expect(
         clampSneakEdge(
           { x: insideSupport, z: insideSupport },
@@ -158,11 +172,9 @@ describe('sneak edge prevention', () => {
         x: insideSupport,
         z: insideSupport,
       })
-    }),
-  )
+  })
 
-  it.effect('does not query support for an axis that did not move', () =>
-    Effect.sync(() => {
+  it('does not query support for an axis that did not move', () => {
       const queries: Array<readonly [number, number]> = []
       const result = clampSneakEdge(
         { x: insideSupport, z: insideSupport },
@@ -175,13 +187,23 @@ describe('sneak edge prevention', () => {
 
       expect(result).toStrictEqual({ x: insideSupport, z: supportLimit })
       expect(queries).toStrictEqual([[insideSupport, supportLimit]])
-    }),
-  )
+  })
 })
 
 describe('standard non-cubic block shapes', () => {
-  it.effect('lands on the pressure plate top face rather than the cell top', () =>
-    Effect.sync(() => {
+  it('treats the kernel none shape as empty space', () => {
+      const options = withWorld(() => false, {
+        blockPropertiesAt: (bx, by, bz) => (bx === 0 && by === 0 && bz === 0 ? propertiesFor('none') : null),
+      })
+      const falling: Body = { ...standingOn(0), y: CentreY(Number(HALF_H) + 1 / 16 + 0.01), vy: -1 }
+
+      const stepped = stepBody(falling, DT, options, 0)
+
+      expect(stepped.isGrounded).toBe(false)
+      expect(stepped.body.y).toBeLessThan(falling.y)
+  })
+
+  it('lands on the pressure plate top face rather than the cell top', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 0 && by === 0 && bz === 0 ? PRESSURE_PLATE_SHAPE : null),
       })
@@ -192,11 +214,9 @@ describe('standard non-cubic block shapes', () => {
       expect(stepped.body.y).toBe(Number(HALF_H) + 1 / 16)
       expect(stepped.body.vy).toBe(0)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('allows movement before the cactus inset and clamps exactly at it', () =>
-    Effect.sync(() => {
+  it('allows movement before the cactus inset and clamps exactly at it', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
       })
@@ -210,19 +230,33 @@ describe('standard non-cubic block shapes', () => {
       expect(unobstructed.body.vx).toBe(1)
       expect(blocked.body.x).toBe(1 + 1 / 16 - HALF_W)
       expect(blocked.body.vx).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('resolves the same shaped-block input deterministically', () =>
-    Effect.sync(() => {
+  it('resolves the same shaped-block input deterministically', () => {
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0 ? CACTUS_SHAPE : null),
       })
       const body: Body = { ...standingOn(0), x: 0.75, y: CentreY(1.5), vx: 1 }
 
       expect(stepBody(body, DT, options, 0)).toStrictEqual(stepBody(body, DT, options, 0))
-    }),
-  )
+  })
+
+  it('resolves the nearest component of a compound block shape', () => {
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) => (bx === 1 && by === 1 && bz === 0
+          ? [
+              { minX: 0.75, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 },
+              { minX: 0, minY: 0, minZ: 0, maxX: 0.25, maxY: 1, maxZ: 1 },
+            ]
+          : null),
+      })
+      const body: Body = { ...standingOn(0), x: 0.5, y: CentreY(1.5), vx: 100 }
+
+      const result = stepBody(body, DT, options, 0)
+
+      expect(result.body.x).toBe(1 - HALF_W)
+      expect(result.body.vx).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -230,8 +264,7 @@ describe('standard non-cubic block shapes', () => {
 // ---------------------------------------------------------------------------
 
 describe('the axis order is Y, then X, then Z', () => {
-  it.effect('a body walking along flat ground crosses the seam between two floor blocks', () =>
-    Effect.sync(() => {
+  it('a body walking along flat ground crosses the seam between two floor blocks', () => {
       // THE test for the ordering, because it is the one whose failure is a
       // symptom rather than a crash: with X resolved first the player catches
       // on every block boundary and no single frame looks wrong.
@@ -251,11 +284,9 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.vx).toBe(REFERENCE_TOP_SPEED)
       expect(stepped.body.y).toBe(restingCentre(0))
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('and keeps crossing them: a hundred frames of walking travel the whole distance', () =>
-    Effect.sync(() => {
+  it('and keeps crossing them: a hundred frames of walking travel the whole distance', () => {
       // One frame proves the mechanism; a hundred proves nothing accumulates.
       // Under X-first this stops dead at 0.7 and never moves again.
       const options = withWorld((_bx, by) => by === 0)
@@ -270,11 +301,9 @@ describe('the axis order is Y, then X, then Z', () => {
 
       expect(body.x).toBeCloseTo(0.5 + 100 * REFERENCE_TOP_SPEED * DT, 9)
       expect(body.x).toBeGreaterThan(13)
-    }),
-  )
+  })
 
-  it.effect('Y before X: a body falling onto a ledge does not embed sideways', () =>
-    Effect.sync(() => {
+  it('Y before X: a body falling onto a ledge does not embed sideways', () => {
       // Carried across from the reference, which keeps the same invariant with
       // the same scenario (`packages/game/test/aabb-collision-edge-cases.test.ts:220`,
       // 'Y axis is resolved before X — player falling onto a ledge does not
@@ -297,18 +326,24 @@ describe('the axis order is Y, then X, then Z', () => {
       // X was never blocked: the body moved exactly as far as its velocity said.
       expect(stepped.body.vx).toBe(0.5)
       expect(stepped.body.x).toBe(0.5 + 0.5 * DT)
-    }),
-  )
+  })
 
-  it.effect('Y before X is what makes step-up work without a second horizontal pass', () =>
-    Effect.sync(() => {
+  it('Y before X is what makes step-up work without a second horizontal pass', () => {
       // A slab in the column ahead. The Y phase lifts the body onto it, so by
       // the time X runs there is nothing to collide with. Resolve X first and
       // the slab is a wall, which is the case the reference recovers with a
       // whole second horizontal pass (`aabb-collision.ts:303-318`).
       const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 1
       const options = withWorld((bx, by) => by === 0 || isSlab(bx, by), {
-        blockShapeAt: (bx, by) => (isSlab(bx, by) ? SLAB_SHAPE : null),
+        blockPropertiesAt: (bx, by, _bz) => {
+          if (isSlab(bx, by)) {
+            return propertiesFor('slab')
+          }
+          if (by === 0) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
         stepHeight: 0.6,
       })
       const walking = standingOn(0, { x: 0.85, vx: REFERENCE_TOP_SPEED })
@@ -320,17 +355,23 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.x).toBe(0.85 + REFERENCE_TOP_SPEED * DT)
       expect(stepped.body.vx).toBe(REFERENCE_TOP_SPEED)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('with no step height injected, the same slab is a wall', () =>
-    Effect.sync(() => {
+  it('with no step height injected, the same slab is a wall', () => {
       // The mechanism is here, the value is mc-sim's (docs/responsibility.md
       // §3). Default zero means the resolver on its own never lifts a body onto
       // anything it did not fall onto.
       const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 1
       const options = withWorld((bx, by) => by === 0 || isSlab(bx, by), {
-        blockShapeAt: (bx, by) => (isSlab(bx, by) ? SLAB_SHAPE : null),
+        blockPropertiesAt: (bx, by, _bz) => {
+          if (isSlab(bx, by)) {
+            return propertiesFor('slab')
+          }
+          if (by === 0) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
       })
       const walking = standingOn(0, { x: 0.85, vx: REFERENCE_TOP_SPEED })
 
@@ -339,11 +380,152 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.x).toBe(1 - HALF_W)
       expect(stepped.body.vx).toBe(0)
       expect(stepped.body.y).toBe(restingCentre(0))
-    }),
-  )
+  })
 
-  it.effect('Z is resolved against the X the previous phase corrected, so a body slides along a wall', () =>
-    Effect.sync(() => {
+  it('rejects a step when the raised retry still collides on X', () => {
+      const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 1
+      const isOverhead = (bx: number, by: number): boolean => bx === 1 && by === 2
+      const options = withWorld((bx, by) => by === 0 || isSlab(bx, by) || isOverhead(bx, by), {
+        blockPropertiesAt: (bx, by, _bz) => {
+          if (isSlab(bx, by)) {
+            return propertiesFor('slab')
+          }
+          if (by === 0 || isOverhead(bx, by)) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
+        stepHeight: 0.6,
+      })
+      const walking = standingOn(0, { x: 0.85, vx: REFERENCE_TOP_SPEED })
+
+      const result = stepBody(walking, DT, options)
+
+      expect(result.body.x).toBe(1 - HALF_W)
+      expect(result.body.vx).toBe(0)
+      expect(result.body.y).toBe(restingCentre(0))
+  })
+
+  it('rejects a step when the raised retry still collides on Z', () => {
+      const isSlab = (bz: number, by: number): boolean => bz === 1 && by === 1
+      const isOverhead = (bz: number, by: number): boolean => bz === 1 && by === 2
+      const options = withWorld((_bx, by, bz) => by === 0 || isSlab(bz, by) || isOverhead(bz, by), {
+        blockPropertiesAt: (_bx, by, bz) => {
+          if (isSlab(bz, by)) {
+            return propertiesFor('slab')
+          }
+          if (by === 0 || isOverhead(bz, by)) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
+        stepHeight: 0.6,
+      })
+      const walking = standingOn(0, { z: 0.85, vz: REFERENCE_TOP_SPEED })
+
+      const result = stepBody(walking, DT, options)
+
+      expect(result.body.z).toBe(1 - HALF_W)
+      expect(result.body.vz).toBe(0)
+      expect(result.body.y).toBe(restingCentre(0))
+  })
+
+  it('does not treat a shape above step reach as support', () => {
+      const body = standingOn(0)
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) =>
+          bx === 0 && by === 1 && bz === 0
+            ? { minX: 0, maxX: 1, minY: 0.25, maxY: 1, minZ: 0, maxZ: 1 }
+            : null,
+        stepHeight: 0.6,
+      })
+
+      const result = tryStepUp(
+        body,
+        body.y,
+        { blocked: true, position: body.x, velocity: 0 },
+        { blocked: false, position: body.z, velocity: 0 },
+        0,
+        options,
+      )
+
+      expect(result).toBeNull()
+  })
+
+  it('does not treat an epsilon-only horizontal contact as support', () => {
+      const body = standingOn(0)
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) =>
+          bx === 0 && by === 1 && bz === 0
+            ? {
+                minX: 0,
+                maxX: body.x - HALF_W + CONTACT_EPSILON / 2,
+                minY: 0,
+                maxY: 0.5,
+                minZ: 0,
+                maxZ: 1,
+              }
+            : null,
+        stepHeight: 0.6,
+      })
+
+      const result = tryStepUp(
+        body,
+        body.y,
+        { blocked: true, position: body.x, velocity: 0 },
+        { blocked: false, position: body.z, velocity: 0 },
+        0,
+        options,
+      )
+
+      expect(result).toBeNull()
+  })
+
+  it('rejects a backward step when the raised retry still collides on X', () => {
+      const body = standingOn(0, { vx: -1 })
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) =>
+          bx === 0 && by === 2 && bz === 0
+            ? { minX: 0, maxX: 0.5, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }
+            : null,
+        stepHeight: 0.6,
+      })
+
+      const result = tryStepUp(
+        body,
+        body.y,
+        { blocked: true, position: body.x, velocity: -1 },
+        { blocked: false, position: body.z, velocity: 0 },
+        0,
+        options,
+      )
+
+      expect(result).toBeNull()
+  })
+
+  it('rejects a backward step when the raised retry still collides on Z', () => {
+      const body = standingOn(0, { vz: -1 })
+      const options = withWorld(() => false, {
+        blockShapeAt: (bx, by, bz) =>
+          bx === 0 && by === 2 && bz === 0
+            ? { minX: 0, maxX: 1, minY: 0, maxY: 1, minZ: 0, maxZ: 0.5 }
+            : null,
+        stepHeight: 0.6,
+      })
+
+      const result = tryStepUp(
+        body,
+        body.y,
+        { blocked: false, position: body.x, velocity: 0 },
+        { blocked: true, position: body.z, velocity: -1 },
+        0,
+        options,
+      )
+
+      expect(result).toBeNull()
+  })
+
+  it('Z is resolved against the X the previous phase corrected, so a body slides along a wall', () => {
       // A wall along +X with a block behind its corner. Walking diagonally into
       // it, X stops the body at the wall face — and that correction takes the
       // body OUT of the column the second block sits in, so Z is free and the
@@ -365,11 +547,9 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.z).toBe(0.85 + 4 * DT)
       expect(stepped.body.vz).toBe(4)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('walking into an inside corner stops on both axes without either phase teleporting the body', () =>
-    Effect.sync(() => {
+  it('walking into an inside corner stops on both axes without either phase teleporting the body', () => {
       // The block diagonally across the corner overlaps the body on both
       // horizontal axes — deeply on X, shallowly on Z. Resolving X against its
       // far-side face would move the body a whole block backwards; the face
@@ -384,15 +564,13 @@ describe('the axis order is Y, then X, then Z', () => {
       expect(stepped.body.vx).toBe(0)
       expect(stepped.body.vz).toBe(0)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 })
 
 describe('continuous collision for high-speed steps', () => {
   const FAST_DT = clampDeltaTime(MAX_DELTA_SECS)
 
-  it.effect('stops at the first wall crossed, even after crossing several empty voxels', () =>
-    Effect.sync(() => {
+  it('stops at the first wall crossed, even after crossing several empty voxels', () => {
       const options = withWorld((bx, by, bz) => by === 0 || (bx === 2 && by === 1 && bz === 0))
       const fast = standingOn(0, { vx: 100 })
 
@@ -401,11 +579,9 @@ describe('continuous collision for high-speed steps', () => {
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
       expect(stepped.body.y).toBe(fast.y)
-    }),
-  )
+  })
 
-  it.effect('does not tunnel through a thin collision shape', () =>
-    Effect.sync(() => {
+  it('does not tunnel through a thin collision shape', () => {
       const thin = { minX: 0.45, maxX: 0.55, minY: 0, maxY: 1, minZ: 0, maxZ: 1 }
       const options = withWorld(() => false, {
         blockShapeAt: (bx, by, bz) => (bx === 2 && by === 1 && bz === 0 ? thin : null),
@@ -416,11 +592,9 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(stepped.body.x).toBeCloseTo(2.45 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('catches a ceiling crossed by a high-speed vertical launch', () =>
-    Effect.sync(() => {
+  it('catches a ceiling crossed by a high-speed vertical launch', () => {
       const options = withWorld((bx, by, bz) => bx === 0 && by === 4 && bz === 0)
       const rising: Body = { ...standingOn(0), y: CentreY(1.5), vy: 100 }
 
@@ -428,11 +602,9 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
       expect(stepped.body.vy).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('resolves a diagonal corner deterministically on both horizontal axes', () =>
-    Effect.sync(() => {
+  it('resolves a diagonal corner deterministically on both horizontal axes', () => {
       const options = withWorld((bx, by, bz) => bx === 2 && by === 1 && bz === 2)
       const diagonal = standingOn(0, { vx: 100, vz: 100 })
 
@@ -444,11 +616,9 @@ describe('continuous collision for high-speed steps', () => {
       expect(first.body.z).toBeCloseTo(2 - HALF_W, 12)
       expect(first.body.vx).toBe(0)
       expect(first.body.vz).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('selects the earliest hit rather than the first candidate returned by the world', () =>
-    Effect.sync(() => {
+  it('selects the earliest hit rather than the first candidate returned by the world', () => {
       const options = withWorld((bx, by, bz) =>
         (bx === 1 && by === 5 && bz === 0) || (bx === 2 && by === 3 && bz === 0),
       )
@@ -458,11 +628,9 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('uses Y before X when two swept faces are reached simultaneously', () =>
-    Effect.sync(() => {
+  it('uses Y before X when two swept faces are reached simultaneously', () => {
       const options = withWorld((bx, by, bz) =>
         (bx === 1 && by === 4 && bz === 0) || (bx === 2 && by === 2 && bz === 0),
       )
@@ -472,11 +640,9 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(stepped.body.y).toBeCloseTo(4 - Number(HALF_H), 12)
       expect(stepped.body.vy).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('uses X before Z when two swept faces are reached simultaneously', () =>
-    Effect.sync(() => {
+  it('uses X before Z when two swept faces are reached simultaneously', () => {
       const options = withWorld((bx, by, bz) =>
         (bx === 1 && by === 1 && bz === 4) || (bx === 2 && by === 1 && bz === 3),
       )
@@ -486,11 +652,9 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(stepped.body.x).toBeCloseTo(2 - HALF_W, 12)
       expect(stepped.body.vx).toBe(0)
-    }),
-  )
+  })
 
-  it.effect('blocks motion into an initial contact but permits motion away from it', () =>
-    Effect.sync(() => {
+  it('blocks motion into an initial contact but permits motion away from it', () => {
       const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
       const touching = standingOn(0, { x: 1 - HALF_W })
 
@@ -501,11 +665,9 @@ describe('continuous collision for high-speed steps', () => {
       expect(inward.body.vx).toBe(0)
       expect(outward.body.x).toBeCloseTo(touching.x - 5, 12)
       expect(outward.body.vx).toBe(-100)
-    }),
-  )
+  })
 
-  it.effect('does not turn a pre-existing overlap into a trap', () =>
-    Effect.sync(() => {
+  it('does not turn a pre-existing overlap into a trap', () => {
       const options = withWorld((bx, by, bz) => bx === 1 && by === 1 && bz === 0)
       const overlapping = standingOn(0, { x: 1.5, vx: -100 })
 
@@ -513,8 +675,7 @@ describe('continuous collision for high-speed steps', () => {
 
       expect(escaped.body.x).toBeCloseTo(-3.5, 12)
       expect(escaped.body.vx).toBe(-100)
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -522,8 +683,7 @@ describe('continuous collision for high-speed steps', () => {
 // ---------------------------------------------------------------------------
 
 describe('the ground clamp lives inside the resolver and runs after integrate', () => {
-  it.effect('a body falling onto a floor is clamped to it, with its downward velocity zeroed', () =>
-    Effect.sync(() => {
+  it('a body falling onto a floor is clamped to it, with its downward velocity zeroed', () => {
       // `y = maxFloorY + halfH; vy = 0` — the reference's three lines
       // (aabb-collision.ts:281-285), which are the only ground clamp in its
       // codebase. There is no separate snap pass here either.
@@ -537,11 +697,9 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       expect(stepped.body.y).toBe(restingCentre(63))
       expect(stepped.body.vy).toBe(0)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('REGRESSION: reversing the order leaves the body sunk one frame’s fall INTO the floor', () =>
-    Effect.sync(() => {
+  it('REGRESSION: reversing the order leaves the body sunk one frame’s fall INTO the floor', () => {
       // docs/design-notes.md P-3 asks for this test and predicts the body
       // "hovers one frame's fall above the floor". MEASURED, THE SIGN IS THE
       // OTHER WAY: integrate-after-resolve leaves the body one frame's fall
@@ -565,11 +723,9 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       expect(right.y - wrong.y).toBeCloseTo(oneFramesFall, 12)
       // Permanent: it is a fixed point, not a transient that settles.
       expect(integrateBody(resolveBody(wrong, DT, options).body, DT).y).toBe(wrong.y)
-    }),
-  )
+  })
 
-  it.effect('a body pushed up into a ceiling stops there and is not grounded', () =>
-    Effect.sync(() => {
+  it('a body pushed up into a ceiling stops there and is not grounded', () => {
       const options = withWorld((_bx, by) => by === 0 || by === 3)
       // Head 1 cm under the ceiling's underside at y = 3, moving up at 8 m/s:
       // one step would put the head 0.146 through it.
@@ -580,11 +736,9 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       expect(stepped.body.y).toBe(3 - Number(HALF_H))
       expect(stepped.body.vy).toBe(0)
       expect(stepped.isGrounded).toBe(false)
-    }),
-  )
+  })
 
-  it.effect('a wall is not a floor: walking into a full block does not climb it', () =>
-    Effect.sync(() => {
+  it('a wall is not a floor: walking into a full block does not climb it', () => {
       // Without a reach test on the Y phase every wall is climbable — the body
       // overlaps the wall block, the wall's top face is the highest one around,
       // and the body is teleported on top of it. The reference explains this at
@@ -598,8 +752,7 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
       expect(stepped.body.y).toBe(restingCentre(0))
       expect(stepped.body.x).toBe(1 - HALF_W)
       expect(stepped.body.vx).toBe(0)
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -607,8 +760,7 @@ describe('the ground clamp lives inside the resolver and runs after integrate', 
 // ---------------------------------------------------------------------------
 
 describe('resting contact', () => {
-  it.effect('a body lands in exactly the state test/coordinates.test.ts documents', () =>
-    Effect.sync(() => {
+  it('a body lands in exactly the state test/coordinates.test.ts documents', () => {
       // The counterexample the coordinate property test found: surfaceY = 1,
       // halfHeight = 0.05. `intersects` IS true, `isRestingOn` is true, and the
       // penetration is a positive number smaller than 1e-15. The resolver has
@@ -636,11 +788,9 @@ describe('resting contact', () => {
       expect(isRestingOn(box, block)).toBe(true)
       expect(penetrationY(box, block)).toBeGreaterThan(0)
       expect(penetrationY(box, block)).toBeLessThan(1e-15)
-    }),
-  )
+  })
 
-  it.effect('a resting body does not drift by one ulp per frame, for a thousand frames', () =>
-    Effect.sync(() => {
+  it('a resting body does not drift by one ulp per frame, for a thousand frames', () => {
       // The failure this rules out is the one design-notes P-6 describes: a
       // resolver that treats the ~2e-16 resting overlap as a collision pushes
       // the body up by that much every frame. Exact equality, not toBeCloseTo:
@@ -656,11 +806,9 @@ describe('resting contact', () => {
         expect(stepped.isGrounded).toBe(true)
         body = stepped.body
       }
-    }),
-  )
+  })
 
-  it.effect('resolving is a fixed point: a resolved body resolves to itself, bit for bit', () =>
-    Effect.sync(() => {
+  it('resolving is a fixed point: a resolved body resolves to itself, bit for bit', () => {
       // Idempotence is what says the resolver has no opinion left to act on.
       // `isGrounded` is part of it, and it is the part that costs something:
       // taking it from the Y phase, as the reference does (`isGrounded = true`
@@ -683,11 +831,9 @@ describe('resting contact', () => {
         ),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('PROPERTY: no phase moves a body further than that phase can justify', () =>
-    Effect.sync(() => {
+  it('PROPERTY: no phase moves a body further than that phase can justify', () => {
       // The bound that keeps a correction from becoming a teleport, and the
       // only thing standing between the two horizontal phases and the inside
       // corner: a face already BEHIND the body is not one it came in through,
@@ -721,8 +867,7 @@ describe('resting contact', () => {
         ),
         { numRuns: 500 },
       )
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -736,14 +881,13 @@ describe('zero penetration', () => {
    * always solid far below so it can never fall out of the world.
    */
   const heightmapWorld =
-    (heights: ReadonlyArray<number>): IsBlockSolid =>
+    (heights: ReadonlyArray<number>): SolidPredicate =>
     (bx, by, bz) => {
       const index = (((bx * 7 + bz * 13) % heights.length) + heights.length) % heights.length
       return by <= heights[index]!
     }
 
-  it.effect('PROPERTY: a body walking over broken terrain never ends a step inside a block', () =>
-    Effect.sync(() => {
+  it('PROPERTY: a body walking over broken terrain never ends a step inside a block', () => {
       // The invariant is INDUCTIVE — the resolver maintains "not penetrating",
       // it does not establish it (see domain/resolve.ts on the precondition) —
       // so the body starts in the air and every step is checked, not just the
@@ -770,11 +914,9 @@ describe('zero penetration', () => {
         ),
         { numRuns: 200 },
       )
-    }),
-  )
+  })
 
-  it.effect('PROPERTY: a body dropped from any height lands on the floor and never below it', () =>
-    Effect.sync(() => {
+  it('PROPERTY: a body dropped from any height lands on the floor and never below it', () => {
       FastCheck.assert(
         FastCheck.property(
           FastCheck.double({ min: 0.01, max: 20, noNaN: true, noDefaultInfinity: true }),
@@ -796,11 +938,9 @@ describe('zero penetration', () => {
         ),
         { numRuns: 60 },
       )
-    }),
-  )
+  })
 
-  it.effect('TUNNELLING: a body arriving at terminal velocity on the largest legal step is still caught', () =>
-    Effect.sync(() => {
+  it('TUNNELLING: a body arriving at terminal velocity on the largest legal step is still caught', () => {
       // The worst case the delta cap permits: |TERMINAL_VELOCITY_Y| * 0.05 =
       // 1.6 blocks in one step, against a body 1.8 tall. The floor's top face
       // ends up inside the box, which is the whole reason those two numbers are
@@ -816,11 +956,9 @@ describe('zero penetration', () => {
       expect(stepped.body.y).toBe(restingCentre(63))
       expect(stepped.body.vy).toBe(0)
       expect(stepped.isGrounded).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('the horizontal speed that breaks discrete resolution is far above anything the game moves at', () =>
-    Effect.sync(() => {
+  it('the horizontal speed that breaks discrete resolution is far above anything the game moves at', () => {
       // Discrete resolution is the choice this resolver makes (see the file
       // header). Its price is a speed limit, and this is the inequality that
       // says the game is nowhere near it. Asserted as a derivation so that
@@ -833,8 +971,7 @@ describe('zero penetration', () => {
       // Vertically the tighter of the two bounds is the body-height one that
       // integrate.test.ts already asserts; terminal velocity is inside both.
       expect(Math.abs(TERMINAL_VELOCITY_Y)).toBeLessThan(maxSpeedWithoutTunnelling(Number(HALF_H), 1, MAX_DELTA_SECS))
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -842,8 +979,7 @@ describe('zero penetration', () => {
 // ---------------------------------------------------------------------------
 
 describe('energy', () => {
-  it.effect('PROPERTY: a step never increases a body’s energy', () =>
-    Effect.sync(() => {
+  it('PROPERTY: a step never increases a body’s energy', () => {
       // Kinetic plus potential, per unit mass. Every path through the resolver
       // either zeroes a velocity component or moves the body back the way it
       // came, and the Y phase can only lift a body by as far as it just fell —
@@ -874,11 +1010,9 @@ describe('energy', () => {
         ),
         { numRuns: 200 },
       )
-    }),
-  )
+  })
 
-  it.effect('a bouncing-height regression: a body dropped repeatedly never ends up higher than it started', () =>
-    Effect.sync(() => {
+  it('a bouncing-height regression: a body dropped repeatedly never ends up higher than it started', () => {
       const options = withWorld(groundUpTo(63))
       const start = standingOn(63, { y: CentreY(restingCentre(63) + 10) })
       let body = start
@@ -888,18 +1022,24 @@ describe('energy', () => {
         expect(body.y).toBeLessThanOrEqual(start.y)
       }
       expect(body.y).toBe(restingCentre(63))
-    }),
-  )
+  })
 
-  it.effect('stepping up is the one path that adds energy — which is why the height is injected', () =>
-    Effect.sync(() => {
+  it('stepping up is the one path that adds energy — which is why the height is injected', () => {
       // Honest exception, stated rather than hidden. A step-up is a lift: the
       // body gains `g * stepHeight` of potential energy out of nothing, because
       // it is a gameplay affordance and not a collision response. It is opt-in
       // and defaults to zero for exactly this reason (docs/design-notes.md P-9).
       const isSlab = (bx: number, by: number): boolean => bx === 1 && by === 1
       const options = withWorld((bx, by) => by === 0 || isSlab(bx, by), {
-        blockShapeAt: (bx, by) => (isSlab(bx, by) ? SLAB_SHAPE : null),
+        blockPropertiesAt: (bx, by, _bz) => {
+          if (isSlab(bx, by)) {
+            return propertiesFor('slab')
+          }
+          if (by === 0) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
         stepHeight: 0.6,
       })
       const walking = standingOn(0, { x: 0.85, vx: REFERENCE_TOP_SPEED })
@@ -910,8 +1050,7 @@ describe('energy', () => {
       // And with no step height it does not.
       const withoutStepUp = stepBody(walking, DT, { ...options, stepHeight: 0 })
       expect(energyOf(withoutStepUp.body)).toBeLessThanOrEqual(energyOf(walking))
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -928,15 +1067,12 @@ describe('determinism', () => {
     standingOn(63, { x: 16.5, vz: -5 }),
   ]
 
-  it.effect('resolving the same world twice gives the same answer', () =>
-    Effect.sync(() => {
+  it('resolving the same world twice gives the same answer', () => {
       expect(resolveWorld(crowd, DT, world)).toStrictEqual(resolveWorld(crowd, DT, world))
       expect(stepWorld(crowd, DT, world)).toStrictEqual(stepWorld(crowd, DT, world))
-    }),
-  )
+  })
 
-  it.effect('is order-independent: bodies collide with blocks, never with each other', () =>
-    Effect.sync(() => {
+  it('is order-independent: bodies collide with blocks, never with each other', () => {
       // The same claim test/integrate.test.ts makes about integration, extended
       // to resolution. It holds for a structural reason rather than a numerical
       // one — `resolveWorld` is a map — and the test is here so that adding
@@ -946,11 +1082,9 @@ describe('determinism', () => {
 
       const steppedReversed = stepWorld([...crowd].reverse(), DT, world)
       expect([...steppedReversed].reverse()).toStrictEqual(stepWorld(crowd, DT, world))
-    }),
-  )
+  })
 
-  it.effect('PROPERTY: the answer does not depend on where a body sits in the array', () =>
-    Effect.sync(() => {
+  it('PROPERTY: the answer does not depend on where a body sits in the array', () => {
       FastCheck.assert(
         FastCheck.property(FastCheck.shuffledSubarray([0, 1, 2, 3, 4], { minLength: 5 }), (order) => {
           const permuted = order.map((index) => crowd[index]!)
@@ -975,11 +1109,9 @@ describe('determinism', () => {
         }),
         { numRuns: 100 },
       )
-    }),
-  )
+  })
 
-  it.effect('never moves a static or kinematic body, but still answers whether it is grounded', () =>
-    Effect.sync(() => {
+  it('never moves a static or kinematic body, but still answers whether it is grounded', () => {
       // `integrateBody` leaves them alone for the same reason: their motion is
       // authored elsewhere. Grounded is a question about the world, though, so
       // it is answered for them too.
@@ -992,8 +1124,7 @@ describe('determinism', () => {
         expect(resolveBody(resting, DT, options).isGrounded).toBe(true)
         expect(resolveBody(airborne, DT, options).isGrounded).toBe(false)
       }
-    }),
-  )
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1001,8 +1132,7 @@ describe('determinism', () => {
 // ---------------------------------------------------------------------------
 
 describe('solidity is injected, never derived from a block id', () => {
-  it.effect('only asks about cells the body could touch', () =>
-    Effect.sync(() => {
+  it('only asks about cells the body could touch', () => {
       // design-notes P-8 asks for exactly this: that the coordinates handed to
       // the callback stay inside the box being asked about. A resolver that
       // scanned a chunk, or that probed a fixed radius, would be reaching for
@@ -1029,17 +1159,22 @@ describe('solidity is injected, never derived from a block id', () => {
         expect(by).toBeGreaterThanOrEqual(62)
         expect(by).toBeLessThanOrEqual(66)
       }
-    }),
-  )
+  })
 
-  it.effect('a block shape overrides the unit cube, and null defers to the solidity predicate', () =>
-    Effect.sync(() => {
-      // The reference's composition (aabb-collision.ts:54-61): the shape
-      // function speaks for the few blocks that are not cubes and says nothing
-      // about the rest. Standing on a slab therefore rests at y+0.5, and the
-      // full blocks around it still work.
+  it('kernel block properties select slab geometry without changing neighboring full blocks', () => {
+      // The resolver reads the kernel's collision shape directly. A caller
+      // only supplies a state-specific blockShapeAt when the kernel property
+      // is not enough to describe the actual geometry.
       const options = withWorld(groundUpTo(63), {
-        blockShapeAt: (bx, by) => (by === 63 && bx === 0 ? SLAB_SHAPE : null),
+        blockPropertiesAt: (bx, by, _bz) => {
+          if (by === 63 && bx === 0) {
+            return propertiesFor('slab')
+          }
+          if (by <= 63) {
+            return FULL_BLOCK_PROPERTIES
+          }
+          return null
+        },
       })
       let overSlab = standingOn(63, { x: 0.5, y: restingCentre(63) })
       for (let frame = 0; frame < 40; frame += 1) {
@@ -1054,11 +1189,9 @@ describe('solidity is injected, never derived from a block id', () => {
       // The neighbouring column is a full cube, and standing on it is unchanged.
       const overCube = standingOn(63, { x: 1.5 })
       expect(stepBody(overCube, DT, options).body.y).toBe(restingCentre(63))
-    }),
-  )
+  })
 
-  it.effect('the same geometry with a different predicate gives a different answer, and no ids are involved', () =>
-    Effect.sync(() => {
+  it('the same geometry with a different predicate gives a different answer, and no ids are involved', () => {
       // What passability means is the caller's business. mc-physics sees a
       // boolean. This is the design the reference got wrong by hand-maintaining
       // PASSABLE_BLOCK_IDS, which shipped with leaves in it and let players
@@ -1070,6 +1203,5 @@ describe('solidity is injected, never derived from a block id', () => {
       expect(stepBody(body, DT, solid).isGrounded).toBe(true)
       expect(stepBody(body, DT, passable).isGrounded).toBe(false)
       expect(stepBody(body, DT, passable).body.y).toBeLessThan(restingCentre(63))
-    }),
-  )
+  })
 })

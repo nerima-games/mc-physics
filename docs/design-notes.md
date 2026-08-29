@@ -556,24 +556,19 @@ export const isBlockSolid = (...): boolean => {
 
 ### 対処
 
-mc-physics は boolean と形状しか見ない:
+mc-physics はブロック ID の名前を判定せず、mc-kernel の共有データを直接受け取る:
 
 ```typescript
-export type IsTargetable = (bx: number, by: number, bz: number) => boolean
+export type BlockPropertiesAt = (bx: number, by: number, bz: number) => BlockProperties | null
+export type BlockShape = AABB | ReadonlyArray<AABB>
+export type BlockShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 ```
 
-能力フラグを解決するのは呼び出し側（mc-sim）である。
-
-### リゾルバでの形
-
-```typescript
-export type IsBlockSolid = (bx: number, by: number, bz: number) => boolean
-export type BlockShapeAt = (bx: number, by: number, bz: number) => AABB | null
-```
-
-`BlockShapeAt` が `null` を返すと `IsBlockSolid` に落ちる。
-これは参照実装の合成そのままである（`aabb-collision.ts:54-61`）——
-形状関数は「立方体でない少数のブロック」についてだけ発言し、残りには何も言わない。
+`BlockPropertiesAt` の `null` は非衝突を表す。標準形状は
+`BlockProperties.collisionShape` から解決し、`BlockShapeAt` が指定されている場合は
+状態依存・複合形状を含むその結果を authoritative な形状として使う。単一 AABB または AABB 配列を
+cell-local 座標で返し、`null` または空配列は衝突形状なしを表す。ID・registry・chunk の解決は
+呼び出し側が所有する。
 
 `IsTargetable`（`domain/dda.ts`）と**構造的に同一の型を、あえて別宣言にしている**。
 「狙えるか」と「ぶつかるか」は別の問いであり、答えも違う
@@ -584,8 +579,8 @@ TypeScript には区別できないので、これは**強制ではなく文書�
 ### 回帰テスト
 
 型レベルで保証される（`src/domain/` のどこにもブロック ID の語彙が無い）。
-`.oxlintrc.json` の `no-restricted-imports`(mc-kernel 以外の `@nerima-games/*` import を禁じる、
-DEPENDENCY_POLICY.md)も間接的な保証である。かつては `pnpm check:deps` が同じ役割を担っていたが、
+`.oxlintrc.json` の `no-restricted-imports`（mc-kernel 以外の `@nerima-games/*` import を禁じる、
+組織共通の依存ポリシー）も間接的な保証である。かつては `pnpm check:deps` が同じ役割を担っていたが、
 このスクリプトは org 標準への移行で全廃された。
 
 `test/resolve.test.ts`（本項が要求していたテスト）:
@@ -594,8 +589,8 @@ DEPENDENCY_POLICY.md)も間接的な保証である。かつては `pnpm check:d
   —— コールバックに渡る座標を全件記録し、body の箱の範囲内に収まることを検査する。
   足元 1 セル下だけは範囲外だが、これは**接地プローブ**であり緩みではない。
   チャンクを走査する実装や固定半径を探る実装はここで落ちる
-- `a block shape overrides the unit cube, and null defers to the solidity predicate`
-- `the same geometry with a different predicate gives a different answer, and no ids are involved`
+- `a block shape overrides the kernel collision shape, and null represents no collision`
+- `the same geometry with different BlockProperties gives a different answer, and no ids are involved`
 
 ---
 

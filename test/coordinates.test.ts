@@ -11,8 +11,8 @@
  *   physics-spawn-plane-is-surface-plus-one
  *   physics-resting-contact-is-not-a-collision
  */
-import { describe, expect, it } from '@effect/vitest'
-import { Effect, FastCheck } from 'effect'
+import { describe, expect, it } from 'vitest'
+import { FastCheck } from 'effect'
 import {
   CACTUS_SHAPE,
   CONTACT_EPSILON,
@@ -44,8 +44,7 @@ const arbitraryHalfHeight = FastCheck.double({
 }).map((value) => HalfHeight(value))
 
 describe('the foot / centre Y convention', () => {
-  it.effect('round-trips foot -> centre -> foot exactly', () =>
-    Effect.sync(() => {
+  it('round-trips foot -> centre -> foot exactly', () => {
       FastCheck.assert(
         FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
           const foot = FootY(y)
@@ -53,11 +52,9 @@ describe('the foot / centre Y convention', () => {
         }),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('round-trips centre -> foot -> centre exactly', () =>
-    Effect.sync(() => {
+  it('round-trips centre -> foot -> centre exactly', () => {
       FastCheck.assert(
         FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
           const centre = CentreY(y)
@@ -65,32 +62,26 @@ describe('the foot / centre Y convention', () => {
         }),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('the centre is exactly one half-height above the feet, never zero and never a full height', () =>
-    Effect.sync(() => {
+  it('the centre is exactly one half-height above the feet, never zero and never a full height', () => {
       // Off-by-a-factor-of-two here is the second commonest form of the bug:
       // subtracting the full height rather than the half sinks the body into
       // the floor by exactly one body length.
       const foot = FootY(64)
       expect(centreOfFoot(foot, PLAYER_HALF_HEIGHT)).toBe(64.9)
       expect(footOfCentre(CentreY(64.9), PLAYER_HALF_HEIGHT)).toBeCloseTo(64, 10)
-    }),
-  )
+  })
 
-  it.effect('rejects a non-positive half-height, which would collapse the two conventions into one', () =>
-    Effect.sync(() => {
+  it('rejects a non-positive half-height, which would collapse the two conventions into one', () => {
       expect(() => HalfHeight(0)).toThrow()
       expect(() => HalfHeight(-1)).toThrow()
       expect(() => HalfHeight(Number.NaN)).toThrow()
-    }),
-  )
+  })
 })
 
 describe('block occupancy', () => {
-  it.effect('a block at cell y occupies exactly [y, y+1] on every axis', () =>
-    Effect.sync(() => {
+  it('a block at cell y occupies exactly [y, y+1] on every axis', () => {
       FastCheck.assert(
         FastCheck.property(
           FastCheck.integer({ min: -256, max: 256 }),
@@ -110,26 +101,20 @@ describe('block occupancy', () => {
         ),
         { numRuns: 200 },
       )
-    }),
-  )
+  })
 
-  it.effect('a slab occupies the bottom half of its cell and nothing above it', () =>
-    Effect.sync(() => {
+  it('a slab occupies the bottom half of its cell and nothing above it', () => {
       const box = blockAABB(0, 64, 0, SLAB_SHAPE)
       expect(box.minY).toBe(64)
       expect(box.maxY).toBe(64.5)
-    }),
-  )
+  })
 
-  it.effect('a pressure plate occupies exactly the bottom sixteenth of its cell', () =>
-    Effect.sync(() => {
+  it('a pressure plate occupies exactly the bottom sixteenth of its cell', () => {
       const box = blockAABB(-3, 64, 7, PRESSURE_PLATE_SHAPE)
       expect(box).toStrictEqual({ minX: -3, minY: 64, minZ: 7, maxX: -2, maxY: 64 + 1 / 16, maxZ: 8 })
-    }),
-  )
+  })
 
-  it.effect('a cactus is inset one sixteenth on X and Z but remains full height', () =>
-    Effect.sync(() => {
+  it('a cactus is inset one sixteenth on X and Z but remains full height', () => {
       expect(blockAABB(-3, 64, 7, CACTUS_SHAPE)).toStrictEqual({
         minX: -3 + 1 / 16,
         minY: 64,
@@ -138,17 +123,13 @@ describe('block occupancy', () => {
         maxY: 65,
         maxZ: 7 + 15 / 16,
       })
-    }),
-  )
+  })
 
-  it.effect('the full-block shape is the unit cube, so shapes compose by simple translation', () =>
-    Effect.sync(() => {
+  it('the full-block shape is the unit cube, so shapes compose by simple translation', () => {
       expect(FULL_BLOCK_SHAPE).toStrictEqual({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 })
-    }),
-  )
+  })
 
-  it.effect('the standing plane above a block is surfaceY + 1, not surfaceY', () =>
-    Effect.sync(() => {
+  it('the standing plane above a block is surfaceY + 1, not surfaceY', () => {
       // The reference spawns at `surfaceY + 1 + PLAYER_HALF_HEIGHT`
       // (spawn-selection-search.ts:206) — one to reach the block's top face,
       // then the half-height to reach the body centre. Both steps, in order.
@@ -160,13 +141,11 @@ describe('block occupancy', () => {
         { numRuns: 100 },
       )
       expect(centreOfFoot(standingPlaneAbove(62), PLAYER_HALF_HEIGHT)).toBe(63.9)
-    }),
-  )
+  })
 })
 
 describe('resting contact', () => {
-  it.effect('an entity standing exactly on a block surface reads as resting, never as embedded', () =>
-    Effect.sync(() => {
+  it('an entity standing exactly on a block surface reads as resting, never as embedded', () => {
       // Touching faces must not read as a collision to be resolved, or the
       // resolver pushes the entity up every frame and it vibrates on the spot.
       //
@@ -187,11 +166,9 @@ describe('resting contact', () => {
         ),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('the float error at a resting contact really is within CONTACT_EPSILON, by orders of magnitude', () =>
-    Effect.sync(() => {
+  it('the float error at a resting contact really is within CONTACT_EPSILON, by orders of magnitude', () => {
       // Pins the size of the error rather than merely tolerating it. If a
       // change to the conversions makes the error grow, this fails long before
       // the epsilon stops covering it.
@@ -208,11 +185,9 @@ describe('resting contact', () => {
         ),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('the documented counterexample is exactly as documented', () =>
-    Effect.sync(() => {
+  it('the documented counterexample is exactly as documented', () => {
       const halfHeight = HalfHeight(0.05)
       const centre = centreOfFoot(standingPlaneAbove(1), halfHeight)
       const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, halfHeight)
@@ -222,11 +197,9 @@ describe('resting contact', () => {
       expect(isRestingOn(body, block)).toBe(true)
       expect(penetrationY(body, block)).toBeLessThan(1e-15)
       expect(penetrationY(body, block)).toBeGreaterThan(0)
-    }),
-  )
+  })
 
-  it.effect('the resting contact intersects but is not a collision — the predicates differ exactly there', () =>
-    Effect.sync(() => {
+  it('the resting contact intersects but is not a collision — the predicates differ exactly there', () => {
       // `collidesWith` is what the resolver acts on and `intersects` is the
       // exact question. They agree everywhere except inside the contact skin,
       // which is the whole reason both exist: at the documented counterexample
@@ -253,11 +226,9 @@ describe('resting contact', () => {
         }),
         { numRuns: 300 },
       )
-    }),
-  )
+  })
 
-  it.effect('REGRESSION: a body nowhere near a block is not resting on it', () =>
-    Effect.sync(() => {
+  it('REGRESSION: a body nowhere near a block is not resting on it', () => {
       // `isRestingOn` used to ask `penetrationY(body, surface) <= CONTACT_EPSILON`,
       // and `penetrationY` goes NEGATIVE when the boxes are apart — so a body in
       // free fall five blocks up satisfied it, as did one pressing its head on a
@@ -293,20 +264,16 @@ describe('resting contact', () => {
         PLAYER_HALF_HEIGHT,
       )
       expect(isRestingOn(standing, block)).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('an entity one epsilon BELOW the surface does intersect — the boundary is where it is claimed', () =>
-    Effect.sync(() => {
+  it('an entity one epsilon BELOW the surface does intersect — the boundary is where it is claimed', () => {
       const surfaceY = 64
       const centre = CentreY(centreOfFoot(standingPlaneAbove(surfaceY), PLAYER_HALF_HEIGHT) - 0.001)
       const body = entityAABB(0.5, centre, 0.5, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
       expect(intersects(body, blockAABB(0, surfaceY, 0))).toBe(true)
-    }),
-  )
+  })
 
-  it.effect('an entity built from a FOOT Y by mistake would sink half a body — which is why the types differ', () =>
-    Effect.sync(() => {
+  it('an entity built from a FOOT Y by mistake would sink half a body — which is why the types differ', () => {
       // This test documents the bug the branding prevents. `CentreY(...)` here
       // is an explicit, visible lie; in the reference the same mistake is an
       // invisible `number` flowing into a `number` parameter.
@@ -324,11 +291,9 @@ describe('resting contact', () => {
       expect(intersects(correct, blockAABB(0, surfaceY, 0))).toBe(false)
       expect(intersects(wrong, blockAABB(0, surfaceY, 0))).toBe(true)
       expect(correct.minY - wrong.minY).toBeCloseTo(Number(PLAYER_HALF_HEIGHT), 10)
-    }),
-  )
+  })
 
-  it.effect('an entity AABB is symmetric about its centre on every axis', () =>
-    Effect.sync(() => {
+  it('an entity AABB is symmetric about its centre on every axis', () => {
       FastCheck.assert(
         FastCheck.property(arbitraryY, arbitraryHalfHeight, (y, halfHeight) => {
           const box = entityAABB(3, CentreY(y), -7, PLAYER_HALF_WIDTH, halfHeight)
@@ -340,11 +305,9 @@ describe('resting contact', () => {
         }),
         { numRuns: 200 },
       )
-    }),
-  )
+  })
 
-  it.effect('intersection is symmetric in its arguments', () =>
-    Effect.sync(() => {
+  it('intersection is symmetric in its arguments', () => {
       FastCheck.assert(
         FastCheck.property(arbitraryY, arbitraryY, (a, b) => {
           const left = entityAABB(0, CentreY(a), 0, PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT)
@@ -353,6 +316,5 @@ describe('resting contact', () => {
         }),
         { numRuns: 200 },
       )
-    }),
-  )
+  })
 })

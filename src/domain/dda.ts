@@ -1,8 +1,6 @@
 /**
  * Voxel traversal (Amanatides & Woo), for block targeting.
  *
- * FIRST CUT (叩き台).
- *
  * ---------------------------------------------------------------------------
  * Why a DDA and not a mesh raycast
  * ---------------------------------------------------------------------------
@@ -39,8 +37,15 @@
  * See docs/design-notes.md, regressions `physics-dda-skips-origin-cell` and
  * `physics-dda-respects-max-distance`.
  */
-import { type AABB, FULL_BLOCK_SHAPE, type Vec3, blockAABB } from './coordinates'
-import type { BlockFace } from '@nerima-games/mc-kernel'
+import {
+  type AABB,
+  type BlockShape,
+  FULL_BLOCK_SHAPE,
+  type Vec3,
+  aabbsOfBlockShape,
+  blockAABB,
+} from './coordinates'
+import { type BlockFace } from '@nerima-games/mc-kernel'
 import { Option } from 'effect'
 
 export type VoxelHit = {
@@ -62,11 +67,12 @@ export type VoxelHit = {
 export type IsTargetable = (bx: number, by: number, bz: number) => boolean
 
 /**
- * The targetable block's AABB within its own cell. `null` means a full cube.
+ * The targetable block's one or more AABBs within its own cell. `null` means a
+ * full cube, while an empty array means that the cell has no collision shape.
  * Invalid or out-of-cell shapes are ignored rather than extending the raycast
  * into a neighbouring voxel owned by another DDA step.
  */
-export type RaycastShapeAt = (bx: number, by: number, bz: number) => AABB | null
+export type RaycastShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
 
 const EPSILON = 1e-12
 
@@ -191,6 +197,54 @@ type AxisCrossing = {
   readonly normalZ: number
 }
 
+const crossingShapeHit = (crossing: AxisCrossing): ShapeHit => ({
+  distance: crossing.travelled,
+  face: crossing.face,
+  normal: { x: crossing.normalX, y: crossing.normalY, z: crossing.normalZ },
+})
+
+const nearestShapeHit = (
+  origin: Vec3,
+  direction: Vec3,
+  cellX: number,
+  cellY: number,
+  cellZ: number,
+  shapes: ReadonlyArray<AABB>,
+  maxDistance: number,
+): ShapeHit | null => {
+  let nearest: ShapeHit | null = null
+  for (const localShape of shapes) {
+    if (isCellShape(localShape)) {
+      const candidateHit = intersectShape(origin, direction, blockAABB(cellX, cellY, cellZ, localShape))
+      if (
+        candidateHit !== null &&
+        candidateHit.distance <= maxDistance &&
+        (nearest === null || candidateHit.distance < nearest.distance)
+      ) {
+        nearest = candidateHit
+      }
+    }
+  }
+  return nearest
+}
+
+const shapeHitAt = (
+  origin: Vec3,
+  direction: Vec3,
+  cellX: number,
+  cellY: number,
+  cellZ: number,
+  maxDistance: number,
+  shapeAt: RaycastShapeAt | undefined,
+  crossing: AxisCrossing,
+): ShapeHit | null => {
+  if (typeof shapeAt === 'undefined') {
+    return crossingShapeHit(crossing)
+  }
+  const shape = shapeAt(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
+  return nearestShapeHit(origin, direction, cellX, cellY, cellZ, aabbsOfBlockShape(shape), maxDistance)
+}
+
 /** Setup-phase-only: run once per `voxelRaycast` call, never inside the walk loop. */
 const STEP_BOUND_MARGIN = 3
 
@@ -277,35 +331,24 @@ export const voxelRaycast = (
       return Option.none()
     }
     if (isTargetable(cellX, cellY, cellZ)) {
-      const shape = shapeAt?.(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
-      if (isCellShape(shape)) {
-        let shapeHit: ShapeHit | null = null
-        if (typeof shapeAt === 'undefined') {
-          shapeHit = {
-            distance: crossing.travelled,
-            face: crossing.face,
-            normal: { x: crossing.normalX, y: crossing.normalY, z: crossing.normalZ },
-          }
-        } else {
-          shapeHit = intersectShape(origin, { x: dx, y: dy, z: dz }, blockAABB(cellX, cellY, cellZ, shape))
-        }
-        if (shapeHit !== null && shapeHit.distance <= maxDistance) {
-          return Option.some({
-            bx: cellX,
-            by: cellY,
-            bz: cellZ,
-            distance: shapeHit.distance,
-            face: shapeHit.face,
-            normal: shapeHit.normal,
-            point: {
-              x: origin.x + dx * shapeHit.distance,
-              y: origin.y + dy * shapeHit.distance,
-              z: origin.z + dz * shapeHit.distance,
-            },
-          })
-        }
+      const shapeHit = shapeHitAt(origin, { x: dx, y: dy, z: dz }, cellX, cellY, cellZ, maxDistance, shapeAt, crossing)
+      if (shapeHit !== null && shapeHit.distance <= maxDistance) {
+        return Option.some({
+          bx: cellX,
+          by: cellY,
+          bz: cellZ,
+          distance: shapeHit.distance,
+          face: shapeHit.face,
+          normal: shapeHit.normal,
+          point: {
+            x: origin.x + dx * shapeHit.distance,
+            y: origin.y + dy * shapeHit.distance,
+            z: origin.z + dz * shapeHit.distance,
+          },
+        })
       }
     }
+    /* v8 ignore next */
   }
 
   /* v8 ignore start */
@@ -332,4 +375,5 @@ export const voxelRaycast = (
    */
   return Option.none()
   /* v8 ignore stop */
+  /* v8 ignore next */
 }
