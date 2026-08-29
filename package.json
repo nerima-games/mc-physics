@@ -67,12 +67,11 @@
   "devDependencies": {
     "@changesets/changelog-github": "^1.0.0",
     "@changesets/cli": "^3.0.1",
-    "@types/node": "^26.2.0",
-    "@typescript/native": "npm:typescript@7.0.2",
+    "@types/node": "^26.4.0",
     "@vitest/coverage-v8": "^4.1.11",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
-    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript": "7.0.2",
     "vitest": "^4.1.11"
   }
 }
