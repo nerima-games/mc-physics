@@ -1,5 +1,5 @@
 import type { DeltaTimeSecs, Position } from '@nerima-games/mc-kernel'
-import type { Body } from './integrate'
+import type { Body } from './integrate.js'
 
 export type MovementInput = Readonly<{
   readonly forward: number

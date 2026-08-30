@@ -1,5 +1,5 @@
-import type { FluidEffects, FluidMotionCoefficients } from './environment-types'
-import type { Body } from './integrate'
+import type { FluidEffects, FluidMotionCoefficients } from './environment-types.js'
+import type { Body } from './integrate.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 const nonNegativeFinite = (value: number): number => {

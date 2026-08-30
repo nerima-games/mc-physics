@@ -6,8 +6,8 @@ import {
   blockAABB,
   collidesWith,
   entityAABB,
-} from './coordinates'
-import type { ResolveOptions } from './resolve-types'
+} from './coordinates.js'
+import type { ResolveOptions } from './resolve-types.js'
 
 export const blockShapesAt = (options: ResolveOptions, bx: number, by: number, bz: number): ReadonlyArray<AABB> => {
   const customShapeAt = options.blockShapeAt

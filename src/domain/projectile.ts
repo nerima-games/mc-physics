@@ -1,4 +1,4 @@
-import type { AABB } from './coordinates'
+import type { AABB } from './coordinates.js'
 import type { Position } from '@nerima-games/mc-kernel'
 
 /**

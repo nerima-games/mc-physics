@@ -10,9 +10,9 @@ import {
   type BlockShape,
   aabbsOfBlockShape,
   blockAABB,
-} from './coordinates'
+} from './coordinates.js'
 import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
-import { FULL_BLOCK_SHAPE } from './shape-data'
+import { FULL_BLOCK_SHAPE } from './shape-data.js'
 
 /**
  * The targetable block's one or more AABBs within its own cell. `null` means a

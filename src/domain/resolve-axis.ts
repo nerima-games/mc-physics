@@ -1,7 +1,7 @@
-import { type AABB, CONTACT_EPSILON } from './coordinates'
+import { type AABB, CONTACT_EPSILON } from './coordinates.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import type { ResolveOptions } from './resolve-types'
-import { forEachCollidingBlock } from './resolve-shapes'
+import type { ResolveOptions } from './resolve-types.js'
+import { forEachCollidingBlock } from './resolve-shapes.js'
 
 export type AxisState = {
   readonly blocked: boolean

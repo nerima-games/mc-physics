@@ -6,7 +6,7 @@ import {
   isEmpty,
   isKnownBlockId,
 } from '@nerima-games/mc-kernel'
-import type { BlockIdAt } from './kernel-world'
+import type { BlockIdAt } from './kernel-world.js'
 
 export type FallingBlockCandidate = Readonly<{
   readonly id: BlockId

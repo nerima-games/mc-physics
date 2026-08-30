@@ -1,6 +1,6 @@
-import type { BlockShape, HalfHeight } from './coordinates'
+import type { BlockShape, HalfHeight } from './coordinates.js'
 import type { BlockProperties } from '@nerima-games/mc-kernel'
-import type { Body } from './integrate'
+import type { Body } from './integrate.js'
 
 export type BlockPropertiesAt = (bx: number, by: number, bz: number) => BlockProperties | null
 

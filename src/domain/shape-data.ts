@@ -1,4 +1,4 @@
-import type { AABB } from './coordinates'
+import type { AABB } from './coordinates.js'
 import type { CollisionShape } from '@nerima-games/mc-kernel'
 
 /** The shape a full block occupies within its own cell: the whole unit cube. */

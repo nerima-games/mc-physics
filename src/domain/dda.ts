@@ -41,11 +41,11 @@
  * split out into `dda-shapes.ts`; this file is the grid walk and its public
  * API.
  */
-import { type AxisCrossing, type RaycastShapeAt, shapeHitAt } from './dda-shapes'
+import { type AxisCrossing, type RaycastShapeAt, shapeHitAt } from './dda-shapes.js'
 import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
 import { Option } from 'effect'
 
-export type { RaycastShapeAt } from './dda-shapes'
+export type { RaycastShapeAt } from './dda-shapes.js'
 
 export type VoxelHit = {
   /** Integer cell coordinates of the block that was hit. */

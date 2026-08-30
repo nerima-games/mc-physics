@@ -37,7 +37,7 @@
  * See docs/design-notes.md, regressions `physics-integrator-is-symplectic` and
  * `physics-resolve-runs-after-integrate`.
  */
-import { CentreY } from './coordinates'
+import { CentreY } from './coordinates.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 /** Reference gravity (`packages/game/application/game-state-support.ts:10`). */

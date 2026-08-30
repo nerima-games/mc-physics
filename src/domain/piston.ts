@@ -17,7 +17,7 @@
  * step, how far must a stationary entity move to end up clear of it, and is
  * there room to do so.
  */
-import { type AABB, CONTACT_EPSILON, collidesWith } from './coordinates'
+import { type AABB, CONTACT_EPSILON, collidesWith } from './coordinates.js'
 import type { Position } from '@nerima-games/mc-kernel'
 
 /** The piston's extension axis. A Java piston arm moves one block along exactly one axis per stroke. */

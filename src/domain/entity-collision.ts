@@ -1,5 +1,5 @@
-import { type HalfHeight, collidesWith, entityAABB } from './coordinates'
-import type { Body } from './integrate'
+import { type HalfHeight, collidesWith, entityAABB } from './coordinates.js'
+import type { Body } from './integrate.js'
 import type { Position } from '@nerima-games/mc-kernel'
 
 export type EntityCollider = Readonly<{

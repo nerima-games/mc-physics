@@ -32,21 +32,32 @@ maintainer による裁量判断のみで行う（組織共通のリリース標
 - `dependencies` に `mc-kernel@0.5.0` と `effect` を直接宣言し、共有データ契約を重複定義しない。
 - `exports` は `dist/index.js` と `dist/index.d.ts` を指し、利用者の実行時に TypeScript
   ソースを読み込まない。
-- `prepublishOnly` は `pnpm verify` を実行し、公開前に型・lint・テスト・カバレッジ・ビルド・package export smoke を検証する。
+- `prepublishOnly` は `pnpm verify && pnpm package:verify` を実行し、公開前に型・lint・テスト
+  （`verify`）とビルド・package export smoke（`package:verify`）を検証する。`verify` 自体は
+  カバレッジやビルドを含まない 3 段（typecheck && lint && test）で、カバレッジは CI の別ステップ
+  （組織共通のテスト標準 §1・§3）。
 - 実際の publish はリリース担当が行い、通常の CI は公開せず、成果物の生成とパッケージ内容を検証する。
 
 ## 3. ビルドと publish
 
-`tsconfig.base.json` は開発時の型検査用に `"noEmit": true` である。
-出荷用の `tsconfig.build.json` は型宣言を `dist/` に出力し、esbuild が ESM 実行成果物と
-source map を生成する。`dist/` は生成物なので git 管理しない。
+`tsconfig.base.json` は開発時の型検査用に `"noEmit": true` である。出荷専用の
+`tsconfig.release.json` だけがこれを上書きして emit する。`tsc -p tsconfig.release.json` が
+`dist/` に `.js` + `.d.ts` + source map を直接出す(バンドラを介さない)。esbuild によるバンドルは
+廃止した — バンドルは `exports` サブパスと declaration map の型同一性を壊すため
+（組織共通のビルド標準 §2.4）。`dist/` は生成物なので git 管理しない。
 
 現在の出荷経路:
 
-1. `pnpm build` で `dist/` に `.js` + `.d.ts` + source map を出す
+1. `pnpm build` は `scripts/clean-dist.mjs` で `dist/` を空にしてから
+   `tsc -p tsconfig.release.json` で `.js` + `.d.ts` + source map を出す
 2. `package.json` の `exports` と `files` は `dist/` を指す
-3. `prepublishOnly` で `pnpm verify` を強制する
-4. CI で `pnpm build` まで確認する。publish job は認証・リリース承認を伴うため CI の通常 job には置かない
+3. `pnpm package:verify` が `pnpm build` を実行したうえで `scripts/verify-package.mjs` を走らせ、
+   `pnpm pack` した実際のアーカイブと `dist/` の runtime export を検証する
+4. `prepublishOnly` で `pnpm verify && pnpm package:verify` を強制する
+5. CI は `Verify` `Coverage` `Verify package boundary` `Audit dependencies` を独立したステップとして
+   実行する。publish 自体は別の Release workflow が担い、`main` へのバージョン変化を検知したときだけ
+   `pnpm verify && pnpm package:verify` を再実行してから publish する
+   （組織共通のリリース標準 §3.3。認証・タグ付けを伴うため通常の CI job には置かない）
 
 `@changesets/cli` はバージョニング・CHANGELOG 生成の入り口として既に導入済みである
 （`.changeset/config.json`、組織共通のリリース標準 §1）。変更内容に応じて changeset を追加し、
@@ -59,12 +70,14 @@ source map を生成する。`dist/` は生成物なので git 管理しない�
 ```json
 "publishConfig": {
   "registry": "https://npm.pkg.github.com",
-  "access": "restricted"
+  "access": "public"
 }
 ```
 
 plan.md §9 の未決事項に「パッケージ公開先（GitHub Packages / private registry）」があるが、
 Step 0 の実装として GitHub Packages を選んである。組織 `nerima-games` の下に 16 パッケージが並ぶ。
+`access` は `public`（16 リポジトリが public 化済みのため。`restricted` のままだと新規 publish が
+private に戻り、public な下流リポジトリの CI が GitHub Packages への 403 で落ちる）。
 
 消費側は `.npmrc` に次を要する:
 
