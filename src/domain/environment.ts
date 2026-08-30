@@ -8,7 +8,7 @@ import {
   intersects,
   isRestingOn,
   position,
-} from './coordinates'
+} from './coordinates.js'
 import type {
   BlockEnvironment,
   BlockHazards,
@@ -16,9 +16,9 @@ import type {
   FluidEffects,
   FluidStateAt,
   SurfaceEffects,
-} from './environment-types'
-import type { Body } from './integrate'
-import { FULL_BLOCK_SHAPE } from './shape-data'
+} from './environment-types.js'
+import type { Body } from './integrate.js'
+import { FULL_BLOCK_SHAPE } from './shape-data.js'
 import type { Position } from '@nerima-games/mc-kernel'
 
 const DEFAULT_SURFACE_EFFECTS: SurfaceEffects = { friction: 1, movementDrag: 0 }

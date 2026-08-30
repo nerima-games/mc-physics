@@ -8,8 +8,8 @@ import {
   inverseMassOf,
   normalizedOptions,
   potentialPairs,
-} from './entity-collision'
-import { CentreY } from './coordinates'
+} from './entity-collision.js'
+import { CentreY } from './coordinates.js'
 import type { Position } from '@nerima-games/mc-kernel'
 
 const translated = (entity: EntityCollider, dx: number, dy: number, dz: number): EntityCollider => {

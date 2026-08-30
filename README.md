@@ -83,7 +83,7 @@ $ direnv allow          # flake.nix の devShell で nodejs_24 + corepack が入
 $ pnpm install
 ```
 
-Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
+Nix を使わない場合は Node.js 24 以上と pnpm 11.24.0 を用意する
 （`package.json` の `packageManager` が版を pin しているので `corepack pnpm ...` でよい）。
 
 > **注意**: ツールチェーンは `flake.nix` + `flake.lock` で管理する。
@@ -100,12 +100,10 @@ Nix を使わない場合は Node.js 24 以上と pnpm 11 を用意する
 | `pnpm test` | Vitest の同期テストと property-based test |
 | `pnpm test:watch` | vitest watch |
 | `pnpm test:coverage` | カバレッジ計測。4 指標(statements/branches/functions/lines)とも 100% のしきい値を強制する |
-| `pnpm build` | ESM の `dist/index.js` と型宣言・source map を生成 |
+| `pnpm build` | `scripts/clean-dist.mjs` で `dist/` を空にしてから `tsc -p tsconfig.release.json` で ESM の `dist/index.js` と型宣言・source map を生成（バンドラを介さない） |
 | `pnpm benchmark` | ビルド済み ESM 成果物を使う決定論的な衝突ベンチマーク |
-| `pnpm pack --dry-run` | npm 配布物に含まれるファイルを確認 |
-| `pnpm peers check` | peer dependency の整合性を確認 |
-| `pnpm verify:package` | `package.json` の export map から生成済み `dist` を読み込む smoke |
-| `pnpm verify` | `typecheck && lint && test && test:coverage && build && verify:package`。公開前に実行する全ゲート |
+| `pnpm package:verify` | `pnpm build` を実行したうえで、`pnpm pack` した実際のアーカイブの内容と `package.json` の export map から読み込む runtime/型宣言 smoke を検証 |
+| `pnpm verify` | `typecheck && lint && test`。カバレッジ（`test:coverage`）とパッケージ境界検証（`package:verify`）は別ゲート |
 
 ## 使い方
 

@@ -77,11 +77,11 @@ export const GLIDE_CLIMB_CONVERSION_PER_SECOND = 0.8
 /** Unitless: how much of the horizontal speed spent climbing becomes vertical speed. */
 export const GLIDE_CLIMB_LIFT_MULTIPLIER = 3.5
 /** A 10%-per-tick turn-toward-look-direction blend, continuised. */
-export const GLIDE_TURN_RATE_PER_SECOND = decayRatePerSecond(TURN_KEEP_PER_TICK)
+export const GLIDE_TURN_RATE_PER_SECOND: number = decayRatePerSecond(TURN_KEEP_PER_TICK)
 /** Community-reversed per-tick horizontal air drag, continuised. */
-export const GLIDE_HORIZONTAL_DRAG_PER_SECOND = decayRatePerSecond(HORIZONTAL_DRAG_KEEP_PER_TICK)
+export const GLIDE_HORIZONTAL_DRAG_PER_SECOND: number = decayRatePerSecond(HORIZONTAL_DRAG_KEEP_PER_TICK)
 /** Community-reversed per-tick vertical air drag, continuised. */
-export const GLIDE_VERTICAL_DRAG_PER_SECOND = decayRatePerSecond(VERTICAL_DRAG_KEEP_PER_TICK)
+export const GLIDE_VERTICAL_DRAG_PER_SECOND: number = decayRatePerSecond(VERTICAL_DRAG_KEEP_PER_TICK)
 
 export const DEFAULT_GLIDE_CONFIG: GlideConfig = {
   climbConversionPerSecond: GLIDE_CLIMB_CONVERSION_PER_SECOND,

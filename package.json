@@ -15,12 +15,12 @@
   "license": "MIT",
   "engines": {
     "node": ">=24.0.0",
-    "pnpm": ">=11.0.0"
+    "pnpm": ">=11.24.0"
   },
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "pnpm@11.24.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "access": "public"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -46,32 +46,29 @@
     "voxel-dda"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.build.json --noEmit --pretty false && tsc -p tsconfig.test.json --pretty false",
-    "build": "corepack pnpm build:types && corepack pnpm build:js",
-    "build:types": "tsc -p tsconfig.build.json --pretty false",
-    "build:js": "esbuild src/index.ts --bundle --format=esm --platform=neutral --target=es2024 --external:@nerima-games/mc-kernel --external:effect --sourcemap=external --outfile=dist/index.js",
-    "prepublishOnly": "corepack pnpm verify",
-    "lint": "oxlint --deny-warnings src scripts test",
+    "benchmark": "pnpm build && node scripts/benchmark.mjs",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.release.json --pretty false",
+    "lint": "oxlint --deny-warnings src scripts test && ast-grep scan",
     "lint:fix": "oxlint --fix src scripts test",
+    "package:verify": "pnpm build && node scripts/verify-package.mjs",
+    "prepublishOnly": "pnpm verify && pnpm package:verify",
     "test": "vitest run",
-    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "benchmark": "corepack pnpm build && node scripts/benchmark.mjs",
-    "verify:package": "node scripts/package-smoke.mjs",
-    "verify": "corepack pnpm typecheck && corepack pnpm lint && corepack pnpm test && corepack pnpm test:coverage && corepack pnpm build && corepack pnpm verify:package"
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.build.json --pretty false && tsc -p tsconfig.test.json --pretty false",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
     "@nerima-games/mc-kernel": "0.5.0",
-    "effect": "^3.22.1"
+    "effect": "3.22.1"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "^1.0.0",
-    "@changesets/cli": "^3.0.1",
-    "@types/node": "^26.4.0",
-    "@vitest/coverage-v8": "^4.1.11",
-    "esbuild": "^0.28.2",
-    "tsx": "^4.23.12",
+    "@changesets/changelog-github": "1.0.0",
+    "@changesets/cli": "3.0.1",
+    "@types/node": "26.4.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "tsx": "4.23.12",
     "typescript": "7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "4.1.11"
   }
 }

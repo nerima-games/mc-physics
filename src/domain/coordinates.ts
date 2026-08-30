@@ -44,24 +44,24 @@
  * `FULL_BLOCK_SHAPE` below is the reference's `FULL_BLOCK_COLLISION_SHAPE`
  * (`packages/game/domain/aabb-collision-shapes.ts:16-23`).
  */
-import { COLLISION_SHAPE_AABBS, FULL_BLOCK_SHAPE } from './shape-data'
+import { COLLISION_SHAPE_AABBS, FULL_BLOCK_SHAPE } from './shape-data.js'
 import { Brand } from 'effect'
 import type { CollisionShape } from '@nerima-games/mc-kernel'
 
 /** Y of the plane an entity's feet rest on. What spawn logic and game rules speak. */
 export type FootY = number & Brand.Brand<'FootY'>
 
-export const FootY = Brand.nominal<FootY>()
+export const FootY: Brand.Brand.Constructor<FootY> = Brand.nominal<FootY>()
 
 /** Y of the centre of an entity's AABB. What the integrator and resolver speak. */
 export type CentreY = number & Brand.Brand<'CentreY'>
 
-export const CentreY = Brand.nominal<CentreY>()
+export const CentreY: Brand.Brand.Constructor<CentreY> = Brand.nominal<CentreY>()
 
 /** Vertical half-extent of an entity's AABB. Never negative. */
 export type HalfHeight = number & Brand.Brand<'HalfHeight'>
 
-export const HalfHeight = Brand.refined<HalfHeight>(
+export const HalfHeight: Brand.Brand.Constructor<HalfHeight> = Brand.refined<HalfHeight>(
   (value) => Number.isFinite(value) && value > 0,
   (value) => Brand.error(`HalfHeight must be a positive finite number, received ${value}`),
 )

@@ -1,5 +1,5 @@
 import type { BlockCapabilities, BlockProperties, FluidKind, Position } from '@nerima-games/mc-kernel'
-import type { BlockShape } from './coordinates'
+import type { BlockShape } from './coordinates.js'
 
 export type BlockSample = Readonly<{
   readonly properties: BlockProperties

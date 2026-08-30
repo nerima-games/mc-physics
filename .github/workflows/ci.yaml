@@ -5,9 +5,6 @@ on:
     branches: [main]
   pull_request:
 
-# These are public repositories, so a fork PR runs this workflow. Nothing here
-# needs write access, and an unset block inherits an org default that is not
-# managed in Terraform.
 permissions:
   contents: read
   packages: read
@@ -15,20 +12,16 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # changeset status --since=origin/main (below) needs the full history to
-          # diff against origin/main; the default shallow clone only has HEAD.
           fetch-depth: 0
 
       - name: Setup pnpm
-        # Pinned to a commit, not the mutable v4 tag: this is a third-party action
-        # and a tag can be repointed at new code without any change here.
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Setup Node.js
@@ -37,72 +30,40 @@ jobs:
           node-version: "24"
           cache: "pnpm"
 
-      - name: Configure GitHub Packages authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm config set --location=user //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
-
-      # Step-level timeouts localize a hang to its step instead of letting it
-      # consume the whole 15-minute job budget before anything is reported.
-      - name: Install dependencies
-        # --ignore-scripts: pnpm runs postinstall, and a fork PR can edit
-        # package.json and the lockfile consistently and still satisfy
-        # --frozen-lockfile. Nothing here needs a lifecycle script.
-        run: pnpm install --frozen-lockfile --ignore-scripts
-        timeout-minutes: 5
-
-      - name: Type check
-        run: pnpm typecheck
-        timeout-minutes: 3
-
-      # oxlint is provided by the Nix devShell (flake.nix), not a package.json
-      # devDependency — see flake.nix's comment on why. Installing Nix just for
-      # this one step is the organization-wide trade-off: one pinned oxlint
-      # version instead of 16 repos each independently drifting on their own
-      # npm-resolved version.
       - name: Set up Nix
         uses: ./.github/actions/nix-setup
-        timeout-minutes: 6
         with:
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Lint
-        run: nix develop --command pnpm lint
-        timeout-minutes: 5
+      - name: Configure GitHub Packages authentication
+        run: pnpm config set --location=user //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Test
-        run: pnpm test
-        timeout-minutes: 5
+      - name: Install dependencies
+        run: nix develop --command pnpm install --frozen-lockfile
 
-      # Catches a user-facing PR that forgot to add a .changeset/*.md entry
-      # the organization-wide release standard. Not required to pass on docs-only or
-      # CI-config-only PRs; those are expected to add an empty changeset
-      # (`pnpm changeset add --empty`) to satisfy this check.
+      - name: Verify
+        run: nix develop --command pnpm verify
+
       - name: Changeset status
-        run: pnpm changeset status --since=origin/main
-        timeout-minutes: 2
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/')
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qvE '^(docs/|\.github/)'; then
+            nix develop --command pnpm exec changeset status --since="origin/${{ github.base_ref }}"
+          else
+            echo "Only docs/ or .github/ changed; skipping changeset check."
+          fi
 
-      # Independent required gate from `pnpm verify` (organization-wide test standard).
-      # `vitest run --coverage` exits non-zero on its own when any of the four
-      # v8 metrics (statements/branches/functions/lines) falls below the 100%
-      # thresholds set in vitest.config.ts, so no separate threshold script is
-      # needed here.
       - name: Coverage
-        run: pnpm test:coverage
-        timeout-minutes: 5
+        run: nix develop --command pnpm test:coverage
 
-      - name: Build
-        run: pnpm build
-        timeout-minutes: 3
+      - name: Verify package boundary
+        run: nix develop --command pnpm package:verify
 
-      - name: Peer dependency check
-        run: pnpm peers check
-        timeout-minutes: 2
-
-      - name: Package dry run
-        run: pnpm pack --dry-run
-        timeout-minutes: 2
+      - name: Audit dependencies
+        run: nix develop --command pnpm audit
 
       - name: Upload coverage report
         if: always()

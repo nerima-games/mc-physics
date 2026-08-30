@@ -4,10 +4,10 @@ import {
   CentreY,
   blockAABB,
   collidesWith,
-} from './coordinates'
-import { blockShapesAt, boxAt } from './resolve-shapes'
-import type { Body } from './integrate'
-import type { ResolveOptions } from './resolve-types'
+} from './coordinates.js'
+import { blockShapesAt, boxAt } from './resolve-shapes.js'
+import type { Body } from './integrate.js'
+import type { ResolveOptions } from './resolve-types.js'
 
 type SweepAxis = 'x' | 'y' | 'z'
 
@@ -203,7 +203,7 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
   return { axis: nearestAxis, time: nearestTime }
 }
 
-export const DIAMETER_FACTOR = 1 + 1
+export const DIAMETER_FACTOR: number = 1 + 1
 const MAX_SWEEP_COLLISIONS_PER_STEP = 3
 
 export const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptions): Body => {

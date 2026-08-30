@@ -4,11 +4,11 @@ import {
   CentreY,
   blockAABB,
   isRestingOn,
-} from './coordinates'
-import { type AxisState, clampAxis } from './resolve-axis'
-import { blockShapesAt, boxAt, forEachCollidingBlock } from './resolve-shapes'
-import type { Body } from './integrate'
-import type { ResolveOptions } from './resolve-types'
+} from './coordinates.js'
+import { type AxisState, clampAxis } from './resolve-axis.js'
+import { blockShapesAt, boxAt, forEachCollidingBlock } from './resolve-shapes.js'
+import type { Body } from './integrate.js'
+import type { ResolveOptions } from './resolve-types.js'
 
 export const isSupported = (options: ResolveOptions, box: AABB): boolean => {
   const feetCell = Math.floor(box.minY)

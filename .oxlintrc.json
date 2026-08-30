@@ -3,21 +3,17 @@
   // oxlint is the ONLY lint/format configuration in this repository.
   // There is deliberately no prettier, no biome and no .editorconfig.
   //
-  // NOTE on the simulation-source clock ban: oxlint 0.12 does not implement
+  // NOTE on the simulation-source clock ban: oxlint does not implement
   // `no-restricted-syntax` or `no-restricted-properties`, and while
   // `no-restricted-globals` is listed by `oxlint --rules` it is not
-  // implemented either (no checkmark). Verified empirically against oxlint
-  // 0.12.0: a file containing `Date.now()` produces 0 diagnostics under all
-  // three rules. `scripts/check-dependency-whitelist.ts`, which used to
-  // enforce this ban outside of oxlint, has been removed org-wide
-  // (PACKAGE_STANDARD.md "scripts/check-dependency-whitelist.ts の廃止";
-  // DEPENDENCY_POLICY.md §5). The org standard leaves a replacement for this
-  // specific check ("checks not expressible as no-restricted-imports") to
-  // each repository's discretion and does not require one. There is
-  // currently no automated enforcement of the simulation-source clock ban in
-  // this repository. The benchmark harness is the explicit measurement
-  // exception. When oxlint gains `no-restricted-syntax`, enforce the ban for
-  // src/ here.
+  // implemented either (no checkmark). `scripts/check-dependency-whitelist.ts`,
+  // which used to enforce this ban outside of oxlint, has been removed
+  // org-wide (PACKAGE_STANDARD.md "scripts/check-dependency-whitelist.ts の
+  // 廃止"; DEPENDENCY_POLICY.md §5). The replacement is structural, not
+  // textual: `.ast-grep/rules/no-wall-clock-read.yml` (run via `ast-grep
+  // scan`, sgconfig.yml) bans `Date.now()` / `performance.now()` / `new
+  // Date()` in src/. The benchmark harness (scripts/) is the explicit
+  // measurement exception and is outside that rule's `files` scope.
   "env": {
     "es2022": true,
     "node": true
@@ -109,12 +105,20 @@
     // (see the clock-ban NOTE above) but this repo's `oxlint.json` was
     // never actually loaded by oxlint until it was renamed to `.oxlintrc.json`
     // (oxlint only auto-discovers the latter; verified empirically). Loading
-    // it for real against oxlint 1.75.0 fails `--print-config` with
-    // `Rule '<name>' not found in plugin 'eslint'` for every rule in the list
-    // above: oxc removed these pure-formatting rules from oxlint (they are
-    // now the domain of the separate `oxfmt` formatter, not in scope here).
+    // it for real against the pinned oxlint 1.75.0 (flake.nix's nixpkgs pin
+    // comment) fails `--print-config` with `Rule '<name>' not found in
+    // plugin 'eslint'` for every rule in the list above, `one-var` included:
+    // oxc had removed these pure-formatting rules (now the domain of the
+    // separate `oxfmt` formatter, not in scope here) as of 1.75.0. `one-var`
+    // specifically is reintroduced by oxlint some time before 1.79.0 (Wave 0
+    // measured it live under 1.79.0, `style: warn` turning it on repo-wide
+    // with no config change here) but the pinned 1.75.0 does not have it —
+    // adding an explicit `"one-var": "off"` entry here would itself break
+    // `--print-config` at the pinned version, so nothing is added for it.
     // Left out rather than re-added; re-introduce only if/when oxlint
-    // reinstates an equivalent rule.
+    // reinstates an equivalent rule AND the pin advances past 1.75.0 (at
+    // which point `one-var` will need an explicit disable — see flake.nix's
+    // nixpkgs-pin comment for why 1.79.0+ is not used yet).
     "no-array-method-this-argument": "warn",
     "no-bitwise": "warn",
     // `ignorePattern` carves out `/* v8 ignore ... */` coverage directives:
@@ -144,7 +148,7 @@
     // subpaths), (b) exempt `@nerima-games/mc-kernel` (root and subpaths),
     // and (c) still flag look-alikes such as `@nerima-games/mc-kernel-evil`.
     "no-restricted-imports": [
-      "warn",
+      "error",
       {
         "paths": [
           {
@@ -156,7 +160,7 @@
         "patterns": [
           {
             "group": ["@nerima-games/**", "!@nerima-games/mc-kernel", "!@nerima-games/mc-kernel/**"],
-            "message": "mc-physics is a Tier1 library (DEPENDENCY_POLICY.md) and must not depend on any other @nerima-games/* package. mc-kernel is universally importable and exempt."
+            "message": "mc-physics is Tier1 (DEPENDENCY_POLICY.md §1); only the listed packages may be imported."
           }
         ]
       }

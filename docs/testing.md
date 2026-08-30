@@ -10,13 +10,11 @@
 | `pnpm lint` | oxlint。このリポジトリ唯一の lint / format 設定（prettier も biome も .editorconfig も置かない）。**`--deny-warnings` 付きで走る**ため、`warn` のルールもビルドを落とす（`.oxlintrc.json` は 5 カテゴリすべてと個別 40 ルールが `warn`、`error` は 2 つだけ。このフラグが無かった頃は実質その 2 つしかゲートになっていなかった） |
 | `pnpm test` | Vitest の同期テストと property-based test |
 | `pnpm test:coverage` | カバレッジ計測。4 指標 100% のしきい値を強制する(§3 参照) |
-| `pnpm build` | ESM 実行成果物・型宣言・source map を `dist/` に生成する |
-| `pnpm verify:package` | package export map 経由で生成済み `dist/` を import し、公開 runtime export を検査する |
+| `pnpm build` | `scripts/clean-dist.mjs` で `dist/` を空にしてから `tsc -p tsconfig.release.json` で ESM 実行成果物・型宣言・source map を `dist/` に生成する（バンドラを介さない） |
+| `pnpm package:verify` | `pnpm build` を実行したうえで `scripts/verify-package.mjs` を走らせる。`pnpm pack` した実際のアーカイブに `dist/index.js` / `dist/index.d.ts` が含まれ `src/` が含まれないこと、公開 runtime export、型宣言経由の consumer 型検査を検証する |
 | `pnpm benchmark` | ビルド済み ESM 成果物を使う決定論的な衝突ベンチマーク |
-| `pnpm pack --dry-run` | npm 配布物に含まれるファイルを確認する |
-| `pnpm peers check` | peer dependency の整合性を確認する |
-| `nix flake check --all-systems` | 宣言した全システムの flake 評価を確認する |
-| `pnpm verify` | `typecheck` / `lint` / `test` / `test:coverage` / `build` / `verify:package` を直列実行する |
+| `nix flake check --no-build --all-systems` | 宣言した全システムの flake 評価を確認する |
+| `pnpm verify` | `typecheck && lint && test` を直列実行する 3 段ゲート。カバレッジ（`test:coverage`）とパッケージ境界検証（`package:verify`）は CI の独立したステップとして別途実行する（組織共通のテスト標準 §1・§3） |
 
 `pnpm check:deps`（`scripts/check-dependency-whitelist.ts`）と `pnpm api:check` / `pnpm api:update`
 （`api-lock.md` + `scripts/api-lock.ts`）は組織共通の標準移行に伴い廃止された。
@@ -30,7 +28,7 @@ $ direnv allow          # flake.nix の devShell で Node.js 24 + corepack が�
 $ pnpm install
 ```
 
-Nix を使わない場合は Node.js 24 以上と pnpm 11.17.0 が要る。
+Nix を使わない場合は Node.js 24 以上と pnpm 11.24.0 が要る。
 `package.json` の `packageManager` が版を pin しているので `corepack pnpm ...` でよい。
 
 > ツールチェーンは `flake.nix` + `flake.lock` で管理する。
@@ -164,36 +162,41 @@ step height を超える段差の拒否を固定している。
 
 現在のリリース前チェック:
 
-1. `pnpm verify` で型検査・lint・通常テスト・カバレッジ・ビルド・package export smoke を実行する
-2. `pnpm pack --dry-run` で `dist/` を含む公開ファイルだけを確認する
+1. `pnpm verify` で型検査・lint・通常テストを実行し、`pnpm test:coverage` でカバレッジを確認する
+2. `pnpm package:verify` で `dist/` のビルドと、`pnpm pack` した実際のアーカイブに含まれるファイル・
+   runtime export・型宣言経由の consumer 型検査を確認する
 3. `0.x` → `1.0.0` の昇格は、mc-sim が実際に消費して契約を確認した後に判断する
 
 ## 5. CI
 
-`.github/workflows/ci.yaml` は `pnpm verify` の各ゲートを独立したステップとして job に展開し、
-カバレッジと changeset の付け忘れ検出も加えたものである
-（失敗箇所が step 名で分かるようにするため。組織共通のテスト標準 §1・§3）。
-job 全体に `timeout-minutes: 15`、**さらに各ステップにも個別の `timeout-minutes` を設定してある**
-（ハングした場合に、job 全体の予算を使い切る前に、どのステップが詰まったか特定できるようにするため）:
+`.github/workflows/ci.yaml` は組織標準のワークフロー（15 runtime repo 共通の形。組織共通のビルド標準
+§2.5）。すべてのコマンドを `nix develop --command` 経由で実行する — oxlint は `package.json` の
+devDependency ではなく `flake.nix` の devShell が提供するため、他のどのステップも Nix シェルの外では
+意味を持たない。job 全体に `timeout-minutes: 20`:
 
-1. Checkout（`actions/checkout`、commit SHA 固定。組織共通のサプライチェーン標準）
+1. Checkout（`actions/checkout`、commit SHA 固定、`fetch-depth: 0`。組織共通のサプライチェーン標準）
 2. Setup pnpm（`pnpm/action-setup`、commit SHA 固定）
 3. Setup Node.js 24（`actions/setup-node`、commit SHA 固定。pnpm キャッシュ有効）
-4. Configure GitHub Packages authentication（`GITHUB_TOKEN` を pnpm の user 設定へ渡す）
-5. `pnpm install --frozen-lockfile --ignore-scripts`
-6. `pnpm typecheck`
-7. Set up Nix（`./.github/actions/nix-setup`。oxlint は `package.json` の devDependency ではなく
-   `flake.nix` の devShell が提供する。理由は `flake.nix` のコメントと `architecture.md` §6 を参照）
-8. `nix develop --command pnpm lint`
-9. `pnpm test`
-10. `pnpm changeset status --since=origin/main` —— ユーザー向け変更に changeset の付け忘れがないか
-    検出する（組織共通のリリース標準 §1.2）
-11. `pnpm test:coverage` —— **ハードゲート**。4 指標 100% のしきい値を下回れば非ゼロ終了する（§3）
-12. `pnpm build` —— 公開する ESM・型宣言・source map が生成できることを確認する
-13. `pnpm peers check` —— peer dependency の整合性を確認する
-14. `pnpm pack --dry-run` —— 公開ファイルだけが npm 配布物に含まれることを確認する
-15. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定、`if: always()`。
+4. Set up Nix（`./.github/actions/nix-setup`）
+5. Configure GitHub Packages authentication（`GITHUB_TOKEN` を pnpm の user 設定へ渡す。public repo
+   でも GitHub Packages からの解決に要る）
+6. `nix develop --command pnpm install --frozen-lockfile`
+7. `nix develop --command pnpm verify` —— `typecheck && lint && test` の3段
+8. `nix develop --command pnpm exec changeset status --since=origin/main`（`pull_request` のときだけ。
+   `docs/` か `.github/` だけの変更はスキップ） —— ユーザー向け変更に changeset の付け忘れがないか
+   検出する（組織共通のリリース標準 §1.2）
+9. `nix develop --command pnpm test:coverage` —— **ハードゲート**。4 指標 100% のしきい値を下回れば
+   非ゼロ終了する（§3）
+10. `nix develop --command pnpm package:verify` —— `dist/` のビルドと、`pnpm pack` した実際の
+    アーカイブの内容・runtime export・型宣言を検証する
+11. `nix develop --command pnpm audit` —— 依存の脆弱性監査。advisory が出た transitive package は
+    `pnpm-workspace.yaml` の `overrides` で pin する（現在: `nanoid`、GHSA-2v37-7h3g-55p8）
+12. カバレッジレポートを artifact に upload（`actions/upload-artifact`、commit SHA 固定、`if: always()`。
     7 日保持）
+
+publish は別の `.github/workflows/release.yaml` が担う: `main` への push で `package.json` の
+`version` が変化していたときだけ `pnpm verify && pnpm package:verify` を再実行してから
+`pnpm publish --no-git-checks` する（detect → publish → tag の 3 job。組織共通のリリース標準 §3.3）。
 
 `pnpm check:deps` と `pnpm api:check` の2ステップは、それぞれの裏付けとなる
 `scripts/check-dependency-whitelist.ts` と `api-lock.md` / `scripts/api-lock.ts` が

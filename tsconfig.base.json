@@ -25,6 +25,7 @@
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
+    "strictBuiltinIteratorReturn": true,
     "strictFunctionTypes": true,
     "strictBindCallApply": true,
     "strictPropertyInitialization": true,
@@ -46,6 +47,20 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
+    // Public declarations must be derivable from each source file's explicit
+    // annotations, so an implementation-only inference change cannot silently
+    // change the package API.
+    "isolatedDeclarations": true,
+    // A type-only import must say so. The emitted JavaScript then follows from
+    // the import statement alone.
+    "verbatimModuleSyntax": true,
+    // Nothing that needs a runtime transform to have meaning: no enum, no
+    // namespace, no parameter property. The domain is types and pure
+    // computation already, so this pins the property rather than requesting a
+    // change.
+    "erasableSyntaxOnly": true,
+    // A side-effect import that resolves to nothing is an error, not a no-op.
+    "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "resolvePackageJsonExports": true,
     "resolvePackageJsonImports": true,

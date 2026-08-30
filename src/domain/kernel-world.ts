@@ -2,14 +2,14 @@ import type {
   BlockAt,
   BlockEnvironment,
   EnvironmentBlockShapeAt,
-} from './environment-types'
+} from './environment-types.js'
 import type {
   BlockPropertiesAt,
   BlockShapeAt,
   ResolveOptions,
-} from './resolve-types'
+} from './resolve-types.js'
 import { isEmpty, resolvedBlockOfId } from '@nerima-games/mc-kernel'
-import type { HalfHeight } from './coordinates'
+import type { HalfHeight } from './coordinates.js'
 
 /** Reads the block id stored at a world-space block coordinate. */
 export type BlockIdAt = (bx: number, by: number, bz: number) => number | null

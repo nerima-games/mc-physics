@@ -1,5 +1,5 @@
-import type { Body } from './integrate'
-import type { Resolution } from './resolve-types'
+import type { Body } from './integrate.js'
+import type { Resolution } from './resolve-types.js'
 
 export type LandingImpact = Readonly<{
   readonly fallDistance: number

@@ -1,16 +1,16 @@
-import { type Body, type IntegrationOptions, integrateBody } from './integrate'
-import { DIAMETER_FACTOR, resolveSweptMotion } from './resolve-sweep'
+import { type Body, type IntegrationOptions, integrateBody } from './integrate.js'
+import { DIAMETER_FACTOR, resolveSweptMotion } from './resolve-sweep.js'
 import type {
   HasGroundSupport,
   HorizontalPosition,
   Resolution,
   ResolveOptions,
-} from './resolve-types'
-import { clampAxis, resolveVertical } from './resolve-axis'
-import { isSupported, tryStepUp } from './resolve-support'
-import { CentreY } from './coordinates'
+} from './resolve-types.js'
+import { clampAxis, resolveVertical } from './resolve-axis.js'
+import { isSupported, tryStepUp } from './resolve-support.js'
+import { CentreY } from './coordinates.js'
 import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import { boxAt } from './resolve-shapes'
+import { boxAt } from './resolve-shapes.js'
 
 export type {
   BlockPropertiesAt,
@@ -19,7 +19,7 @@ export type {
   HorizontalPosition,
   Resolution,
   ResolveOptions,
-} from './resolve-types'
+} from './resolve-types.js'
 
 export const clampSneakEdge = (
   previous: HorizontalPosition,
