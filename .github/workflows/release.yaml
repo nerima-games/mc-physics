@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual re-run for a version whose automatic publish failed after the
+  # version-bump push: dispatch publishes whatever package.json currently says.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,7 +21,7 @@ jobs:
   # A red gate is supposed to be evidence about the work, so a gate that goes
   # red on its own success path has to be fixed rather than tolerated.
   detect:
-    if: github.event.before != '0000000000000000000000000000000000000000'
+    if: github.event_name == 'workflow_dispatch' || github.event.before != '0000000000000000000000000000000000000000'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -42,6 +45,12 @@ jobs:
         run: |
           set -euo pipefail
           current="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            printf 'current=%s\n' "${current}" >> "${GITHUB_OUTPUT}"
+            printf 'changed=true\n' >> "${GITHUB_OUTPUT}"
+            printf 'manual dispatch: publishing %s\n' "${current}"
+            exit 0
+          fi
           previous="$(git show "${BEFORE_SHA}:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
 
           printf 'current=%s\n' "${current}" >> "${GITHUB_OUTPUT}"
