@@ -1,5 +1,11 @@
 # @nerima-games/mc-physics
 
+## 0.2.1
+
+### Patch Changes
+
+- [#11](https://github.com/nerima-games/mc-physics/pull/11) [`27112e0`](https://github.com/nerima-games/mc-physics/commit/27112e01a25a2424af3d282f1240f207e538baeb) Thanks [@takeokunn](https://github.com/takeokunn)! - Toolchain frozen to org pin set (TypeScript 7.0.2, vitest 4.1.11, effect 3.22.1, node 24, pnpm 11.24.0); build switched to tsc emit; release workflow added
+
 ## 0.2.0
 
 ### Minor Changes
