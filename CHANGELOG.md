@@ -1,5 +1,13 @@
 # @nerima-games/mc-physics
 
+## 0.2.2
+
+### Patch Changes
+
+- [#14](https://github.com/nerima-games/mc-physics/pull/14) [`f1ac1b2`](https://github.com/nerima-games/mc-physics/commit/f1ac1b2098cdc402a7bb76d41df7f9791b7a4578) Thanks [@takeokunn](https://github.com/takeokunn)! - Bump the `@nerima-games/mc-kernel` pin from 0.5.0 to 0.7.0 (exact). The two releases in between only added a `blastResistance` property column and fixed unrelated drop-table rows; the block registry's `collisionShape` assignments and every export this package consumes (`Position`, `DeltaTimeSecs`, `CollisionShape`, `BlockProperties`, `BlockCapabilities`, `FluidKind`, `resolveBlockProperties`, `isEmpty`, `resolvedBlockOfId`, `blockIdOf`, `blockPosition`) are unchanged, so this is a pure pin alignment with no source changes.
+
+- [#13](https://github.com/nerima-games/mc-physics/pull/13) [`7221fa8`](https://github.com/nerima-games/mc-physics/commit/7221fa87d9df96d1c7047971937a1419c952f19d) Thanks [@takeokunn](https://github.com/takeokunn)! - Complete the org toolchain devDependency pin set: knip 6.33.0 (its verify gate arrives in Wave 3; the pin belongs to the Wave 0 table) plus @effect/vitest 0.30.0 where it was missing.
+
 ## 0.2.1
 
 ### Patch Changes
