@@ -1,7 +1,7 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@nerima-games/mc-kernel@0.4.0 || 0.5.0'
+  - '@nerima-games/mc-kernel@0.4.0 || 0.5.0 || 0.7.0'
 overrides:
   # GHSA-2v37-7h3g-55p8 (high): transitive via vitest -> vite -> postcss ->
   # nanoid; custom generators can loop indefinitely when size is zero. Pinned
