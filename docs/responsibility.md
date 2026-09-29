@@ -51,7 +51,7 @@
 
 ### 2.1 爆発と起爆済み TNT は kernel へ委譲した
 
-mc-kernel 0.5.0 が `planExplosion` / `applyExplosionPlan` / `primeTnt` / `planPrimedTnt` /
+mc-kernel が `planExplosion` / `applyExplosionPlan` / `primeTnt` / `planPrimedTnt` /
 `applyPrimedTntPlan` を実装したため、本リポジトリの独自実装（旧 `domain/explosion.ts` /
 `domain/primed-tnt.ts`）は削除し、`src/index.ts` から kernel の実装をそのまま re-export する。
 

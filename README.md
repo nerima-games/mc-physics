@@ -261,7 +261,7 @@ const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)
   責務である。`domain/piston.ts` の `pistonExtrusion` は、移動するブロック AABB が静止エンティティを
   押し出す変位を計算する —— この層の他の解決関数がすべて「非めり込みを維持する」のに対し、
   ピストンだけは「非めり込みを確立する」唯一の例外である（`docs/design-notes.md` P-9-7）。
-  どちらのブロックが動くか、通電判定、ブロック状態の書き換えは mc-redstone/mc-sim が所有する。
+  どちらのブロックが動くか、通電判定、ブロック状態の書き換えは mx-redstone/mc-sim が所有する。
 - **ビルド成果物を生成する。** `pnpm build` は ESM の `dist/index.js`、型宣言、source map を生成し、
   `exports` は `dist` のみを公開する。`prepublishOnly` は `pnpm verify` を実行する。
 - **カバレッジ閾値は 100%。** 計測対象の statements / branches / functions / lines をすべて

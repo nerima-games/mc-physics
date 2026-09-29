@@ -107,26 +107,30 @@ describe('movement input', () => {
     expect(applyMovementInput(staticBody, inputOf(), true, false, DeltaTimeSecs(1), config)).toBe(staticBody)
     expect(applyMovementInput(kinematicBody, inputOf(), true, false, DeltaTimeSecs(1), config)).toBe(kinematicBody)
 
-    const actual = applyMovementInput(
-      bodyOf(),
-      { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN, sprint: false, jumpPressed: false },
-      true,
-      false,
-      // Kernel's `DeltaTimeSecs` validates on construction, so a non-finite delta is
-      // reachable only by assertion (T-3 bans it). The plain `number` controls below
-      // are what this test sanitizes; the delta never could be invalid.
-      DeltaTimeSecs(0.05),
-      {
-        walkSpeed: -1,
-        sprintMultiplier: Number.NaN,
-        groundAcceleration: Number.NaN,
-        airAcceleration: -1,
-        jumpVelocity: Number.NaN,
-        fluidAscentAcceleration: Number.NaN,
-        fluidAscentMaxSpeed: -1,
-      },
-    )
-    expect(actual).toEqual(bodyOf())
+    // Every delta below is a legal `DeltaTimeSecs` and none of them changes the
+    // answer: what this function sanitises is the injected controls, and
+    // `groundAcceleration` being NaN already pins the per-step change at zero.
+    // The brand's own refusal of a non-finite delta is in test/delta-time.test.ts;
+    // a delta that is not a `DeltaTimeSecs` cannot reach this signature at all.
+    for (const seconds of [0, 0.001, 0.05, 30]) {
+      const actual = applyMovementInput(
+        bodyOf(),
+        { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN, sprint: false, jumpPressed: false },
+        true,
+        false,
+        DeltaTimeSecs(seconds),
+        {
+          walkSpeed: -1,
+          sprintMultiplier: Number.NaN,
+          groundAcceleration: Number.NaN,
+          airAcceleration: -1,
+          jumpVelocity: Number.NaN,
+          fluidAscentAcceleration: Number.NaN,
+          fluidAscentMaxSpeed: -1,
+        },
+      )
+      expect(actual).toEqual(bodyOf())
+    }
   })
 })
 

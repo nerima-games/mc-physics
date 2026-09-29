@@ -35,6 +35,12 @@ const dynamicBody = (over: Partial<Body> = {}): Body => ({
 const footYMustNotBeAcceptedAsBodyCentre: Body = {
   kind: 'dynamic',
   x: 0,
+  // A compile-time negative control for the convention this package is built
+  // around: `Body` takes the AABB centre, so a `FootY` must not be assignable to
+  // it. `@ts-expect-error` is what makes it a control rather than a comment. If
+  // the two brands ever became interchangeable, this directive would become an
+  // unused-directive error and `pnpm typecheck` would fail. Nothing reads the
+  // value; the `void` below only satisfies `noUnusedLocals`.
   // @ts-expect-error Body coordinates use the AABB centre, never its feet.
   y: FootY(0),
   z: 0,

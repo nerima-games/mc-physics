@@ -537,7 +537,7 @@ Minecraft 全体の tick 関数ではない。
 
 ### 5-1. 爆発計画（mc-kernel、`src/index.ts` から re-export）
 
-**この計算はもう本リポジトリの実装ではない。** 独自の `domain/explosion.ts` は、mc-kernel 0.5.0 が
+**この計算はもう本リポジトリの実装ではない。** 独自の `domain/explosion.ts` は、mc-kernel が
 同じ計算を実装したことを受けて、入出力の等価性を確認したうえで削除した
 （`docs/porting.md` §7、`docs/responsibility.md` §2.1）。以下の契約自体は変わっていない。
 
@@ -557,7 +557,7 @@ commit callback へ渡すだけなので、ワールド書き込み、ダメー�
 
 ### 5-2. 起爆済み TNT（mc-kernel、`src/index.ts` から re-export）
 
-**この計算もこの層の実装ではない。** 独自の `domain/primed-tnt.ts` は、mc-kernel 0.5.0 の実装との
+**この計算もこの層の実装ではない。** 独自の `domain/primed-tnt.ts` は、mc-kernel の実装との
 等価性を確認したうえで削除した（`docs/porting.md` §7、`docs/responsibility.md` §2.1）。契約は変わって
 いない: `primeTnt` は fuse を有限非負へ正規化する。`planPrimedTnt` は 1 回の呼び出しで fuse を進め、
 `MAX_TNT_FUSE_ADVANCE_SECS` を超える delta は `deferredSecs` として返す。fuse が尽きたフレームでは

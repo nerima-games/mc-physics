@@ -94,6 +94,12 @@ export const resolveEntityCollisions = (
   options: EntityCollisionOptions = DEFAULT_ENTITY_COLLISION_OPTIONS,
 ): EntityCollisionResolution => {
   const normalized = normalizedOptions(options)
+  /**
+   * One copy, taken once. Every index below is derived from `current` itself, so
+   * the reads stay in range for the whole call, and a caller-supplied accessor is
+   * dereferenced exactly here and never again.
+   * `test/entity-collision.test.ts` pins both halves of that contract.
+   */
   const current = [...entities]
   const collisions = new Map<string, EntityCollision>()
 
@@ -103,9 +109,12 @@ export const resolveEntityCollisions = (
       const first = current[firstIndex]
       const second = current[secondIndex]
       /**
-       * Same guard and same proof as in `domain/entity-collision.ts`; `current`
-       * keeps its length across the iteration loop, so the writes below never
-       * invalidate an index `potentialPairs` already derived.
+       * `current` is this function's own dense copy and its length is fixed for
+       * the whole call, so the index `potentialPairs` derived is always in range
+       * and the guard is never false. `noUncheckedIndexedAccess` cannot see that,
+       * which is the case `vitest.config.ts`'s thresholds comment reserves an
+       * exemption for. The live read matters: the writes below are what later
+       * pairs of the same iteration must resolve against.
        */
       /* v8 ignore start */
       if (first && second) {
