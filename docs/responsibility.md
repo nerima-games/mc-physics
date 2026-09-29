@@ -179,7 +179,7 @@ mc-physics に世界の床の概念は無い。
 | 親（依存先） | `mc-kernel` のみ |
 | 子（依存元） | `mc-sim` のみ |
 
-`@nerima-games/mc-kernel@0.5.0` を実行時依存として直接利用し、`BlockProperties` と
+`@nerima-games/mc-kernel` を実行時依存として直接利用し（版は `package.json#dependencies` が正）、`BlockProperties` と
 `DeltaTimeSecs` を再利用する。`architecture.md` §7 を参照。
 
 座標語彙そのものも kernel と共有する。`domain/coordinates.ts` はかつて独自のローカルな

@@ -144,7 +144,7 @@ export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: 
 `DeltaTimeSecs` は当初 `[MIN_DELTA_SECS, MAX_DELTA_SECS]` に refine してあり、
 「クランプを通らない値は構築できない」と説明していた。**それは誤りだった。**
 
-`DeltaTimeSecs` は `@nerima-games/mc-kernel@0.5.0` の資産であり、kernel は「有限かつ非負」に refine している
+`DeltaTimeSecs` は `@nerima-games/mc-kernel` の資産であり、kernel は「有限かつ非負」に refine している
 （`mc-kernel` の `quantities`。ゼロは合法）。本リポジトリはその値と型を直接再 export し、時間量の検証を複製しない。
 
 したがって kernel 経由で作った `DeltaTimeSecs(30)` は型上は受け取れるが、フレーム幅として安全かどうかは
@@ -684,7 +684,7 @@ export const pistonExtrusion: (
 `move.distance === 0` は（`before` がすでに重なっていても）押し出しとして扱わない。静的な重なりは
 一般の resolver が維持すべき前提であり、この例外が確立するものではないからである。`obstacles` に
 far-side の障害物を渡すと、full push の余地がない場合に `crushed: true` と部分的な変位を返す。
-どのブロックが動くか、通電判定、ブロック状態の書き換えは mc-redstone/mc-sim が所有する。
+どのブロックが動くか、通電判定、ブロック状態の書き換えは mx-redstone/mc-sim が所有する。
 
 ## 6. 参照実装との責務境界と未移植項目
 

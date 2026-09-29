@@ -9,7 +9,7 @@ mc-kernel への委譲であり、この層は再 export と bounded な呼び�
 
 ## 依存
 
-`@nerima-games/mc-kernel@0.5.0` を実行時依存として直接利用し、
+`@nerima-games/mc-kernel` を実行時依存として直接利用し（版は `package.json#dependencies` が正）、
 `BlockProperties`、`BlockCapabilities`、`FluidKind`、`DeltaTimeSecs`、`Position` を共有する。座標語彙も
 共有し、この層が独自に持っていたローカルな `{x, y, z}` 型とその生成関数は廃止して
 kernel の `Position`/`position` を再 export する
