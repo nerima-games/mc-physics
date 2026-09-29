@@ -1,5 +1,27 @@
 # @nerima-games/mc-physics
 
+## 0.3.0
+
+### Minor Changes
+
+- [#25](https://github.com/nerima-games/mc-physics/pull/25) [`d42a2fc`](https://github.com/nerima-games/mc-physics/commit/d42a2fc5675a28ec0f1c448a5c477272b096ab21) Thanks [@takeokunn](https://github.com/takeokunn)! - Migrate physics time contracts to `mc-kernel` 0.8.0. `FIRST_FRAME_DELTA_SECS` now has the kernel `DeltaTimeSecs` type, while `MIN_DELTA_SECS` and `MAX_DELTA_SECS` are re-exports of the kernel frame-timing constants. Fixed tick timing uses `FixedDurationSecs`, and the compile fixture locks the public brand boundaries.
+
+### Patch Changes
+
+- [#24](https://github.com/nerima-games/mc-physics/pull/24) [`aa1f9d3`](https://github.com/nerima-games/mc-physics/commit/aa1f9d3f9749342517b08228763bdbabba8841b4) Thanks [@takeokunn](https://github.com/takeokunn)! - Make the no-type-assertion gate binding, and align the shared tsconfig and the docs with `mc-kernel` (P2 R-C1 / R-C2 / R-C4). No public API change; `test/public-api.test.ts` is untouched and still green.
+
+  `.ast-grep/rules/no-type-assertion.yml` moves from `severity: warning` to `severity: error`, so the 19 assertions ast-grep had been reporting without failing the build are now gone: 8 non-null assertions in `src/domain/entity-collision.ts` and `src/domain/entity-collision-resolve.ts`, 11 in the test suite. `as const` stays the only permitted assertion.
+
+  - `potentialPairs` now emits a pair as each entity registers into a spatial-hash cell, pairing it with the entities already in that cell, instead of walking every bucket afterwards. Each unordered pair is still produced exactly once, the dedup key, the min/max normalisation and the final ordering are untouched, and the pairs returned are identical for identical input. The bucket index is never read back at all, so no assertion is needed and no comparison is added: a bucket of n still costs n(n-1)/2 pair constructions.
+  - `detectEntityCollisions` and `resolveEntityCollisions` keep reading `entities[index]` live rather than from a snapshot, because `resolveEntityCollisions` writes resolved bodies back into that array partway through a pass and a snapshot would resolve the later pairs of one iteration against stale bodies. `noUncheckedIndexedAccess` types that read as optional, so each site narrows with a guard, and the two sites differ in what that guard is worth. `entities` is the caller's array, so `detectEntityCollisions`' guard is live: a hole, or an accessor that answers once and then stops, leaves the index unreadable, and such a pair is skipped rather than resolved against a missing entity. That is now a test. `resolveEntityCollisions` works on its own dense copy taken once, so its index is always in range; that site keeps a `/* v8 ignore */` exemption with the reachability proof written out, and a second test pins the copy-once contract the proof depends on.
+  - Test helpers throw a named error instead of asserting a value into existence. An out-of-range index previously spliced `undefined` into the array under test and surfaced as an unrelated failure.
+  - `test/movement.test.ts` no longer passes `Number.NaN as never`. Kernel's `DeltaTimeSecs` is an effect `Brand.Constructor` whose only construction path validates, so an invalid instance is reachable only through a type assertion, which T-3 bans. The test now runs the same invalid-control case across several legal deltas, which is the contract that survives: the controls are sanitised, and the delta's own rejection is covered separately in `test/delta-time.test.ts`.
+  - `test/integrate.test.ts`'s `@ts-expect-error` is a deliberate compile-time negative control for the foot-Y/centre-Y brand separation. Its comment now says so, and notes that an unused-directive error is what catches the brands becoming interchangeable.
+
+  `tsconfig.base.json` is now a copy of `mc-kernel`'s: all 46 compiler options are identical, `lib` included, and the only textual differences are comments. One of those comments was wrong here and is corrected, it claimed `tsconfig.build.json` overrides `noEmit` for a declaration-only build while `tsconfig.release.json` is the only emitting configuration.
+
+  No document states a version now. `docs/versioning.md` §1 no longer claims `0.1.7` (the package is at `0.2.2`) and its `0.x` bump examples are version-agnostic; `README.md`, `docs/architecture.md`, `docs/responsibility.md`, `docs/porting.md` and `docs/public-api.md` name `mc-kernel` without a hardcoded `@0.5.0`. The piston ownership boundary is attributed to `mx-redstone` everywhere it appeared, in `README.md`, `docs/public-api.md` and the `src/domain/piston.ts` header: `nerima-games/mx-redstone` exists and `nerima-games/mc-redstone` does not.
+
 ## 0.2.2
 
 ### Patch Changes
