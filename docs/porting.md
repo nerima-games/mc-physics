@@ -187,7 +187,7 @@ plan.md §3.4 の「プロパティテスト（エネルギー非増加、めり
 
 ### 発見の経緯
 
-mc-kernel 0.5.0 は、爆発の bounded plan（`planExplosion` / `applyExplosionPlan`）と
+mc-kernel は、爆発の bounded plan（`planExplosion` / `applyExplosionPlan`）と
 起爆済み TNT の fuse 進行（`primeTnt` / `planPrimedTnt` / `applyPrimedTntPlan`）を実装した。
 これは本リポジトリが `domain/explosion.ts` / `domain/primed-tnt.ts` としてすでに独自実装を
 持っていた計算と同じ契約 —— 入力（ワールドの読み取り、エンティティ集合、中心・半径・seed /

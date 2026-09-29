@@ -10,6 +10,7 @@ import {
   resolveEntityCollisions,
   type Body,
   type EntityCollider,
+  type EntityCollisionResolution,
 } from '../src/index'
 
 const bodyOf = (
@@ -32,6 +33,14 @@ const entityOf = (
   mass: 1,
   ...overrides,
 })
+
+const resolvedAt = (result: EntityCollisionResolution, index: number): EntityCollider => {
+  const entity = result.entities[index]
+  if (entity === undefined) {
+    throw new Error(`resolveEntityCollisions returned ${result.entities.length} entities, wanted ${index + 1}`)
+  }
+  return entity
+}
 
 describe('entity collision detection', () => {
   it('finds deterministic axis-aligned contacts and ignores separated pairs', () => {
@@ -84,16 +93,61 @@ describe('entity collision detection', () => {
       entityOf('second', bodyOf(), { collidable: false }),
     ])).toEqual([])
   })
+
+  it('skips a pair whose entity stopped being readable instead of resolving against a missing one', () => {
+    // The two entities overlap by 0.25, so without the guard this reports a
+    // collision. The accessor answers once, for the grid walk, and not again for
+    // the narrow phase, which is what a caller-owned array with a getter or a
+    // Proxy can do to any function that reads it twice.
+    let reads = 0
+    const unreadable: EntityCollider[] = [entityOf('first', bodyOf('dynamic', 0.75))]
+    Object.defineProperty(unreadable, 1, {
+      configurable: true,
+      get: () => {
+        reads += 1
+        return reads === 1 ? entityOf('second', bodyOf('dynamic', 0.75)) : undefined
+      },
+    })
+    unreadable.length = 2
+
+    expect(detectEntityCollisions(unreadable)).toEqual([])
+    expect(reads).toBe(2)
+  })
 })
 
 describe('entity collision resolution', () => {
+  it('copies the caller array exactly once, so a second read of it cannot reach the resolver', () => {
+    // This is the contract the narrowing guard in `resolveEntityCollisions` rests
+    // on: `current` is the resolver's own copy, so an index derived from it is
+    // always in range. If the resolver re-read the caller's array, the accessor
+    // below would be consulted again and this count would rise above one.
+    let reads = 0
+    const first = entityOf('first', bodyOf('dynamic', 0, 1, 0, 1))
+    const second = entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1))
+    const unreadable: EntityCollider[] = [first]
+    Object.defineProperty(unreadable, 1, {
+      configurable: true,
+      get: () => {
+        reads += 1
+        return second
+      },
+    })
+    unreadable.length = 2
+
+    const options = { cellSize: 1, iterations: 3, restitution: 1 }
+    expect(resolveEntityCollisions(unreadable, options)).toStrictEqual(
+      resolveEntityCollisions([first, second], options),
+    )
+    expect(reads).toBe(1)
+  })
+
   it('separates dynamic bodies and applies restitution to approaching velocity', () => {
     const result = resolveEntityCollisions([
       entityOf('first', bodyOf('dynamic', 0, 1, 0, 1)),
       entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1)),
     ], { cellSize: 1, iterations: 3, restitution: 1 })
-    const first = result.entities[0]!
-    const second = result.entities[1]!
+    const first = resolvedAt(result, 0)
+    const second = resolvedAt(result, 1)
     expect(first.body.x).toBeCloseTo(-0.125)
     expect(second.body.x).toBeCloseTo(0.875)
     expect(first.body.vx).toBeCloseTo(-1)
@@ -220,8 +274,8 @@ describe('entity collision resolution properties', () => {
             collidedAtLeastOnce = true
           }
 
-          const resolvedFirst = result.entities[0]!.body
-          const resolvedSecond = result.entities[1]!.body
+          const resolvedFirst = resolvedAt(result, 0).body
+          const resolvedSecond = resolvedAt(result, 1).body
           const dvx = (resolvedFirst.vx - vx1) + (resolvedSecond.vx - vx2)
           const dvy = (resolvedFirst.vy - vy1) + (resolvedSecond.vy - vy2)
           const dvz = (resolvedFirst.vz - vz1) + (resolvedSecond.vz - vz2)

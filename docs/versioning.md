@@ -2,7 +2,9 @@
 
 - 上位仕様: plan.md §6 Step 0 / Step 3、§9
 
-## 1. 現在のバージョン: `0.1.7`
+## 1. 現在のバージョン
+
+**現在のバージョンは `package.json#version` が正であり、この文書は版番号を複製しない。**
 
 **1.0.0 にするのは、上流の消費者が実際にこのリポジトリを消費して契約を確認したときである。**
 
@@ -29,7 +31,7 @@ maintainer による裁量判断のみで行う（組織共通のリリース標
 
 したがって現在の `package.json` は:
 
-- `dependencies` に `mc-kernel@0.5.0` と `effect` を直接宣言し、共有データ契約を重複定義しない。
+- `dependencies` に `mc-kernel` と `effect` を直接宣言し（各版は `package.json#dependencies` が正）、共有データ契約を重複定義しない。
 - `exports` は `dist/index.js` と `dist/index.d.ts` を指し、利用者の実行時に TypeScript
   ソースを読み込まない。
 - `prepublishOnly` は `pnpm verify && pnpm package:verify` を実行し、公開前に型・lint・テスト
@@ -93,14 +95,14 @@ private に戻り、public な下流リポジトリの CI が GitHub Packages �
 
 > **`0.x` の間の読み替え（全 16 リポジトリ共通の方針）**
 >
-> 本リポジトリは `0.1.7` であり、下流が契約を実際に消費して確認するまで `0.x` から出ない。
-> **semver では `0.x` の破壊的変更は major bump ではなく minor bump である**（`0.1.7` → `0.2.0`）。
+> 本リポジトリは `0.x` であり、下流が契約を実際に消費して確認するまで `0.x` から出ない。
+> **semver では `0.x` の破壊的変更は major bump ではなく minor bump である**（`0.x.y` → `0.(x+1).0`）。
 > したがって以下の MAJOR / MINOR / PATCH は **`1.0.0` 到達後の分類**であり、
 > `0.x` の間は次のように読み替える。
 >
 > | 分類 | `1.0.0` 到達後 | `0.x` の間（現在） |
 > | --- | --- | --- |
-> | MAJOR | major bump | **minor bump**（`0.1.7` → `0.2.0`） |
+> | MAJOR | major bump | **minor bump**（`0.x.y` → `0.(x+1).0`） |
 > | MINOR | minor bump | patch bump |
 > | PATCH | patch bump | patch bump |
 >

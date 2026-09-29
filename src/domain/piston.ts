@@ -12,7 +12,7 @@
  * is the exception that ESTABLISHES non-embedding rather than preserving it.
  *
  * Which block moves, whether the piston is powered, and rewriting block
- * state all belong to mc-redstone/mc-sim. This module answers one geometric
+ * state all belong to mx-redstone/mc-sim. This module answers one geometric
  * question only: given where a block was and how far it is moving this
  * step, how far must a stationary entity move to end up clear of it, and is
  * there room to do so.

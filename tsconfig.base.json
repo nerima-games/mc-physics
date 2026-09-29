@@ -69,8 +69,10 @@
     "newLine": "lf",
     "stripInternal": true,
 
-    // Check configurations are no-emit; tsconfig.build.json overrides this
-    // for the declaration-only package build.
+    // The default remains check-only. `tsconfig.release.json` is the sole
+    // emitting configuration, so source imports stay type-safe while the
+    // published package exposes only generated JavaScript and declarations.
     "noEmit": true,
+
   }
 }

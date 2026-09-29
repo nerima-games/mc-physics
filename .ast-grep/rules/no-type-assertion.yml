@@ -1,8 +1,6 @@
 id: no-type-assertion
 language: TypeScript
-# Wave 0 installs at warning; W3-mc-physics removes the assertions and
-# raises to error (the Wave 0 `as`/`!` ban is scheduled for Wave 3, org-wide).
-severity: warning
+severity: error
 files:
   - "src/**/*.ts"
   - "src/**/*.tsx"

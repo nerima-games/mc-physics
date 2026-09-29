@@ -94,22 +94,40 @@ export const resolveEntityCollisions = (
   options: EntityCollisionOptions = DEFAULT_ENTITY_COLLISION_OPTIONS,
 ): EntityCollisionResolution => {
   const normalized = normalizedOptions(options)
+  /**
+   * One copy, taken once. Every index below is derived from `current` itself, so
+   * the reads stay in range for the whole call, and a caller-supplied accessor is
+   * dereferenced exactly here and never again.
+   * `test/entity-collision.test.ts` pins both halves of that contract.
+   */
   const current = [...entities]
   const collisions = new Map<string, EntityCollision>()
 
   for (let iteration = 0; iteration < normalized.iterations; iteration += 1) {
     let changed = false
     for (const [firstIndex, secondIndex] of potentialPairs(current, normalized.cellSize)) {
-      const first = current[firstIndex]!
-      const second = current[secondIndex]!
-      const collision = collisionOf(first, second)
-      if (collision) {
-        collisions.set(`${collision.firstId}:${collision.secondId}`, collision)
-        const resolved = resolvePair(first, second, collision, normalized.restitution)
-        if (resolved.changed) {
-          current[firstIndex] = resolved.first
-          current[secondIndex] = resolved.second
-          changed = true
+      const first = current[firstIndex]
+      const second = current[secondIndex]
+      /**
+       * `current` is this function's own dense copy and its length is fixed for
+       * the whole call, so the index `potentialPairs` derived is always in range
+       * and the guard is never false. `noUncheckedIndexedAccess` cannot see that,
+       * which is the case `vitest.config.ts`'s thresholds comment reserves an
+       * exemption for. The live read matters: the writes below are what later
+       * pairs of the same iteration must resolve against.
+       */
+      /* v8 ignore start */
+      if (first && second) {
+        /* v8 ignore stop */
+        const collision = collisionOf(first, second)
+        if (collision) {
+          collisions.set(`${collision.firstId}:${collision.secondId}`, collision)
+          const resolved = resolvePair(first, second, collision, normalized.restitution)
+          if (resolved.changed) {
+            current[firstIndex] = resolved.first
+            current[secondIndex] = resolved.second
+            changed = true
+          }
         }
       }
     }

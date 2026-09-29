@@ -142,6 +142,7 @@ export const potentialPairs = (
   cellSize: number,
 ): ReadonlyArray<readonly [number, number]> => {
   const cells = new Map<string, Array<number>>()
+  const pairs = new Map<number, readonly [number, number]>()
   for (let index = 0; index < entities.length; index += 1) {
     const entity = entities[index]
     if (entity && isCollidable(entity)) {
@@ -158,6 +159,16 @@ export const potentialPairs = (
             const key = cellKey(x, y, z)
             const bucket = cells.get(key)
             if (bucket) {
+              /**
+               * Each entity pairs with everyone already registered in the cell,
+               * so every unordered pair is produced once, when its later member
+               * arrives, and no bucket index is ever read back.
+               */
+              for (const existing of bucket) {
+                const first = Math.min(existing, index)
+                const second = Math.max(existing, index)
+                pairs.set(first * entities.length + second, [first, second])
+              }
               bucket.push(index)
             } else {
               cells.set(key, [index])
@@ -168,16 +179,6 @@ export const potentialPairs = (
     }
   }
 
-  const pairs = new Map<number, readonly [number, number]>()
-  for (const bucket of cells.values()) {
-    for (let left = 0; left < bucket.length; left += 1) {
-      for (let right = left + 1; right < bucket.length; right += 1) {
-        const first = Math.min(bucket[left]!, bucket[right]!)
-        const second = Math.max(bucket[left]!, bucket[right]!)
-        pairs.set(first * entities.length + second, [first, second])
-      }
-    }
-  }
   const orderedPairs = [...pairs.values()]
   orderedPairs.sort(
     ([firstLeft, secondLeft], [firstRight, secondRight]) =>
@@ -193,11 +194,20 @@ export const detectEntityCollisions = (
   const { cellSize } = normalizedOptions(options)
   const collisions: Array<EntityCollision> = []
   for (const [firstIndex, secondIndex] of potentialPairs(entities, cellSize)) {
-    const first = entities[firstIndex]!
-    const second = entities[secondIndex]!
-    const collision = collisionOf(first, second)
-    if (collision) {
-      collisions.push(collision)
+    const first = entities[firstIndex]
+    const second = entities[secondIndex]
+    /**
+     * `entities` belongs to the caller, so `noUncheckedIndexedAccess` is right to
+     * type both reads as optional: a hole, or an accessor that stops answering
+     * between the grid walk that produced the pairs and this loop, leaves the
+     * index unreadable. Such a pair is skipped rather than resolved against a
+     * missing entity. `test/entity-collision.test.ts` exercises exactly that.
+     */
+    if (first && second) {
+      const collision = collisionOf(first, second)
+      if (collision) {
+        collisions.push(collision)
+      }
     }
   }
   return collisions

@@ -9,7 +9,7 @@ mc-kernel への委譲であり、この層は再 export と bounded な呼び�
 
 ## 依存
 
-`@nerima-games/mc-kernel@0.5.0` を実行時依存として直接利用し、
+`@nerima-games/mc-kernel` を実行時依存として直接利用し（版は `package.json#dependencies` が正）、
 `BlockProperties`、`BlockCapabilities`、`FluidKind`、`DeltaTimeSecs`、`Position` を共有する。座標語彙も
 共有し、この層が独自に持っていたローカルな `{x, y, z}` 型とその生成関数は廃止して
 kernel の `Position`/`position` を再 export する
@@ -261,7 +261,7 @@ const horizontal = clampSneakEdge(previous, intended, hasGroundSupport)
   責務である。`domain/piston.ts` の `pistonExtrusion` は、移動するブロック AABB が静止エンティティを
   押し出す変位を計算する —— この層の他の解決関数がすべて「非めり込みを維持する」のに対し、
   ピストンだけは「非めり込みを確立する」唯一の例外である（`docs/design-notes.md` P-9-7）。
-  どちらのブロックが動くか、通電判定、ブロック状態の書き換えは mc-redstone/mc-sim が所有する。
+  どちらのブロックが動くか、通電判定、ブロック状態の書き換えは mx-redstone/mc-sim が所有する。
 - **ビルド成果物を生成する。** `pnpm build` は ESM の `dist/index.js`、型宣言、source map を生成し、
   `exports` は `dist` のみを公開する。`prepublishOnly` は `pnpm verify` を実行する。
 - **カバレッジ閾値は 100%。** 計測対象の statements / branches / functions / lines をすべて

@@ -51,7 +51,7 @@
 
 ### 2.1 爆発と起爆済み TNT は kernel へ委譲した
 
-mc-kernel 0.5.0 が `planExplosion` / `applyExplosionPlan` / `primeTnt` / `planPrimedTnt` /
+mc-kernel が `planExplosion` / `applyExplosionPlan` / `primeTnt` / `planPrimedTnt` /
 `applyPrimedTntPlan` を実装したため、本リポジトリの独自実装（旧 `domain/explosion.ts` /
 `domain/primed-tnt.ts`）は削除し、`src/index.ts` から kernel の実装をそのまま re-export する。
 
@@ -179,7 +179,7 @@ mc-physics に世界の床の概念は無い。
 | 親（依存先） | `mc-kernel` のみ |
 | 子（依存元） | `mc-sim` のみ |
 
-`@nerima-games/mc-kernel@0.5.0` を実行時依存として直接利用し、`BlockProperties` と
+`@nerima-games/mc-kernel` を実行時依存として直接利用し（版は `package.json#dependencies` が正）、`BlockProperties` と
 `DeltaTimeSecs` を再利用する。`architecture.md` §7 を参照。
 
 座標語彙そのものも kernel と共有する。`domain/coordinates.ts` はかつて独自のローカルな
