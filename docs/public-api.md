@@ -140,6 +140,9 @@ export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: 
 `DeltaTimeSecs` のままである。固定 tick/substep を保持する scheduler は `FixedDurationSecs` と
 `physicsSubstepDuration` を使い、物理関数を呼ぶ直前にだけ `DeltaTimeSecs(physicsSubstepDuration)` と
 明示変換する。`FixedDurationSecs` を物理関数へ直接渡したり、型 assertion で変換したりしてはならない。
+`FIRST_FRAME_DELTA_SECS` は kernel の `DeltaTimeSecs` brand を公開し、`MIN_DELTA_SECS` と
+`MAX_DELTA_SECS` は kernel の frame-timing 定数を alias 再 export する。従来の number literal 型に
+依存する利用者は、kernel の時間契約に合わせて型注釈を更新する必要がある。
 
 参照実装との差分は **NaN の扱いだけ**である。
 `Math.max(a, NaN)` は NaN であり、NaN の delta は 1 フレームで世界中の位置を汚染したうえ、

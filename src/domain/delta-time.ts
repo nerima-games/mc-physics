@@ -79,8 +79,10 @@ export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
  * Kernel's refinement, verbatim. NOT clamped — see the module header, and use
  * `clampDeltaTime` before handing one to the integrator.
  */
-export const MIN_DELTA_SECS: number = MIN_FRAME_DELTA_SECS
-export const MAX_DELTA_SECS: number = MAX_FRAME_DELTA_SECS
+export {
+  MAX_FRAME_DELTA_SECS as MAX_DELTA_SECS,
+  MIN_FRAME_DELTA_SECS as MIN_DELTA_SECS,
+} from '@nerima-games/mc-kernel'
 
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
 export { FIRST_FRAME_DELTA_SECS }
@@ -95,7 +97,7 @@ export { FIRST_FRAME_DELTA_SECS }
  * returns a value for which this is true, always.
  */
 export const isClampedDelta = (deltaSecs: number): boolean =>
-  Number.isFinite(deltaSecs) && deltaSecs >= MIN_DELTA_SECS && deltaSecs <= MAX_DELTA_SECS
+  Number.isFinite(deltaSecs) && deltaSecs >= MIN_FRAME_DELTA_SECS && deltaSecs <= MAX_FRAME_DELTA_SECS
 
 /**
  * The clamp. Byte-for-byte the reference's expression, deliberately.
