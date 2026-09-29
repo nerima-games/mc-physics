@@ -10,6 +10,7 @@ import {
   resolveEntityCollisions,
   type Body,
   type EntityCollider,
+  type EntityCollisionResolution,
 } from '../src/index'
 
 const bodyOf = (
@@ -32,6 +33,14 @@ const entityOf = (
   mass: 1,
   ...overrides,
 })
+
+const resolvedAt = (result: EntityCollisionResolution, index: number): EntityCollider => {
+  const entity = result.entities[index]
+  if (entity === undefined) {
+    throw new Error(`resolveEntityCollisions returned ${result.entities.length} entities, wanted ${index + 1}`)
+  }
+  return entity
+}
 
 describe('entity collision detection', () => {
   it('finds deterministic axis-aligned contacts and ignores separated pairs', () => {
@@ -92,8 +101,8 @@ describe('entity collision resolution', () => {
       entityOf('first', bodyOf('dynamic', 0, 1, 0, 1)),
       entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1)),
     ], { cellSize: 1, iterations: 3, restitution: 1 })
-    const first = result.entities[0]!
-    const second = result.entities[1]!
+    const first = resolvedAt(result, 0)
+    const second = resolvedAt(result, 1)
     expect(first.body.x).toBeCloseTo(-0.125)
     expect(second.body.x).toBeCloseTo(0.875)
     expect(first.body.vx).toBeCloseTo(-1)
@@ -220,8 +229,8 @@ describe('entity collision resolution properties', () => {
             collidedAtLeastOnce = true
           }
 
-          const resolvedFirst = result.entities[0]!.body
-          const resolvedSecond = result.entities[1]!.body
+          const resolvedFirst = resolvedAt(result, 0).body
+          const resolvedSecond = resolvedAt(result, 1).body
           const dvx = (resolvedFirst.vx - vx1) + (resolvedSecond.vx - vx2)
           const dvy = (resolvedFirst.vy - vy1) + (resolvedSecond.vy - vy2)
           const dvz = (resolvedFirst.vz - vz1) + (resolvedSecond.vz - vz2)

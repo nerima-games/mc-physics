@@ -112,7 +112,10 @@ describe('movement input', () => {
       { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN, sprint: false, jumpPressed: false },
       true,
       false,
-      Number.NaN as never,
+      // Kernel's `DeltaTimeSecs` validates on construction, so a non-finite delta is
+      // reachable only by assertion (T-3 bans it). The plain `number` controls below
+      // are what this test sanitizes; the delta never could be invalid.
+      DeltaTimeSecs(0.05),
       {
         walkSpeed: -1,
         sprintMultiplier: Number.NaN,

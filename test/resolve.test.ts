@@ -874,6 +874,14 @@ describe('resting contact', () => {
 // ---------------------------------------------------------------------------
 
 describe('zero penetration', () => {
+  const heightAt = (heights: ReadonlyArray<number>, index: number): number => {
+    const height = heights[index]
+    if (height === undefined) {
+      throw new Error(`heightmap has no column ${index}`)
+    }
+    return height
+  }
+
   /**
    * A periodic heightmap: column (bx, bz) is solid up to `heights[...]`. Infinite
    * in both directions so a body can never walk off the edge of the data, and
@@ -883,7 +891,7 @@ describe('zero penetration', () => {
     (heights: ReadonlyArray<number>): SolidPredicate =>
     (bx, by, bz) => {
       const index = (((bx * 7 + bz * 13) % heights.length) + heights.length) % heights.length
-      return by <= heights[index]!
+      return by <= heightAt(heights, index)
     }
 
   it('PROPERTY: a body walking over broken terrain never ends a step inside a block', () => {
@@ -1065,6 +1073,13 @@ describe('determinism', () => {
     standingOn(63, { kind: 'kinematic', x: 12.5, vy: 4 }),
     standingOn(63, { x: 16.5, vz: -5 }),
   ]
+  const crowdAt = (index: number): Body => {
+    const body = crowd[index]
+    if (body === undefined) {
+      throw new Error(`crowd has no body at ${index}`)
+    }
+    return body
+  }
 
   it('resolving the same world twice gives the same answer', () => {
       expect(resolveWorld(crowd, DT, world)).toStrictEqual(resolveWorld(crowd, DT, world))
@@ -1086,7 +1101,7 @@ describe('determinism', () => {
   it('PROPERTY: the answer does not depend on where a body sits in the array', () => {
       FastCheck.assert(
         FastCheck.property(FastCheck.shuffledSubarray([0, 1, 2, 3, 4], { minLength: 5 }), (order) => {
-          const permuted = order.map((index) => crowd[index]!)
+          const permuted = order.map((index) => crowdAt(index))
           const resolvedTogether = resolveWorld(permuted, DT, world)
           // `stepWorld` is checked here rather than only above because the
           // reversal test cannot see it. That test probes with `reverse()` and
@@ -1098,8 +1113,11 @@ describe('determinism', () => {
           // resolutions back to its own body list depends on.
           const steppedTogether = stepWorld(permuted, DT, world)
           return order.every((index, position) => {
-            const alone = resolveWorld([crowd[index]!], DT, world)[0]!
-            const steppedAlone = stepWorld([crowd[index]!], DT, world)[0]!
+            const alone = resolveWorld([crowdAt(index)], DT, world).at(0)
+            const steppedAlone = stepWorld([crowdAt(index)], DT, world).at(0)
+            if (alone === undefined || steppedAlone === undefined) {
+              throw new Error('resolving a one-body list must return exactly one resolution')
+            }
             return (
               JSON.stringify(resolvedTogether[position]) === JSON.stringify(alone) &&
               JSON.stringify(steppedTogether[position]) === JSON.stringify(steppedAlone)

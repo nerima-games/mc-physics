@@ -170,11 +170,13 @@ export const potentialPairs = (
 
   const pairs = new Map<number, readonly [number, number]>()
   for (const bucket of cells.values()) {
-    for (let left = 0; left < bucket.length; left += 1) {
-      for (let right = left + 1; right < bucket.length; right += 1) {
-        const first = Math.min(bucket[left]!, bucket[right]!)
-        const second = Math.max(bucket[left]!, bucket[right]!)
-        pairs.set(first * entities.length + second, [first, second])
+    for (const [left, leftIndex] of bucket.entries()) {
+      for (const [right, rightIndex] of bucket.entries()) {
+        if (right > left) {
+          const first = Math.min(leftIndex, rightIndex)
+          const second = Math.max(leftIndex, rightIndex)
+          pairs.set(first * entities.length + second, [first, second])
+        }
       }
     }
   }
@@ -193,11 +195,23 @@ export const detectEntityCollisions = (
   const { cellSize } = normalizedOptions(options)
   const collisions: Array<EntityCollision> = []
   for (const [firstIndex, secondIndex] of potentialPairs(entities, cellSize)) {
-    const first = entities[firstIndex]!
-    const second = entities[secondIndex]!
-    const collision = collisionOf(first, second)
-    if (collision) {
-      collisions.push(collision)
+    const first = entities[firstIndex]
+    const second = entities[secondIndex]
+    /**
+     * `potentialPairs` walks `entities` by index, so both reads are in range by
+     * construction and the guard below is never false. It exists only because
+     * `noUncheckedIndexedAccess` types an indexed read as optional: this is the
+     * proven-unreachable case `vitest.config.ts`'s `thresholds` comment reserves
+     * an exemption for, the same treatment `domain/dda.ts` gives its post-loop
+     * fallback.
+     */
+    /* v8 ignore start */
+    if (first && second) {
+      /* v8 ignore stop */
+      const collision = collisionOf(first, second)
+      if (collision) {
+        collisions.push(collision)
+      }
     }
   }
   return collisions

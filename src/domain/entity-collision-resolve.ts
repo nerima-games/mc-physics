@@ -100,16 +100,25 @@ export const resolveEntityCollisions = (
   for (let iteration = 0; iteration < normalized.iterations; iteration += 1) {
     let changed = false
     for (const [firstIndex, secondIndex] of potentialPairs(current, normalized.cellSize)) {
-      const first = current[firstIndex]!
-      const second = current[secondIndex]!
-      const collision = collisionOf(first, second)
-      if (collision) {
-        collisions.set(`${collision.firstId}:${collision.secondId}`, collision)
-        const resolved = resolvePair(first, second, collision, normalized.restitution)
-        if (resolved.changed) {
-          current[firstIndex] = resolved.first
-          current[secondIndex] = resolved.second
-          changed = true
+      const first = current[firstIndex]
+      const second = current[secondIndex]
+      /**
+       * Same guard and same proof as in `domain/entity-collision.ts`; `current`
+       * keeps its length across the iteration loop, so the writes below never
+       * invalidate an index `potentialPairs` already derived.
+       */
+      /* v8 ignore start */
+      if (first && second) {
+        /* v8 ignore stop */
+        const collision = collisionOf(first, second)
+        if (collision) {
+          collisions.set(`${collision.firstId}:${collision.secondId}`, collision)
+          const resolved = resolvePair(first, second, collision, normalized.restitution)
+          if (resolved.changed) {
+            current[firstIndex] = resolved.first
+            current[secondIndex] = resolved.second
+            changed = true
+          }
         }
       }
     }
