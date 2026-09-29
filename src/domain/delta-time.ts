@@ -62,7 +62,14 @@
  * (`mc-sim/domain/frame-timing.ts`). `isClampedDelta` below makes the invariant
  * assertable at the points that actually depend on it.
  */
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import {
+  DeltaTimeSecs,
+  FIRST_FRAME_DELTA_SECS,
+  MAX_FRAME_DELTA_SECS,
+  MIN_FRAME_DELTA_SECS,
+  clampFrameDelta,
+  frameDeltaBetween,
+} from '@nerima-games/mc-kernel'
 
 export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
@@ -72,11 +79,11 @@ export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
  * Kernel's refinement, verbatim. NOT clamped — see the module header, and use
  * `clampDeltaTime` before handing one to the integrator.
  */
-export const MIN_DELTA_SECS = 0.001
-export const MAX_DELTA_SECS = 0.05
+export const MIN_DELTA_SECS: number = MIN_FRAME_DELTA_SECS
+export const MAX_DELTA_SECS: number = MAX_FRAME_DELTA_SECS
 
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
-export const FIRST_FRAME_DELTA_SECS = 0.016
+export { FIRST_FRAME_DELTA_SECS }
 
 /** The brand's own floor — any non-negative delta is legal, even outside the clamp range below (see the module header). */
 /**
@@ -99,9 +106,9 @@ export const isClampedDelta = (deltaSecs: number): boolean =>
  */
 export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
   if (Number.isNaN(rawDeltaSecs)) {
-    return DeltaTimeSecs(FIRST_FRAME_DELTA_SECS)
+    return FIRST_FRAME_DELTA_SECS
   }
-  return DeltaTimeSecs(Math.min(Math.max(MIN_DELTA_SECS, rawDeltaSecs), MAX_DELTA_SECS))
+  return clampFrameDelta(rawDeltaSecs)
 }
 
 /**
@@ -114,7 +121,7 @@ export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
  */
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs => {
   if (typeof previousSecs === 'undefined') {
-    return DeltaTimeSecs(FIRST_FRAME_DELTA_SECS)
+    return FIRST_FRAME_DELTA_SECS
   }
-  return clampDeltaTime(currentSecs - previousSecs)
+  return frameDeltaBetween(previousSecs, currentSecs)
 }

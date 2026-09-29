@@ -25,7 +25,7 @@
  * assumed frame rate), the same conversion `applyFluidMotion`
  * (`domain/fluid.ts`) already performs for its drag coefficients.
  */
-import type { DeltaTimeSecs, Position } from '@nerima-games/mc-kernel'
+import { type DeltaTimeSecs, type Position, tickDuration } from '@nerima-games/mc-kernel'
 
 /** Look direction as pitch/yaw — same fields as `ArrowLaunch` (`domain/projectile.ts`) and `MovementInput.yawRadians`. */
 export type GlideSight = Readonly<{
@@ -56,10 +56,10 @@ const nonNegativeFinite = (value: number): number => Math.max(0, finiteOrZero(va
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value))
 
 /** One 20 Hz tick, matching `delta-time.ts`'s assumed frame rate. */
-const TICK_SECONDS = 0.05
+const TICK_DURATION = tickDuration
 
 /** A per-tick multiplicative decay `perTick = exp(-rate * TICK_SECONDS)`, solved for the continuous per-second rate. */
-const decayRatePerSecond = (perTick: number): number => -Math.log(perTick) / TICK_SECONDS
+const decayRatePerSecond = (perTick: number): number => -Math.log(perTick) / TICK_DURATION
 
 /** Per-tick keep-factors from the community-reversed decompile (see the module header). */
 const TURN_KEEP_PER_TICK = 0.9
