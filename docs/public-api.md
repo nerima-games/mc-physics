@@ -126,14 +126,24 @@ export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs.make(0.016)
 
 ```typescript
 export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-export type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-export const MIN_DELTA_SECS = 0.001
-export const MAX_DELTA_SECS = 0.05
-export const FIRST_FRAME_DELTA_SECS = 0.016
+export {
+  MIN_FRAME_DELTA_SECS as MIN_DELTA_SECS,
+  MAX_FRAME_DELTA_SECS as MAX_DELTA_SECS,
+  FIRST_FRAME_DELTA_SECS,
+} from '@nerima-games/mc-kernel'
 export const isClampedDelta = (deltaSecs: number): boolean          // [MIN, MAX] に入っているか
 export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs // 境界。出力は常に isClampedDelta
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs
 ```
+
+`MIN_DELTA_SECS`、`MAX_DELTA_SECS`、`FIRST_FRAME_DELTA_SECS`、`clampDeltaTime`、`deltaTimeBetween` は
+`@nerima-games/mc-kernel` の frame-timing 契約を薄く転送する。物理関数の引数は kernel の
+`DeltaTimeSecs` のままである。固定 tick/substep を保持する scheduler は `FixedDurationSecs` と
+`physicsSubstepDuration` を使い、物理関数を呼ぶ直前にだけ `DeltaTimeSecs(physicsSubstepDuration)` と
+明示変換する。`FixedDurationSecs` を物理関数へ直接渡したり、型 assertion で変換したりしてはならない。
+`FIRST_FRAME_DELTA_SECS` は kernel の `DeltaTimeSecs` brand を公開し、`MIN_DELTA_SECS` と
+`MAX_DELTA_SECS` は kernel の frame-timing 定数を alias 再 export する。従来の number literal 型に
+依存する利用者は、kernel の時間契約に合わせて型注釈を更新する必要がある。
 
 参照実装との差分は **NaN の扱いだけ**である。
 `Math.max(a, NaN)` は NaN であり、NaN の delta は 1 フレームで世界中の位置を汚染したうえ、
