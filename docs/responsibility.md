@@ -152,6 +152,14 @@ export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: 
 クロックを読むのではなく**読み取り値**を受け取る。plan.md §5.1-3 の
 「クロック注入による決定論。全シミュレーションが fast-forward 可能」の帰結である。
 
+### 3.2.1 時間ブランドの境界
+
+時間ブランドの正本は `@nerima-games/mc-kernel` である。`DeltaTimeSecs` は可変フレームまたは
+1 回の物理計算に渡す値、`FixedDurationSecs` は固定 tick/substep の値として責務を分ける。
+mc-physics 自体は scheduler を所有しないため、固定時間を物理関数へ渡す場合の変換は呼び出し側の
+境界で `DeltaTimeSecs(physicsSubstepDuration)` のように明示する。ブランドの assertion や
+同名ローカル型でこの境界を隠してはならない。
+
 ### 3.3 参照実装から**持ち込まない**もの: Mob 用の未ロード規約
 
 `packages/game/domain/block-collision-predicates.ts:110-125` に、

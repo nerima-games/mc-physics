@@ -123,6 +123,8 @@ private に戻り、public な下流リポジトリの CI が GitHub Packages �
   見えないので（ブランドは文字列でキーされる）、下流は乖離に気づけないまま壊れる。
   kernel の述語が変わったときだけ、それに追随する形で変える
   （[design-notes.md](./design-notes.md) P-5、[public-api.md](./public-api.md) §2-1）
+- **`FixedDurationSecs` を `DeltaTimeSecs` として物理 API に渡すこと** —— 固定 tick/substep の
+  所有権と可変物理計算の境界が失われ、scheduler の時間契約を型で検査できなくなる。
 
 これらはすべて「決定論的リプレイの結果が変わる」という一点で MAJOR である。
 plan.md §5.1-3 が「クロック注入による決定論。全シミュレーションが fast-forward 可能」を
