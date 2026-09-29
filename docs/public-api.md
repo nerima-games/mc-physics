@@ -126,10 +126,11 @@ export const FIRST_FRAME_DELTA_SECS: DeltaTimeSecs = DeltaTimeSecs.make(0.016)
 
 ```typescript
 export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-export type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
-export const MIN_DELTA_SECS = 0.001
-export const MAX_DELTA_SECS = 0.05
-export const FIRST_FRAME_DELTA_SECS = 0.016
+export {
+  MIN_FRAME_DELTA_SECS as MIN_DELTA_SECS,
+  MAX_FRAME_DELTA_SECS as MAX_DELTA_SECS,
+  FIRST_FRAME_DELTA_SECS,
+} from '@nerima-games/mc-kernel'
 export const isClampedDelta = (deltaSecs: number): boolean          // [MIN, MAX] に入っているか
 export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs // 境界。出力は常に isClampedDelta
 export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs

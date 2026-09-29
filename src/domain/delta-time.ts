@@ -85,7 +85,7 @@ export {
 } from '@nerima-games/mc-kernel'
 
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
-export { FIRST_FRAME_DELTA_SECS }
+export { FIRST_FRAME_DELTA_SECS } from '@nerima-games/mc-kernel'
 
 /** The brand's own floor — any non-negative delta is legal, even outside the clamp range below (see the module header). */
 /**
