@@ -34,10 +34,9 @@
           pkgs = pkgsFor system;
         in
         {
-          # Node 24 matches the `engines` field and the CI runner. pnpm comes
-          # from corepack rather than nixpkgs so that the version is decided by
-          # the `packageManager` field in package.json — one source of truth
-          # instead of two that can drift.
+          # Node 24 satisfies the `engines` minimum; CI runs Node 26. The
+          # `engines` values are compatibility floors, while Corepack uses the
+          # exact pnpm version from package.json's `packageManager` field.
           #
           # oxlint is intentionally supplied by Nix rather than package.json.
           # This keeps the lint executable in the dev shell and CI on one

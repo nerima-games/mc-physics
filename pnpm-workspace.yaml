@@ -9,3 +9,10 @@ overrides:
   # here rather than waiting on vite/postcss to bump their own dependency,
   # per the org-wide `pnpm audit` gate policy.
   nanoid: '>=3.3.18'
+  # Patch transitive audit dependencies while keeping the direct Vitest and
+  # Effect versions fixed.
+  launch-editor: 2.14.2
+  shell-quote: 1.11.0
+  source-map-js: 1.2.2
+  vite: 7.3.7
+  '@vitest/mocker': 4.1.12
