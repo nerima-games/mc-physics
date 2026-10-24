@@ -3,28 +3,38 @@ import type {
   BlockEnvironment,
   EnvironmentBlockShapeAt,
 } from './environment-types.js'
+import { type BlockAxis, BlockId, isEmpty, resolvedBlockOfId } from '@nerima-games/mc-kernel'
 import type {
   BlockPropertiesAt,
   BlockShapeAt,
   ResolveOptions,
 } from './resolve-types.js'
-import { isEmpty, resolvedBlockOfId } from '@nerima-games/mc-kernel'
+import type { BlockLength } from './physical-units.js'
 import type { HalfHeight } from './coordinates.js'
+import { Result } from 'effect'
 
 /** Reads the block id stored at a world-space block coordinate. */
-export type BlockIdAt = (bx: number, by: number, bz: number) => number | null
+export type BlockIdAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
 
 const resolvedBlockAt = (
   blockIdAt: BlockIdAt,
-  bx: number,
-  by: number,
-  bz: number,
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
 ) => {
-  const blockId = blockIdAt(bx, by, bz)
-  if (blockId === null || isEmpty(blockId)) {
+  const rawBlockId = blockIdAt(bx, by, bz)
+  if (rawBlockId === null) {
     return null
   }
-  return resolvedBlockOfId(blockId) ?? null
+  const blockId = BlockId.result(rawBlockId)
+  if (Result.isFailure(blockId) || isEmpty(blockId.success)) {
+    return null
+  }
+  const resolved = resolvedBlockOfId(blockId.success)
+  if (Result.isFailure(resolved)) {
+    return null
+  }
+  return resolved.success ?? null
 }
 
 /** Adapts a kernel-backed block-id lookup to the environment sample contract. */
@@ -52,10 +62,10 @@ export const blockEnvironmentFromKernel = (
 
 export type KernelResolveOptions = Readonly<{
   readonly blockIdAt: BlockIdAt
-  readonly halfWidth: number
+  readonly halfWidth: BlockLength
   readonly halfHeight: HalfHeight
   readonly blockShapeAt?: BlockShapeAt
-  readonly stepHeight?: number
+  readonly stepHeight?: BlockLength
 }>
 
 /** Builds block-resolution options without duplicating the kernel registry data. */
@@ -69,11 +79,13 @@ export const resolveOptionsFromKernel = ({
   const options: {
     blockPropertiesAt: BlockPropertiesAt
     blockShapeAt?: BlockShapeAt
+    environment: BlockEnvironment
     halfHeight: HalfHeight
-    halfWidth: number
-    stepHeight?: number
+    halfWidth: BlockLength
+    stepHeight?: BlockLength
   } = {
     blockPropertiesAt: blockPropertiesAtFromKernel(blockIdAt),
+    environment: blockEnvironmentFromKernel(blockIdAt, blockShapeAt),
     halfHeight,
     halfWidth,
   }

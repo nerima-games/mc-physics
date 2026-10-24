@@ -1,3 +1,5 @@
+import { BlockLength, BlocksPerSecond, InverseMass, velocityVectorResult } from './physical-units.js'
+import { Brand, Result } from 'effect'
 import {
   DEFAULT_ENTITY_COLLISION_OPTIONS,
   type EntityCollider,
@@ -9,37 +11,58 @@ import {
   normalizedOptions,
   potentialPairs,
 } from './entity-collision.js'
+import { EntityId, type Position, PositionAxis } from '@nerima-games/mc-kernel'
 import { CentreY } from './coordinates.js'
-import type { Position } from '@nerima-games/mc-kernel'
 
-const translated = (entity: EntityCollider, dx: number, dy: number, dz: number): EntityCollider => {
+const translated = (
+  entity: EntityCollider,
+  dx: BlockLength,
+  dy: BlockLength,
+  dz: BlockLength,
+): Result.Result<EntityCollider, Brand.BrandError> => {
   if (entity.body.kind !== 'dynamic') {
-    return entity
+    return Result.succeed(entity)
   }
-  return {
-    ...entity,
-    body: {
-      ...entity.body,
-      x: entity.body.x + dx,
-      y: CentreY(entity.body.y + dy),
-      z: entity.body.z + dz,
-    },
+  const position = Result.all([
+    PositionAxis.result(entity.body.x + dx),
+    CentreY.result(entity.body.y + dy),
+    PositionAxis.result(entity.body.z + dz),
+  ])
+  if (Result.isFailure(position)) {
+    return Result.fail(position.failure)
   }
+  const [x, y, z] = position.success
+  return Result.succeed({ ...entity, body: { ...entity.body, x, y, z } })
 }
 
-const velocityChanged = (entity: EntityCollider, impulse: Position, scale: number): EntityCollider => {
-  if (entity.body.kind !== 'dynamic' || scale === 0) {
-    return entity
+const velocityChanged = (
+  entity: EntityCollider,
+  normal: Position,
+  impulseMagnitude: number,
+  inverseMass: InverseMass,
+  sign: -1 | 1,
+): Result.Result<EntityCollider, Brand.BrandError> => {
+  if (entity.body.kind !== 'dynamic' || inverseMass === 0) {
+    return Result.succeed(entity)
   }
-  return {
+  const scale = sign * inverseMass
+  const velocity = velocityVectorResult(
+    entity.body.vx + normal.x * impulseMagnitude * scale,
+    entity.body.vy + normal.y * impulseMagnitude * scale,
+    entity.body.vz + normal.z * impulseMagnitude * scale,
+  )
+  if (Result.isFailure(velocity)) {
+    return Result.fail(velocity.failure)
+  }
+  return Result.succeed({
     ...entity,
     body: {
       ...entity.body,
-      vx: entity.body.vx + impulse.x * scale,
-      vy: entity.body.vy + impulse.y * scale,
-      vz: entity.body.vz + impulse.z * scale,
+      vx: velocity.success.x,
+      vy: velocity.success.y,
+      vz: velocity.success.z,
     },
-  }
+  })
 }
 
 const resolvePair = (
@@ -47,52 +70,92 @@ const resolvePair = (
   second: EntityCollider,
   collision: EntityCollision,
   restitution: number,
-): Readonly<{ readonly first: EntityCollider; readonly second: EntityCollider; readonly changed: boolean }> => {
-  const firstInverseMass = inverseMassOf(first)
-  const secondInverseMass = inverseMassOf(second)
-  const inverseMassSum = firstInverseMass + secondInverseMass
-  if (inverseMassSum === 0) {
-    return { changed: false, first, second }
+): Result.Result<Readonly<{ readonly first: EntityCollider; readonly second: EntityCollider; readonly changed: boolean }>, Brand.BrandError> => {
+  const inverseMasses = Result.all([inverseMassOf(first), inverseMassOf(second)])
+  if (Result.isFailure(inverseMasses)) {
+    return Result.fail(inverseMasses.failure)
+  }
+  const [firstInverseMass, secondInverseMass] = inverseMasses.success
+  const inverseMassSum = InverseMass.result(firstInverseMass + secondInverseMass)
+  if (Result.isFailure(inverseMassSum)) {
+    return Result.fail(inverseMassSum.failure)
+  }
+  if (inverseMassSum.success === 0) {
+    return Result.succeed({ changed: false, first, second })
   }
 
-  const firstCorrection = collision.penetration * firstInverseMass / inverseMassSum
-  const secondCorrection = collision.penetration * secondInverseMass / inverseMassSum
-  let resolvedFirst = translated(
-    first,
-    -collision.normal.x * firstCorrection,
-    -collision.normal.y * firstCorrection,
-    -collision.normal.z * firstCorrection,
-  )
-  let resolvedSecond = translated(
-    second,
-    collision.normal.x * secondCorrection,
-    collision.normal.y * secondCorrection,
-    collision.normal.z * secondCorrection,
-  )
-  const relativeVelocity = {
-    x: second.body.vx - first.body.vx,
-    y: second.body.vy - first.body.vy,
-    z: second.body.vz - first.body.vz,
+  const firstCorrection = BlockLength.result(collision.penetration * firstInverseMass / inverseMassSum.success)
+  if (Result.isFailure(firstCorrection)) {
+    return Result.fail(firstCorrection.failure)
   }
-  const approachingSpeed = relativeVelocity.x * collision.normal.x +
-    relativeVelocity.y * collision.normal.y + relativeVelocity.z * collision.normal.z
-  if (approachingSpeed < 0) {
-    const impulseMagnitude = -(1 + restitution) * approachingSpeed / inverseMassSum
-    const impulse = {
-      x: collision.normal.x * impulseMagnitude,
-      y: collision.normal.y * impulseMagnitude,
-      z: collision.normal.z * impulseMagnitude,
-    }
-    resolvedFirst = velocityChanged(resolvedFirst, impulse, -firstInverseMass)
-    resolvedSecond = velocityChanged(resolvedSecond, impulse, secondInverseMass)
+  const secondCorrection = BlockLength.result(collision.penetration * secondInverseMass / inverseMassSum.success)
+  if (Result.isFailure(secondCorrection)) {
+    return Result.fail(secondCorrection.failure)
   }
-  return { changed: true, first: resolvedFirst, second: resolvedSecond }
+  const firstDelta = Result.all([
+    BlockLength.result(-collision.normal.x * firstCorrection.success),
+    BlockLength.result(-collision.normal.y * firstCorrection.success),
+    BlockLength.result(-collision.normal.z * firstCorrection.success),
+  ])
+  const secondDelta = Result.all([
+    BlockLength.result(collision.normal.x * secondCorrection.success),
+    BlockLength.result(collision.normal.y * secondCorrection.success),
+    BlockLength.result(collision.normal.z * secondCorrection.success),
+  ])
+  return Result.flatMap(firstDelta, (firstDeltaValues) =>
+    Result.flatMap(secondDelta, (secondDeltaValues) => {
+      const resolvedFirstPosition = translated(first, ...firstDeltaValues)
+      if (Result.isFailure(resolvedFirstPosition)) {
+        return Result.fail(resolvedFirstPosition.failure)
+      }
+      const resolvedSecondPosition = translated(second, ...secondDeltaValues)
+      if (Result.isFailure(resolvedSecondPosition)) {
+        return Result.fail(resolvedSecondPosition.failure)
+      }
+      const relativeVelocity = {
+        x: second.body.vx - first.body.vx,
+        y: second.body.vy - first.body.vy,
+        z: second.body.vz - first.body.vz,
+      }
+      const checkedRelativeVelocity = velocityVectorResult(relativeVelocity.x, relativeVelocity.y, relativeVelocity.z)
+      if (Result.isFailure(checkedRelativeVelocity)) {
+        return Result.fail(checkedRelativeVelocity.failure)
+      }
+      const approachingSpeed = BlocksPerSecond.result(
+        checkedRelativeVelocity.success.x * collision.normal.x +
+        checkedRelativeVelocity.success.y * collision.normal.y +
+        checkedRelativeVelocity.success.z * collision.normal.z,
+      )
+      return Result.flatMap(approachingSpeed, (checkedApproachingSpeed) => {
+        if (checkedApproachingSpeed < 0) {
+          const impulseMagnitude = -(1 + restitution) * checkedApproachingSpeed / inverseMassSum.success
+          const firstVelocity = velocityChanged(
+            resolvedFirstPosition.success,
+            collision.normal,
+            impulseMagnitude,
+            firstInverseMass,
+            -1,
+          )
+          return Result.flatMap(firstVelocity, (resolvedFirst) =>
+            Result.map(velocityChanged(resolvedSecondPosition.success, collision.normal, impulseMagnitude, secondInverseMass, 1),
+              (resolvedSecond) => ({ changed: true, first: resolvedFirst, second: resolvedSecond }),
+            ),
+          )
+        }
+        return Result.succeed({
+          changed: true,
+          first: resolvedFirstPosition.success,
+          second: resolvedSecondPosition.success,
+        })
+      })
+    }),
+  )
 }
 
 export const resolveEntityCollisions = (
   entities: ReadonlyArray<EntityCollider>,
   options: EntityCollisionOptions = DEFAULT_ENTITY_COLLISION_OPTIONS,
-): EntityCollisionResolution => {
+): Result.Result<EntityCollisionResolution, Brand.BrandError | RangeError> => {
   const normalized = normalizedOptions(options)
   /**
    * One copy, taken once. Every index below is derived from `current` itself, so
@@ -101,11 +164,31 @@ export const resolveEntityCollisions = (
    * `test/entity-collision.test.ts` pins both halves of that contract.
    */
   const current = [...entities]
+  for (const entity of current) {
+    if (entity !== globalThis.undefined) {
+      const id = EntityId.result(entity.id)
+      if (Result.isFailure(id)) {
+        return Result.fail(id.failure)
+      }
+      const inverseMass = inverseMassOf(entity)
+      if (Result.isFailure(inverseMass)) {
+        return Result.fail(inverseMass.failure)
+      }
+      const velocity = velocityVectorResult(entity.body.vx, entity.body.vy, entity.body.vz)
+      if (Result.isFailure(velocity)) {
+        return Result.fail(velocity.failure)
+      }
+    }
+  }
   const collisions = new Map<string, EntityCollision>()
 
   for (let iteration = 0; iteration < normalized.iterations; iteration += 1) {
     let changed = false
-    for (const [firstIndex, secondIndex] of potentialPairs(current, normalized.cellSize)) {
+    const pairs = potentialPairs(current, normalized.cellSize)
+    if (Result.isFailure(pairs)) {
+      return Result.fail(pairs.failure)
+    }
+    for (const [firstIndex, secondIndex] of pairs.success) {
       const first = current[firstIndex]
       const second = current[secondIndex]
       /**
@@ -120,12 +203,18 @@ export const resolveEntityCollisions = (
       if (first && second) {
         /* v8 ignore stop */
         const collision = collisionOf(first, second)
-        if (collision) {
-          collisions.set(`${collision.firstId}:${collision.secondId}`, collision)
-          const resolved = resolvePair(first, second, collision, normalized.restitution)
-          if (resolved.changed) {
-            current[firstIndex] = resolved.first
-            current[secondIndex] = resolved.second
+        if (Result.isFailure(collision)) {
+          return Result.fail(collision.failure)
+        }
+        if (collision.success) {
+          collisions.set(`${collision.success.firstId}:${collision.success.secondId}`, collision.success)
+          const resolved = resolvePair(first, second, collision.success, normalized.restitution)
+          if (Result.isFailure(resolved)) {
+            return Result.fail(resolved.failure)
+          }
+          if (resolved.success.changed) {
+            current[firstIndex] = resolved.success.first
+            current[secondIndex] = resolved.success.second
             changed = true
           }
         }
@@ -136,5 +225,5 @@ export const resolveEntityCollisions = (
     }
   }
 
-  return { collisions: [...collisions.values()], entities: current }
+  return Result.succeed({ collisions: [...collisions.values()], entities: current })
 }

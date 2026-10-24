@@ -1,3 +1,4 @@
+import { Option, Result } from 'effect'
 import {
   blockIdOf,
   resolvedBlockOfId,
@@ -6,9 +7,13 @@ import {
 import type { BlockSample } from '../../src/domain/environment-types'
 
 export const sampleOf = (type: BlockType): BlockSample => {
-  const resolved = resolvedBlockOfId(blockIdOf(type))
-  if (resolved === undefined) {
+  const id = blockIdOf(type)
+  if (Option.isNone(id)) {
     throw new Error(`Expected a registered kernel block: ${type}`)
   }
-  return resolved
+  const resolved = resolvedBlockOfId(id.value)
+  if (Result.isFailure(resolved) || resolved.success === undefined) {
+    throw new Error(`Expected a resolved kernel block: ${type}`)
+  }
+  return resolved.success
 }

@@ -1,17 +1,45 @@
 import { describe, expect, it } from 'vitest'
-import { FastCheck } from 'effect'
+import * as fc from 'fast-check'
+import { Result } from 'effect'
+import { EntityId, PositionAxis } from '@nerima-games/mc-kernel'
+import { BlockLength, BlocksPerSecond, Mass } from '../src/domain/physical-units'
+import {
+  collisionOf as collisionOfResult,
+  inverseMassOf as inverseMassOfResult,
+  potentialPairs as potentialPairsResult,
+} from '../src/domain/entity-collision'
 import {
   CentreY,
-  detectEntityCollisions,
+  detectEntityCollisions as detectEntityCollisionsResult,
   HalfHeight,
   MAX_ITERATIONS,
   MIN_CELL_SIZE,
-  normalizedOptions,
-  resolveEntityCollisions,
+  normalizedOptions as normalizedOptionsResult,
+  resolveEntityCollisions as resolveEntityCollisionsResult,
   type Body,
   type EntityCollider,
+  type EntityCollisionOptions,
   type EntityCollisionResolution,
 } from '../src/index'
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw new Error('expected a successful Result')
+  return result.success
+}
+
+const collisionOptions = (cellSize: number, iterations: number, restitution: number): EntityCollisionOptions => ({
+  cellSize: unwrap(BlockLength.result(cellSize)),
+  iterations,
+  restitution,
+})
+
+const detectEntityCollisions = (...args: Parameters<typeof detectEntityCollisionsResult>) =>
+  unwrap(detectEntityCollisionsResult(...args))
+
+const resolveEntityCollisions = (...args: Parameters<typeof resolveEntityCollisionsResult>) =>
+  unwrap(resolveEntityCollisionsResult(...args))
+
+const normalizedOptions = (options: EntityCollisionOptions) => normalizedOptionsResult(options)
 
 const bodyOf = (
   kind: Body['kind'] = 'dynamic',
@@ -19,18 +47,28 @@ const bodyOf = (
   y = 1,
   z = 0,
   vx = 0,
-): Body => ({ kind, x, y: CentreY(y), z, vx, vy: 0, vz: 0 })
+  vy = 0,
+  vz = 0,
+): Body => ({
+  kind,
+  x: unwrap(PositionAxis.result(x)),
+  y: unwrap(CentreY.result(y)),
+  z: unwrap(PositionAxis.result(z)),
+  vx: unwrap(BlocksPerSecond.result(vx)),
+  vy: unwrap(BlocksPerSecond.result(vy)),
+  vz: unwrap(BlocksPerSecond.result(vz)),
+})
 
 const entityOf = (
   id: string,
   body: Body = bodyOf(),
   overrides: Partial<EntityCollider> = {},
 ): EntityCollider => ({
-  id,
+  id: unwrap(EntityId.result(id)),
   body,
-  halfWidth: 0.5,
-  halfHeight: HalfHeight(0.5),
-  mass: 1,
+  halfWidth: unwrap(BlockLength.result(0.5)),
+  halfHeight: unwrap(HalfHeight.result(0.5)),
+  mass: unwrap(Mass.result(1)),
   ...overrides,
 })
 
@@ -115,6 +153,14 @@ describe('entity collision detection', () => {
   })
 })
 
+  it('returns Result failure when collider bounds overflow the position range', () => {
+    const entity = entityOf('large', bodyOf('dynamic', Number.MAX_VALUE), {
+      halfWidth: unwrap(BlockLength.result(Number.MAX_VALUE)),
+    })
+    expect(Result.isFailure(detectEntityCollisionsResult([entity]))).toBe(true)
+    expect(Result.isFailure(resolveEntityCollisionsResult([entity]))).toBe(true)
+  })
+
 describe('entity collision resolution', () => {
   it('copies the caller array exactly once, so a second read of it cannot reach the resolver', () => {
     // This is the contract the narrowing guard in `resolveEntityCollisions` rests
@@ -134,7 +180,7 @@ describe('entity collision resolution', () => {
     })
     unreadable.length = 2
 
-    const options = { cellSize: 1, iterations: 3, restitution: 1 }
+    const options = collisionOptions(1, 3, 1)
     expect(resolveEntityCollisions(unreadable, options)).toStrictEqual(
       resolveEntityCollisions([first, second], options),
     )
@@ -145,7 +191,7 @@ describe('entity collision resolution', () => {
     const result = resolveEntityCollisions([
       entityOf('first', bodyOf('dynamic', 0, 1, 0, 1)),
       entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1)),
-    ], { cellSize: 1, iterations: 3, restitution: 1 })
+    ], collisionOptions(1, 3, 1))
     const first = resolvedAt(result, 0)
     const second = resolvedAt(result, 1)
     expect(first.body.x).toBeCloseTo(-0.125)
@@ -153,7 +199,7 @@ describe('entity collision resolution', () => {
     expect(first.body.vx).toBeCloseTo(-1)
     expect(second.body.vx).toBeCloseTo(1)
     expect(result.collisions).toHaveLength(1)
-    expect(detectEntityCollisions(result.entities, { cellSize: 1, iterations: 1, restitution: 0 })).toEqual([])
+    expect(detectEntityCollisions(result.entities, collisionOptions(1, 1, 0))).toEqual([])
   })
 
   it('moves only the dynamic side of a static contact', () => {
@@ -170,18 +216,15 @@ describe('entity collision resolution', () => {
       entityOf('first'),
       entityOf('second', bodyOf('dynamic', 0.75)),
     ]
-    expect(detectEntityCollisions(entities, {
-      cellSize: Number.NaN,
-      iterations: Number.NaN,
-      restitution: Number.NaN,
-    })).toHaveLength(1)
+    expect(Result.isFailure(BlockLength.result(Number.NaN))).toBe(true)
+    expect(detectEntityCollisions(entities, collisionOptions(0, Number.NaN, Number.NaN))).toHaveLength(1)
   })
 
   it('records separating contacts without adding an impulse and handles immovable masses', () => {
     const separating = resolveEntityCollisions([
       entityOf('first', bodyOf('dynamic', 0, 1, 0, -1)),
       entityOf('second', bodyOf('dynamic', 0.75, 1, 0, 1)),
-    ], { cellSize: 1, iterations: 1, restitution: 0.5 })
+    ], collisionOptions(1, 1, 0.5))
     expect(separating.entities[0]?.body.vx).toBe(-1)
     expect(separating.entities[1]?.body.vx).toBe(1)
 
@@ -189,7 +232,7 @@ describe('entity collision resolution', () => {
       entityOf('first', bodyOf('dynamic', 0), { mass: 0 }),
       entityOf('second', bodyOf('dynamic', 0.75), { mass: 0 }),
     ]
-    const result = resolveEntityCollisions(immovable, { cellSize: 0, iterations: 0, restitution: 2 })
+    const result = resolveEntityCollisions(immovable, collisionOptions(0, 0, 2))
     expect(result.entities).toEqual(immovable)
     expect(result.collisions).toHaveLength(1)
   })
@@ -200,16 +243,16 @@ describe('resource exhaustion guards', () => {
     // PoC: cellSize = 1e-6 makes a single entity register into ~6.5e17 cells.
     // Asserted against normalizedOptions directly (pure, O(1)) rather than by
     // timing a call that would hang the suite before this guard exists.
-    expect(normalizedOptions({ cellSize: 1e-6, iterations: 2, restitution: 0 }).cellSize).toBe(MIN_CELL_SIZE)
+    expect(normalizedOptions(collisionOptions(1e-6, 2, 0)).cellSize).toBe(MIN_CELL_SIZE)
     // A small but finite positive cellSize is not caught by finiteOr's
     // non-finite fallback, so this is the case that actually exercises the
     // floor rather than the pre-existing "invalid input" path.
-    expect(normalizedOptions({ cellSize: 0.01, iterations: 2, restitution: 0 }).cellSize).toBe(MIN_CELL_SIZE)
+    expect(normalizedOptions(collisionOptions(0.01, 2, 0)).cellSize).toBe(MIN_CELL_SIZE)
   })
 
   it('REGRESSION: normalizedOptions caps an absurdly large iterations count', () => {
-    expect(normalizedOptions({ cellSize: 2, iterations: 1e9, restitution: 0 }).iterations).toBe(MAX_ITERATIONS)
-    expect(normalizedOptions({ cellSize: 2, iterations: 1_000_000, restitution: 0 }).iterations).toBe(
+    expect(normalizedOptions(collisionOptions(2, 1e9, 0)).iterations).toBe(MAX_ITERATIONS)
+    expect(normalizedOptions(collisionOptions(2, 1_000_000, 0)).iterations).toBe(
       MAX_ITERATIONS,
     )
   })
@@ -220,8 +263,8 @@ describe('resource exhaustion guards', () => {
     // it — pre-fix this call would have hung the suite instead of failing an
     // assertion.
     const entities = [entityOf('first'), entityOf('second', bodyOf('dynamic', 0.75))]
-    expect(detectEntityCollisions(entities, { cellSize: 1e-6, iterations: 2, restitution: 0 })).toEqual(
-      detectEntityCollisions(entities, { cellSize: MIN_CELL_SIZE, iterations: 2, restitution: 0 }),
+    expect(detectEntityCollisions(entities, collisionOptions(1e-6, 2, 0))).toEqual(
+      detectEntityCollisions(entities, collisionOptions(MIN_CELL_SIZE, 2, 0)),
     )
   })
 
@@ -230,8 +273,8 @@ describe('resource exhaustion guards', () => {
       entityOf('first', bodyOf('dynamic', 0, 1, 0, 1)),
       entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -1)),
     ]
-    expect(resolveEntityCollisions(entities, { cellSize: 1, iterations: 1e9, restitution: 1 })).toEqual(
-      resolveEntityCollisions(entities, { cellSize: 1, iterations: MAX_ITERATIONS, restitution: 1 }),
+    expect(resolveEntityCollisions(entities, collisionOptions(1, 1e9, 1))).toEqual(
+      resolveEntityCollisions(entities, collisionOptions(1, MAX_ITERATIONS, 1)),
     )
   })
 })
@@ -246,30 +289,33 @@ describe('entity collision resolution properties', () => {
     // regardless of restitution, penetration, or iteration count. A
     // kinematic/static body has inverseMassOf 0 (infinite mass), which breaks
     // the symmetry, so this property is restricted to dynamic/dynamic pairs.
-    const arbitraryPosition = FastCheck.double({ min: -2, max: 2, noNaN: true, noDefaultInfinity: true })
-    const arbitraryVelocity = FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true })
-    const arbitraryHalfExtent = FastCheck.double({ min: 0.2, max: 1.5, noNaN: true, noDefaultInfinity: true })
-    const arbitraryMass = FastCheck.double({ min: 0.1, max: 50, noNaN: true, noDefaultInfinity: true })
-    const arbitraryRestitution = FastCheck.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true })
-    const arbitraryIterations = FastCheck.integer({ min: 1, max: 5 })
+    const arbitraryPosition = fc.double({ min: -2, max: 2, noNaN: true, noDefaultInfinity: true })
+    const arbitraryVelocity = fc.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true })
+    const arbitraryHalfExtent = fc.double({ min: 0.2, max: 1.5, noNaN: true, noDefaultInfinity: true })
+    const arbitraryMass = fc.double({ min: 0.1, max: 50, noNaN: true, noDefaultInfinity: true })
+    const arbitraryRestitution = fc.double({ min: 0, max: 1, noNaN: true, noDefaultInfinity: true })
+    const arbitraryIterations = fc.integer({ min: 1, max: 5 })
 
     let collidedAtLeastOnce = false
 
-    FastCheck.assert(
-      FastCheck.property(
-        FastCheck.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
-        FastCheck.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
+    fc.assert(
+      fc.property(
+        fc.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
+        fc.tuple(arbitraryPosition, arbitraryPosition, arbitraryPosition, arbitraryVelocity, arbitraryVelocity, arbitraryVelocity),
         arbitraryHalfExtent,
         arbitraryMass,
         arbitraryRestitution,
         arbitraryIterations,
         ([x1, y1, z1, vx1, vy1, vz1], [x2, y2, z2, vx2, vy2, vz2], halfExtent, mass, restitution, iterations) => {
-          const body1: Body = { kind: 'dynamic', vx: vx1, vy: vy1, vz: vz1, x: x1, y: CentreY(y1), z: z1 }
-          const body2: Body = { kind: 'dynamic', vx: vx2, vy: vy2, vz: vz2, x: x2, y: CentreY(y2), z: z2 }
-          const first = entityOf('first', body1, { halfHeight: HalfHeight(halfExtent), halfWidth: halfExtent, mass })
-          const second = entityOf('second', body2, { halfHeight: HalfHeight(halfExtent), halfWidth: halfExtent, mass })
+          const body1 = bodyOf('dynamic', x1, y1, z1, vx1, vy1, vz1)
+          const body2 = bodyOf('dynamic', x2, y2, z2, vx2, vy2, vz2)
+          const halfWidth = unwrap(BlockLength.result(halfExtent))
+          const validMass = unwrap(Mass.result(mass))
+          const halfHeight = unwrap(HalfHeight.result(halfExtent))
+          const first = entityOf('first', body1, { halfHeight, halfWidth, mass: validMass })
+          const second = entityOf('second', body2, { halfHeight, halfWidth, mass: validMass })
 
-          const result = resolveEntityCollisions([first, second], { cellSize: 2, iterations, restitution })
+          const result = resolveEntityCollisions([first, second], collisionOptions(2, iterations, restitution))
           if (result.collisions.length > 0) {
             collidedAtLeastOnce = true
           }
@@ -286,5 +332,209 @@ describe('entity collision resolution properties', () => {
     )
 
     expect(collidedAtLeastOnce).toBe(true)
+  })
+})
+
+
+describe('entity collision Result boundaries', () => {
+  it('propagates invalid ids, inverse masses, velocities, and spatial-hash bounds', () => {
+    const first = entityOf('first')
+    const invalidId = { ...entityOf('second', bodyOf('dynamic', 0.75)), id: ' ' as EntityCollider['id'] }
+    expect(Result.isFailure(detectEntityCollisionsResult([first, invalidId]))).toBe(true)
+    expect(Result.isFailure(resolveEntityCollisionsResult([invalidId]))).toBe(true)
+
+    const invalidMass = { ...entityOf('bad-mass'), mass: Number.NaN as EntityCollider['mass'] }
+    expect(Result.isFailure(inverseMassOfResult(invalidMass))).toBe(true)
+    expect(Result.isFailure(resolveEntityCollisionsResult([invalidMass]))).toBe(true)
+
+    const invalidVelocity = {
+      ...entityOf('bad-velocity'),
+      body: { ...bodyOf(), vx: Number.NaN as Body['vx'] },
+    }
+    expect(Result.isFailure(resolveEntityCollisionsResult([invalidVelocity]))).toBe(true)
+
+    const farEntity = {
+      ...entityOf('far'),
+      body: { ...bodyOf(), x: (Number.MAX_SAFE_INTEGER + 20) as Body['x'] },
+    }
+    expect(Result.isFailure(detectEntityCollisionsResult([farEntity], collisionOptions(1, 1, 0)))).toBe(true)
+    expect(Result.isFailure(potentialPairsResult([], Number.NaN as BlockLength))).toBe(true)
+  })
+
+  it('propagates collider-box, penetration, and collision-pair failures', () => {
+    let xReads = 0
+    const ordinaryBody = bodyOf('dynamic', 0.75)
+    const unstableBody: Body = {
+      ...ordinaryBody,
+      get x() {
+        xReads += 1
+        return xReads === 1 ? ordinaryBody.x : Number.NaN as Body['x']
+      },
+    }
+    const changingCollider = entityOf('second', unstableBody)
+    expect(Result.isFailure(detectEntityCollisionsResult([
+      entityOf('first'),
+      changingCollider,
+    ]))).toBe(true)
+
+    const hugeHalfHeight = unwrap(HalfHeight.result(Number.MAX_VALUE))
+    const hugeFirst = entityOf('huge-first', bodyOf(), {
+      halfWidth: BlockLength(Number.MAX_VALUE),
+      halfHeight: hugeHalfHeight,
+    })
+    const hugeSecond = entityOf('huge-second', bodyOf('dynamic', 0.25), {
+      halfWidth: BlockLength(Number.MAX_VALUE),
+      halfHeight: hugeHalfHeight,
+    })
+    expect(Result.isFailure(collisionOfResult(hugeFirst, hugeSecond))).toBe(true)
+    expect(Result.isFailure(detectEntityCollisionsResult(
+      [hugeFirst, hugeSecond],
+      collisionOptions(Number.MAX_VALUE, 1, 0),
+    ))).toBe(true)
+  })
+})
+
+describe('entity collision resolver Result boundaries', () => {
+  it('rejects overflowing inverse-mass sums and positional corrections', () => {
+    const tinyMass = unwrap(Mass.result(1e-308))
+    const sumOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', 0), { mass: tinyMass }),
+      entityOf('second', bodyOf('dynamic', 0.75), { mass: tinyMass }),
+    ])
+    expect(Result.isFailure(sumOverflow)).toBe(true)
+
+    const smallerInverseMass = unwrap(Mass.result(2e-308))
+    const wideBody = {
+      halfWidth: BlockLength(3),
+      halfHeight: unwrap(HalfHeight.result(3)),
+    }
+    const firstCorrectionOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', 0), { ...wideBody, mass: smallerInverseMass }),
+      entityOf('second', bodyOf('dynamic', 0.75), { ...wideBody, mass: smallerInverseMass }),
+    ], collisionOptions(Number.MAX_VALUE, 1, 0))
+    expect(Result.isFailure(firstCorrectionOverflow)).toBe(true)
+
+    const secondCorrectionOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', 0), { ...wideBody, mass: Mass(1) }),
+      entityOf('second', bodyOf('dynamic', 0.75), { ...wideBody, mass: smallerInverseMass }),
+    ], collisionOptions(Number.MAX_VALUE, 1, 0))
+    expect(Result.isFailure(secondCorrectionOverflow)).toBe(true)
+  })
+
+  it('rejects overflowing relative velocities and impulses on either dynamic side', () => {
+    const relativeVelocityOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', 0, 1, 0, Number.MAX_VALUE)),
+      entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -Number.MAX_VALUE)),
+    ], collisionOptions(2, 1, 0))
+    expect(Result.isFailure(relativeVelocityOverflow)).toBe(true)
+
+    const firstVelocityOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', 0, 1, 0, Number.MAX_VALUE), { mass: Mass(Number.MAX_VALUE) }),
+      entityOf('second', bodyOf('static', 0.75), { mass: 0 }),
+    ], collisionOptions(2, 1, 0))
+    expect(Result.isFailure(firstVelocityOverflow)).toBe(true)
+
+    const secondVelocityOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('static', 0), { mass: 0 }),
+      entityOf('second', bodyOf('dynamic', 0.75, 1, 0, -Number.MAX_VALUE)),
+    ], collisionOptions(2, 1, 1))
+    expect(Result.isFailure(secondVelocityOverflow)).toBe(true)
+  })
+
+  it('skips sparse entity slots and propagates failures from changed entity fields', () => {
+    const sparseEntities = [entityOf('first'), undefined] as unknown as ReadonlyArray<EntityCollider>
+    const sparseResult = resolveEntityCollisionsResult(sparseEntities)
+    expect(Result.isSuccess(sparseResult)).toBe(true)
+    if (Result.isSuccess(sparseResult)) {
+      expect(sparseResult.success.entities).toHaveLength(2)
+      expect(sparseResult.success.entities[1]).toBeUndefined()
+    }
+
+    let massReads = 0
+    const changingMass = Object.defineProperty(entityOf('first'), 'mass', {
+      get: () => {
+        massReads += 1
+        return massReads === 1 ? Mass(1) : Number.NaN as EntityCollider['mass']
+      },
+    }) as EntityCollider
+    expect(Result.isFailure(resolveEntityCollisionsResult([
+      changingMass,
+      entityOf('second', bodyOf('dynamic', 0.75)),
+    ], collisionOptions(2, 1, 0)))).toBe(true)
+
+    let xReads = 0
+    const ordinaryBody = bodyOf('dynamic', 0.75)
+    const changingBody: Body = {
+      ...ordinaryBody,
+      get x() {
+        xReads += 1
+        return xReads === 1 ? ordinaryBody.x : Number.NaN as Body['x']
+      },
+    }
+    expect(Result.isFailure(resolveEntityCollisionsResult([
+      entityOf('first'),
+      entityOf('second', changingBody),
+    ], collisionOptions(2, 1, 0)))).toBe(true)
+  })
+
+})
+
+describe('remaining entity collision Result boundaries', () => {
+  it('uses the default spatial-hash cell size for zero', () => {
+    const pairs = potentialPairsResult([
+      entityOf('first'),
+      entityOf('second', bodyOf('dynamic', 0.75)),
+    ], BlockLength(0))
+
+    expect(unwrap(pairs)).toEqual([[0, 1]])
+  })
+
+  it('propagates a mass validation failure discovered while resolving a pair', () => {
+    let massReads = 0
+    const changingMass = Object.defineProperty(entityOf('second', bodyOf('dynamic', 0.75)), 'mass', {
+      get: () => {
+        massReads += 1
+        return massReads <= 2 ? Mass(1) : Number.NaN as EntityCollider['mass']
+      },
+    }) as EntityCollider
+
+    const result = resolveEntityCollisionsResult([
+      entityOf('first'),
+      changingMass,
+    ], collisionOptions(2, 1, 0))
+
+    expect(Result.isFailure(result)).toBe(true)
+    expect(massReads).toBe(4)
+  })
+
+  it('rejects positional corrections that overflow either translated entity', () => {
+    const positiveOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', Number.MAX_VALUE * 0.65), {
+        halfWidth: BlockLength(Number.MAX_VALUE * 0.25),
+        halfHeight: HalfHeight(Number.MAX_VALUE * 0.2),
+        mass: Mass(100),
+      }),
+      entityOf('second', bodyOf('dynamic', Number.MAX_VALUE * 0.85), {
+        halfWidth: BlockLength(Number.MAX_VALUE * 0.15),
+        halfHeight: HalfHeight(Number.MAX_VALUE * 0.2),
+        mass: Mass(1),
+      }),
+    ], collisionOptions(Number.MAX_VALUE, 1, 0))
+
+    const negativeOverflow = resolveEntityCollisionsResult([
+      entityOf('first', bodyOf('dynamic', -Number.MAX_VALUE * 0.85), {
+        halfWidth: BlockLength(Number.MAX_VALUE * 0.15),
+        halfHeight: HalfHeight(Number.MAX_VALUE * 0.2),
+        mass: Mass(1),
+      }),
+      entityOf('second', bodyOf('dynamic', -Number.MAX_VALUE * 0.65), {
+        halfWidth: BlockLength(Number.MAX_VALUE * 0.25),
+        halfHeight: HalfHeight(Number.MAX_VALUE * 0.2),
+        mass: Mass(100),
+      }),
+    ], collisionOptions(Number.MAX_VALUE, 1, 0))
+
+    expect(Result.isFailure(positiveOverflow)).toBe(true)
+    expect(Result.isFailure(negativeOverflow)).toBe(true)
   })
 })

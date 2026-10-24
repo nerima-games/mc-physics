@@ -1,5 +1,5 @@
 /**
- * The frame delta, clamped.
+ * Frame timing at the boundary between clock readings and fixed steps.
  *
  * ---------------------------------------------------------------------------
  * The exact expression, and why each half of it is load-bearing
@@ -33,7 +33,7 @@
  * `physics-terminal-velocity-cannot-tunnel`.
  *
  * ---------------------------------------------------------------------------
- * WHY THE BRAND IS LOOSE AND THE CLAMP IS A FUNCTION
+ * WHY DELTA VALIDATION LIVES AT THE CLOCK BOUNDARY
  * ---------------------------------------------------------------------------
  *
  * `DeltaTimeSecs` belongs to `@nerima-games/mc-kernel`, which refines it to
@@ -56,28 +56,26 @@
  * The clamp is not thereby weakened; it is moved to where it belongs. It is a
  * FRAME-LOOP concern — "what happens after a tab was backgrounded for thirty
  * seconds" is a question about the loop that produced the delta, not about the
- * quantity itself — and it is applied at the boundary by `clampDeltaTime`,
- * which remains the only sanctioned way to turn a raw interval into a delta fit
- * for integration. mc-sim does exactly this with kernel's brand already
- * (`mc-sim/domain/frame-timing.ts`). `isClampedDelta` below makes the invariant
- * assertable at the points that actually depend on it.
+ * quantity itself. The frame boundary validates the monotonic readings once,
+ * then passes them to kernel's `frameDeltaBetween` implementation.
  */
+import { type Brand, Result } from 'effect'
 import {
   DeltaTimeSecs,
   FIRST_FRAME_DELTA_SECS,
   MAX_FRAME_DELTA_SECS,
   MIN_FRAME_DELTA_SECS,
-  clampFrameDelta,
+  MonotonicTimeSecs,
   frameDeltaBetween,
 } from '@nerima-games/mc-kernel'
 
-export { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+export { DeltaTimeSecs, MonotonicTimeSecs } from '@nerima-games/mc-kernel'
 
 /**
  * Elapsed simulation time for one frame, in seconds. Finite and non-negative.
  *
- * Kernel's refinement, verbatim. NOT clamped — see the module header, and use
- * `clampDeltaTime` before handing one to the integrator.
+ * Kernel's refinement, verbatim. `deltaTimeBetween` bounds elapsed time before
+ * handing one fixed step to the integrator.
  */
 export {
   MAX_FRAME_DELTA_SECS as MAX_DELTA_SECS,
@@ -86,6 +84,7 @@ export {
 
 /** One 60 Hz frame. Used when there is no previous timestamp to subtract. */
 export { FIRST_FRAME_DELTA_SECS } from '@nerima-games/mc-kernel'
+export { clampFrameDelta } from '@nerima-games/mc-kernel'
 
 /** The brand's own floor — any non-negative delta is legal, even outside the clamp range below (see the module header). */
 /**
@@ -93,25 +92,11 @@ export { FIRST_FRAME_DELTA_SECS } from '@nerima-games/mc-kernel'
  *
  * The predicate the brand deliberately no longer enforces, exposed so that the
  * invariant is still checkable where it matters — in the integrator's tests,
- * and in any future assertion at the frame-loop boundary. `clampDeltaTime`
+ * and in any future assertion at the frame-loop boundary. `deltaTimeBetween`
  * returns a value for which this is true, always.
  */
-export const isClampedDelta = (deltaSecs: number): boolean =>
+export const isClampedDelta = (deltaSecs: DeltaTimeSecs): boolean =>
   Number.isFinite(deltaSecs) && deltaSecs >= MIN_FRAME_DELTA_SECS && deltaSecs <= MAX_FRAME_DELTA_SECS
-
-/**
- * The clamp. Byte-for-byte the reference's expression, deliberately.
- *
- * NaN maps to the first-frame delta rather than propagating: `Math.max(a, NaN)`
- * is NaN, and a NaN delta poisons every position in the world within one frame
- * while leaving no evidence of where it came from.
- */
-export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
-  if (Number.isNaN(rawDeltaSecs)) {
-    return FIRST_FRAME_DELTA_SECS
-  }
-  return clampFrameDelta(rawDeltaSecs)
-}
 
 /**
  * The delta for a frame, given the previous and current monotonic readings in
@@ -121,9 +106,25 @@ export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs => {
  * not access a clock, so a replay produces the same simulation; the benchmark
  * harness is the only code that measures elapsed wall time.
  */
-export const deltaTimeBetween = (previousSecs: number | undefined, currentSecs: number): DeltaTimeSecs => {
-  if (typeof previousSecs === 'undefined') {
-    return FIRST_FRAME_DELTA_SECS
+export const deltaTimeBetween = (
+  previousSecs: number | undefined,
+  currentSecs: number,
+): Result.Result<DeltaTimeSecs, Brand.BrandError> => {
+  const currentSnapshot = currentSecs
+  const currentTime = MonotonicTimeSecs.result(currentSnapshot)
+  if (Result.isFailure(currentTime)) {
+    return Result.fail(currentTime.failure)
   }
-  return frameDeltaBetween(previousSecs, currentSecs)
+
+  if (typeof previousSecs === 'undefined') {
+    return Result.succeed(FIRST_FRAME_DELTA_SECS)
+  }
+
+  const previousSnapshot = previousSecs
+  const previousTime = MonotonicTimeSecs.result(previousSnapshot)
+  if (Result.isFailure(previousTime)) {
+    return Result.fail(previousTime.failure)
+  }
+
+  return Result.succeed(frameDeltaBetween(previousTime.success, currentTime.success))
 }

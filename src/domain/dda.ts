@@ -42,28 +42,29 @@
  * API.
  */
 import { type AxisCrossing, type RaycastShapeAt, shapeHitAt } from './dda-shapes.js'
-import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
-import { Option } from 'effect'
+import { BlockAxis, type BlockFace, type Position, PositionAxis, position } from '@nerima-games/mc-kernel'
+import { Brand, Option, Result } from 'effect'
+import { BlockLength } from './physical-units.js'
 
 export type { RaycastShapeAt } from './dda-shapes.js'
 
 export type VoxelHit = {
   /** Integer cell coordinates of the block that was hit. */
-  readonly bx: number
-  readonly by: number
-  readonly bz: number
+  readonly bx: BlockAxis
+  readonly by: BlockAxis
+  readonly bz: BlockAxis
   /** Unit normal of the face the ray entered through. Points back at the ray. */
   readonly normal: Position
   /** Canonical Minecraft face the ray entered through. */
   readonly face: BlockFace
   /** Distance from the origin along the normalised direction, in blocks. */
-  readonly distance: number
+  readonly distance: BlockLength
   /** The exact point on the entered face. */
   readonly point: Position
 }
 
 /** Asked once per candidate cell. Physics never sees a block id. */
-export type IsTargetable = (bx: number, by: number, bz: number) => boolean
+export type IsTargetable = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => boolean
 
 const EPSILON = 1e-12
 
@@ -127,117 +128,142 @@ const STEP_BOUND_MARGIN = 3
  * reintroduce a call per grid cell crossed, exactly the cost this loop shape
  * exists to avoid.
  */
+const positionResult = (x: number, y: number, z: number) =>
+  Result.map(
+    Result.all([PositionAxis.result(x), PositionAxis.result(y), PositionAxis.result(z)]),
+    ([validX, validY, validZ]) => position(validX, validY, validZ),
+  )
+
+const voxelHitResult = (
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
+  distance: BlockLength,
+  face: BlockFace,
+  normal: Position,
+  point: Result.Result<Position, Brand.BrandError>,
+): Result.Result<Option.Option<VoxelHit>, Brand.BrandError> =>
+  Result.map(point, (value) => Option.some({ bx, by, bz, distance, face, normal, point: value }))
+
 export const voxelRaycast = (
   origin: Position,
   direction: Position,
-  maxDistance: number,
+  maxDistance: BlockLength,
   isTargetable: IsTargetable,
   shapeAt?: RaycastShapeAt,
-): Option.Option<VoxelHit> => {
-  const length = Math.hypot(direction.x, direction.y, direction.z)
-  if (!Number.isFinite(length) || length < EPSILON || !(maxDistance > 0)) {
-    return Option.none()
+): Result.Result<Option.Option<VoxelHit>, Brand.BrandError | RangeError> => {
+  const checkedDistance = BlockLength.result(maxDistance)
+  if (Result.isFailure(checkedDistance)) {
+    return Result.fail(checkedDistance.failure)
   }
-  if (!Number.isFinite(origin.x) || !Number.isFinite(origin.y) || !Number.isFinite(origin.z)) {
-    return Option.none()
+  if (!(checkedDistance.success > 0)) {
+    return Result.succeed(Option.none())
   }
 
-  const dx = direction.x / length
-  const dy = direction.y / length
-  const dz = direction.z / length
+  const checkedOrigin = Result.all([
+    PositionAxis.result(origin.x),
+    PositionAxis.result(origin.y),
+    PositionAxis.result(origin.z),
+  ])
+  if (Result.isFailure(checkedOrigin)) {
+    return Result.fail(checkedOrigin.failure)
+  }
+  const originPosition = position(...checkedOrigin.success)
 
-  let cellX = Math.floor(origin.x)
-  let cellY = Math.floor(origin.y)
-  let cellZ = Math.floor(origin.z)
+  const checkedDirection = Result.all([
+    PositionAxis.result(direction.x),
+    PositionAxis.result(direction.y),
+    PositionAxis.result(direction.z),
+  ])
+  if (Result.isFailure(checkedDirection)) {
+    return Result.fail(checkedDirection.failure)
+  }
+  const directionPosition = position(...checkedDirection.success)
 
-  const stepX = stepSign(dx)
-  const stepY = stepSign(dy)
-  const stepZ = stepSign(dz)
+  const length = Math.hypot(directionPosition.x, directionPosition.y, directionPosition.z)
+  if (!Number.isFinite(length) || length < EPSILON) {
+    return Result.succeed(Option.none())
+  }
 
-  /*
-   * Distance along the ray between successive boundary crossings, per axis.
-   * An axis the ray does not move along never crosses: Infinity, so its tMax
-   * never wins the three-way comparison below.
-   */
-  const tDeltaX = axisTDelta(stepX, dx)
-  const tDeltaY = axisTDelta(stepY, dy)
-  const tDeltaZ = axisTDelta(stepZ, dz)
+  return Result.flatMap(
+    positionResult(directionPosition.x / length, directionPosition.y / length, directionPosition.z / length),
+    (unitDirection) => {
+      const dx = unitDirection.x, dy = unitDirection.y, dz = unitDirection.z
 
-  // Distance to the FIRST crossing on each axis.
-  let tMaxX = firstCrossingT(stepX, cellX, origin.x, tDeltaX)
-  let tMaxY = firstCrossingT(stepY, cellY, origin.y, tDeltaY)
-  let tMaxZ = firstCrossingT(stepZ, cellZ, origin.z, tDeltaZ)
-
-  /*
-   * The ray crosses at most maxDistance/tDelta boundaries per axis. Summing
-   * over the axes gives the L1 bound; STEP_BOUND_MARGIN covers the entry cell
-   * and rounding.
-   */
-  const maxSteps = Math.ceil(maxDistance * (Math.abs(dx) + Math.abs(dy) + Math.abs(dz))) + STEP_BOUND_MARGIN
-
-  for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
-    let crossing: AxisCrossing
-    if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
-      crossing = { face: crossingFace(stepX, 'west', 'east'), normalX: -stepX, normalY: 0, normalZ: 0, travelled: tMaxX }
-      cellX += stepX
-      tMaxX += tDeltaX
-    } else if (tMaxY <= tMaxZ) {
-      crossing = { face: crossingFace(stepY, 'down', 'up'), normalX: 0, normalY: -stepY, normalZ: 0, travelled: tMaxY }
-      cellY += stepY
-      tMaxY += tDeltaY
-    } else {
-      crossing = { face: crossingFace(stepZ, 'north', 'south'), normalX: 0, normalY: 0, normalZ: -stepZ, travelled: tMaxZ }
-      cellZ += stepZ
-      tMaxZ += tDeltaZ
-    }
-
-    if (crossing.travelled > maxDistance) {
-      return Option.none()
-    }
-    if (isTargetable(cellX, cellY, cellZ)) {
-      const shapeHit = shapeHitAt(origin, { x: dx, y: dy, z: dz }, cellX, cellY, cellZ, maxDistance, shapeAt, crossing)
-      if (shapeHit !== null && shapeHit.distance <= maxDistance) {
-        return Option.some({
-          bx: cellX,
-          by: cellY,
-          bz: cellZ,
-          distance: shapeHit.distance,
-          face: shapeHit.face,
-          normal: shapeHit.normal,
-          point: {
-            x: origin.x + dx * shapeHit.distance,
-            y: origin.y + dy * shapeHit.distance,
-            z: origin.z + dz * shapeHit.distance,
-          },
-        })
+      const initialCells = Result.all([
+        BlockAxis.result(Math.floor(originPosition.x)),
+        BlockAxis.result(Math.floor(originPosition.y)),
+        BlockAxis.result(Math.floor(originPosition.z)),
+      ])
+      if (Result.isFailure(initialCells)) {
+        return Result.fail(initialCells.failure)
       }
-    }
-    /* v8 ignore next */
-  }
+      let [cellX, cellY, cellZ] = initialCells.success
 
-  /* v8 ignore start */
-  /*
-   * PROOF this is unreachable, not merely untested: `maxSteps` is
-   * `ceil(maxDistance * (|dx| + |dy| + |dz|)) + STEP_BOUND_MARGIN` for a unit
-   * direction. The number of grid-boundary crossings a straight ray of length
-   * `maxDistance` makes is `sum over axes of |floor(end_axis) -
-   * floor(start_axis)|`, which is bounded above by `maxDistance * |axis
-   * component| + 1` per axis (one crossing per unit travelled, plus at most
-   * one more for where the ray starts mid-cell) — summed, that is exactly the
-   * L1 term above plus at most 3, which `STEP_BOUND_MARGIN` supplies. So the
-   * in-loop `crossing.travelled > maxDistance` check is guaranteed to fire
-   * (returning `Option.none()` from inside the loop) at or before the last
-   * budgeted step, for every finite `origin`/`direction` this function
-   * accepts — both are validated finite above. This fallback exists as a
-   * belt-and-suspenders return so the function's type is total even if that
-   * bound is ever loosened; it was already documented as the sole
-   * unreachable-in-practice line at this repository's coverage-gate rollout
-   * (see vitest.config.ts's `thresholds` comment). v8's coverage instrument
-   * attributes the enclosing loop's "completed without an early return" edge
-   * to this whole trailing region (from the loop's closing brace to the
-   * function's), not just the `return` line, so the ignore spans that region.
-   */
-  return Option.none()
-  /* v8 ignore stop */
-  /* v8 ignore next */
+      const stepX = stepSign(dx), stepY = stepSign(dy), stepZ = stepSign(dz)
+      const tDeltaX = axisTDelta(stepX, dx), tDeltaY = axisTDelta(stepY, dy), tDeltaZ = axisTDelta(stepZ, dz)
+      let tMaxX = firstCrossingT(stepX, cellX, originPosition.x, tDeltaX)
+      let tMaxY = firstCrossingT(stepY, cellY, originPosition.y, tDeltaY)
+      let tMaxZ = firstCrossingT(stepZ, cellZ, originPosition.z, tDeltaZ)
+      const maxSteps = Math.ceil(checkedDistance.success * (Math.abs(dx) + Math.abs(dy) + Math.abs(dz))) + STEP_BOUND_MARGIN
+
+      for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+        let crossing: AxisCrossing
+        if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+          const nextCell = BlockAxis.result(cellX + stepX)
+          if (Result.isFailure(nextCell)) {
+            return Result.fail(nextCell.failure)
+          }
+          cellX = nextCell.success
+          crossing = { face: crossingFace(stepX, 'west', 'east'), normalX: -stepX, normalY: 0, normalZ: 0, travelled: tMaxX }
+          tMaxX += tDeltaX
+        } else if (tMaxY <= tMaxZ) {
+          const nextCell = BlockAxis.result(cellY + stepY)
+          if (Result.isFailure(nextCell)) {
+            return Result.fail(nextCell.failure)
+          }
+          cellY = nextCell.success
+          crossing = { face: crossingFace(stepY, 'down', 'up'), normalX: 0, normalY: -stepY, normalZ: 0, travelled: tMaxY }
+          tMaxY += tDeltaY
+        } else {
+          const nextCell = BlockAxis.result(cellZ + stepZ)
+          if (Result.isFailure(nextCell)) {
+            return Result.fail(nextCell.failure)
+          }
+          cellZ = nextCell.success
+          crossing = { face: crossingFace(stepZ, 'north', 'south'), normalX: 0, normalY: 0, normalZ: -stepZ, travelled: tMaxZ }
+          tMaxZ += tDeltaZ
+        }
+
+        if (crossing.travelled > checkedDistance.success) {
+          return Result.succeed(Option.none())
+        }
+        if (isTargetable(cellX, cellY, cellZ)) {
+          const shapeHit = shapeHitAt(originPosition, unitDirection, cellX, cellY, cellZ, checkedDistance.success, shapeAt, crossing)
+          if (Result.isFailure(shapeHit)) {
+            return Result.fail(shapeHit.failure)
+          }
+          if (shapeHit.success !== null && shapeHit.success.distance <= checkedDistance.success) {
+            const hit = shapeHit.success
+            const point = positionResult(
+              originPosition.x + dx * hit.distance,
+              originPosition.y + dy * hit.distance,
+              originPosition.z + dz * hit.distance,
+            )
+            return voxelHitResult(cellX, cellY, cellZ, hit.distance, hit.face, hit.normal, point)
+          }
+        }
+        /* v8 ignore next */
+      }
+
+      /* v8 ignore start */
+      /*
+       * The step bound remains the L1 ray-distance bound plus its entry-cell margin.
+       * Coordinate or length brand failures are returned before constructing a hit.
+       */
+      return Result.succeed(Option.none())
+      /* v8 ignore stop */
+      /* v8 ignore next */
+    },
+  )
 }

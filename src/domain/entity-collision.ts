@@ -1,25 +1,27 @@
-import { type HalfHeight, collidesWith, entityAABB } from './coordinates.js'
+import { type AABB, type HalfHeight, collidesWith, entityAABB } from './coordinates.js'
+import { BlockAxis, EntityId, type EntityId as EntityIdValue, type Position, PositionAxis, position } from '@nerima-games/mc-kernel'
+import { BlockLength, InverseMass, Mass, type Mass as MassValue } from './physical-units.js'
+import { Brand, Result } from 'effect'
 import type { Body } from './integrate.js'
-import type { Position } from '@nerima-games/mc-kernel'
 
 export type EntityCollider = Readonly<{
-  readonly id: string
+  readonly id: EntityIdValue
   readonly body: Body
-  readonly halfWidth: number
+  readonly halfWidth: BlockLength
   readonly halfHeight: HalfHeight
-  readonly mass: number
+  readonly mass: MassValue | 0
   readonly collidable?: boolean
 }>
 
 export type EntityCollision = Readonly<{
-  readonly firstId: string
-  readonly secondId: string
+  readonly firstId: EntityIdValue
+  readonly secondId: EntityIdValue
   readonly normal: Position
-  readonly penetration: number
+  readonly penetration: BlockLength
 }>
 
 export type EntityCollisionOptions = Readonly<{
-  readonly cellSize: number
+  readonly cellSize: BlockLength
   readonly iterations: number
   readonly restitution: number
 }>
@@ -29,8 +31,10 @@ export type EntityCollisionResolution = Readonly<{
   readonly collisions: ReadonlyArray<EntityCollision>
 }>
 
+const DEFAULT_CELL_SIZE = 2
+
 export const DEFAULT_ENTITY_COLLISION_OPTIONS: EntityCollisionOptions = {
-  cellSize: 2,
+  cellSize: BlockLength(DEFAULT_CELL_SIZE),
   iterations: 2,
   restitution: 0,
 }
@@ -42,7 +46,8 @@ export const DEFAULT_ENTITY_COLLISION_OPTIONS: EntityCollisionOptions = {
  * cell registrations for one entity) is a resource-exhaustion vector, not a
  * finer broad phase.
  */
-export const MIN_CELL_SIZE = 0.25
+const MIN_CELL_SIZE_VALUE = 0.25
+export const MIN_CELL_SIZE: BlockLength = BlockLength(MIN_CELL_SIZE_VALUE)
 
 /**
  * `resolveEntityCollisions` loops up to `iterations` times over every
@@ -62,35 +67,58 @@ const nonNegative = (value: number): number => Math.max(0, finiteOr(value, 0))
 
 const isCollidable = (entity: EntityCollider): boolean => entity.collidable !== false
 
-const boxOf = (entity: EntityCollider) =>
-  entityAABB(entity.body.x, entity.body.y, entity.body.z, nonNegative(entity.halfWidth), entity.halfHeight)
+const boxOf = (entity: EntityCollider): Result.Result<AABB, Brand.BrandError | RangeError> => {
+  const halfWidth = BlockLength.result(nonNegative(entity.halfWidth))
+  return Result.flatMap(halfWidth, (checkedHalfWidth) =>
+    entityAABB(entity.body.x, entity.body.y, entity.body.z, checkedHalfWidth, entity.halfHeight),
+  )
+}
 
-export const inverseMassOf = (entity: EntityCollider): number => {
-  if (entity.body.kind === 'dynamic' && Number.isFinite(entity.mass) && entity.mass > 0) {
-    return 1 / entity.mass
+export const inverseMassOf = (entity: EntityCollider): Result.Result<InverseMass, Brand.BrandError> => {
+  if (entity.mass === 0) {
+    return Result.succeed(InverseMass(0))
   }
-  return 0
+  const mass = Mass.result(entity.mass)
+  if (Result.isFailure(mass)) {
+    return Result.fail(mass.failure)
+  }
+  if (entity.body.kind === 'dynamic') {
+    return InverseMass.result(1 / mass.success)
+  }
+  return Result.succeed(InverseMass(0))
 }
 
 const normalForAxis = (axis: 'x' | 'y' | 'z', delta: number): Position => {
-  let sign = -1
+  let signValue = -1
   if (delta >= 0) {
-    sign = 1
+    signValue = 1
   }
+  const sign = PositionAxis(signValue)
+  const zero = PositionAxis(0)
   if (axis === 'x') {
-    return { x: sign, y: 0, z: 0 }
+    return position(sign, zero, zero)
   }
   if (axis === 'y') {
-    return { x: 0, y: sign, z: 0 }
+    return position(zero, sign, zero)
   }
-  return { x: 0, y: 0, z: sign }
+  return position(zero, zero, sign)
 }
 
-export const collisionOf = (first: EntityCollider, second: EntityCollider): EntityCollision | null => {
-  const firstBox = boxOf(first)
-  const secondBox = boxOf(second)
+export const collisionOf = (
+  first: EntityCollider,
+  second: EntityCollider,
+): Result.Result<EntityCollision | null, Brand.BrandError | RangeError> => {
+  const ids = Result.all([EntityId.result(first.id), EntityId.result(second.id)])
+  if (Result.isFailure(ids)) {
+    return Result.fail(ids.failure)
+  }
+  const boxes = Result.all([boxOf(first), boxOf(second)])
+  if (Result.isFailure(boxes)) {
+    return Result.fail(boxes.failure)
+  }
+  const [firstBox, secondBox] = boxes.success
   if (!collidesWith(firstBox, secondBox)) {
-    return null
+    return Result.succeed(null)
   }
 
   const penetrationX = Math.min(firstBox.maxX, secondBox.maxX) - Math.max(firstBox.minX, secondBox.minX)
@@ -106,30 +134,38 @@ export const collisionOf = (first: EntityCollider, second: EntityCollider): Enti
     axis = 'z'
     penetration = penetrationZ
   }
+  const checkedPenetration = BlockLength.result(penetration)
+  if (Result.isFailure(checkedPenetration)) {
+    return Result.fail(checkedPenetration.failure)
+  }
+
   let delta = second.body.z - first.body.z
   if (axis === 'x') {
     delta = second.body.x - first.body.x
   } else if (axis === 'y') {
     delta = second.body.y - first.body.y
   }
-  return {
-    firstId: first.id,
+
+  return Result.succeed({
+    firstId: ids.success[0],
     normal: normalForAxis(axis, delta),
-    penetration,
-    secondId: second.id,
-  }
+    penetration: checkedPenetration.success,
+    secondId: ids.success[1],
+  })
 }
 
-export const normalizedOptions = (options: EntityCollisionOptions): EntityCollisionOptions => {
+export const normalizedOptions = (
+  options: EntityCollisionOptions,
+): EntityCollisionOptions => {
   const { cellSize: requestedCellSize, iterations, restitution } = options
   const { cellSize: defaultCellSize, iterations: defaultIterations } = DEFAULT_ENTITY_COLLISION_OPTIONS
   const normalizedCellSize = finiteOr(requestedCellSize, defaultCellSize)
-  let cellSize = defaultCellSize
+  let selectedCellSize: number = defaultCellSize
   if (normalizedCellSize > 0) {
-    cellSize = normalizedCellSize
+    selectedCellSize = normalizedCellSize
   }
   return {
-    cellSize: Math.max(MIN_CELL_SIZE, cellSize),
+    cellSize: BlockLength(Math.max(MIN_CELL_SIZE, selectedCellSize)),
     iterations: Math.min(MAX_ITERATIONS, Math.max(1, Math.floor(finiteOr(iterations, defaultIterations)))),
     restitution: Math.min(1, nonNegative(restitution)),
   }
@@ -139,23 +175,41 @@ const cellKey = (x: number, y: number, z: number): string => `${x}:${y}:${z}`
 
 export const potentialPairs = (
   entities: ReadonlyArray<EntityCollider>,
-  cellSize: number,
-): ReadonlyArray<readonly [number, number]> => {
+  cellSize: BlockLength,
+): Result.Result<ReadonlyArray<readonly [number, number]>, Brand.BrandError | RangeError> => {
+  const requestedCellSize = BlockLength.result(cellSize)
+  if (Result.isFailure(requestedCellSize)) {
+    return Result.fail(requestedCellSize.failure)
+  }
+  let selectedCellSize: number = DEFAULT_ENTITY_COLLISION_OPTIONS.cellSize
+  if (requestedCellSize.success > 0) {
+    selectedCellSize = Math.max(MIN_CELL_SIZE, requestedCellSize.success)
+  }
   const cells = new Map<string, Array<number>>()
   const pairs = new Map<number, readonly [number, number]>()
   for (let index = 0; index < entities.length; index += 1) {
     const entity = entities[index]
     if (entity && isCollidable(entity)) {
-      const box = boxOf(entity)
-      const minX = Math.floor(box.minX / cellSize)
-      const maxX = Math.floor(box.maxX / cellSize)
-      const minY = Math.floor(box.minY / cellSize)
-      const maxY = Math.floor(box.maxY / cellSize)
-      const minZ = Math.floor(box.minZ / cellSize)
-      const maxZ = Math.floor(box.maxZ / cellSize)
-      for (let x = minX; x <= maxX; x += 1) {
-        for (let y = minY; y <= maxY; y += 1) {
-          for (let z = minZ; z <= maxZ; z += 1) {
+      const boxResult = boxOf(entity)
+      if (Result.isFailure(boxResult)) {
+        return Result.fail(boxResult.failure)
+      }
+      const box = boxResult.success
+      const cellBounds = Result.all([
+        BlockAxis.result(Math.floor(box.minX / selectedCellSize)),
+        BlockAxis.result(Math.floor(box.maxX / selectedCellSize)),
+        BlockAxis.result(Math.floor(box.minY / selectedCellSize)),
+        BlockAxis.result(Math.floor(box.maxY / selectedCellSize)),
+        BlockAxis.result(Math.floor(box.minZ / selectedCellSize)),
+        BlockAxis.result(Math.floor(box.maxZ / selectedCellSize)),
+      ])
+      if (Result.isFailure(cellBounds)) {
+        return Result.fail(cellBounds.failure)
+      }
+      const [minX, maxX, minY, maxY, minZ, maxZ] = cellBounds.success
+      for (let x = Number(minX); x <= Number(maxX); x += 1) {
+        for (let y = Number(minY); y <= Number(maxY); y += 1) {
+          for (let z = Number(minZ); z <= Number(maxZ); z += 1) {
             const key = cellKey(x, y, z)
             const bucket = cells.get(key)
             if (bucket) {
@@ -184,16 +238,21 @@ export const potentialPairs = (
     ([firstLeft, secondLeft], [firstRight, secondRight]) =>
       firstLeft - firstRight || secondLeft - secondRight,
   )
-  return orderedPairs
+  return Result.succeed(orderedPairs)
 }
 
 export const detectEntityCollisions = (
   entities: ReadonlyArray<EntityCollider>,
   options: EntityCollisionOptions = DEFAULT_ENTITY_COLLISION_OPTIONS,
-): ReadonlyArray<EntityCollision> => {
-  const { cellSize } = normalizedOptions(options)
+): Result.Result<ReadonlyArray<EntityCollision>, Brand.BrandError | RangeError> => {
+  const normalized = normalizedOptions(options)
+  const pairs = potentialPairs(entities, normalized.cellSize)
+  if (Result.isFailure(pairs)) {
+    return Result.fail(pairs.failure)
+  }
+
   const collisions: Array<EntityCollision> = []
-  for (const [firstIndex, secondIndex] of potentialPairs(entities, cellSize)) {
+  for (const [firstIndex, secondIndex] of pairs.success) {
     const first = entities[firstIndex]
     const second = entities[secondIndex]
     /**
@@ -205,10 +264,13 @@ export const detectEntityCollisions = (
      */
     if (first && second) {
       const collision = collisionOf(first, second)
-      if (collision) {
-        collisions.push(collision)
+      if (Result.isFailure(collision)) {
+        return Result.fail(collision.failure)
+      }
+      if (collision.success) {
+        collisions.push(collision.success)
       }
     }
   }
-  return collisions
+  return Result.succeed(collisions)
 }

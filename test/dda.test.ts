@@ -9,27 +9,60 @@
  *   physics-dda-respects-max-distance
  */
 import { describe, expect, it } from 'vitest'
-import { FastCheck, Option } from 'effect'
-import { type AABB, position } from '../src/domain/coordinates'
+import { Option, Result } from 'effect'
+import * as fc from 'fast-check'
+import { BlockLength } from '../src/domain/physical-units'
+import { type AABB } from '../src/domain/coordinates'
+import { BlockAxis, PositionAxis, type Position, position as kernelPosition } from '@nerima-games/mc-kernel'
 import {
   CACTUS_SHAPE,
   FULL_BLOCK_SHAPE,
   PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
 } from '../src/domain/shape-data'
-import { voxelRaycast } from '../src/domain/dda'
+import { voxelRaycast as rawVoxelRaycast } from '../src/domain/dda'
+import { shapeHitAt as rawShapeHitAt } from '../src/domain/dda-shapes'
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw new Error('expected a successful Result')
+  return result.success
+}
+
+const position = (x: number, y: number, z: number): Position =>
+  unwrap(Result.map(
+    Result.all([PositionAxis.result(x), PositionAxis.result(y), PositionAxis.result(z)]),
+    ([validX, validY, validZ]) => kernelPosition(validX, validY, validZ),
+  ))
+
+const box = (minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB => ({
+  maxX: unwrap(PositionAxis.result(maxX)),
+  maxY: unwrap(PositionAxis.result(maxY)),
+  maxZ: unwrap(PositionAxis.result(maxZ)),
+  minX: unwrap(PositionAxis.result(minX)),
+  minY: unwrap(PositionAxis.result(minY)),
+  minZ: unwrap(PositionAxis.result(minZ)),
+})
+
+const ray = (
+  origin: Position,
+  direction: Position,
+  maxDistance: number,
+  isTargetable: (bx: number, by: number, bz: number) => boolean,
+  shapeAt?: (bx: number, by: number, bz: number) => AABB | readonly AABB[] | null,
+) => unwrap(Result.flatMap(BlockLength.result(maxDistance), (distance) =>
+  rawVoxelRaycast(origin, direction, distance, isTargetable, shapeAt)))
 
 describe('voxel DDA', () => {
   const solidAt = (target: readonly [number, number, number]) => (bx: number, by: number, bz: number) =>
     bx === target[0] && by === target[1] && bz === target[2]
 
   it('never returns the cell the ray starts in, so you cannot mine the block you are inside', () => {
-      const hit = voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([0, 0, 0]))
+      const hit = ray(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([0, 0, 0]))
       expect(Option.isNone(hit)).toBe(true)
   })
 
   it('finds the first targetable cell along the ray and reports the face it entered through', () => {
-      const hit = voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([3, 0, 0]))
+      const hit = ray(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, solidAt([3, 0, 0]))
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([3, 0, 0])
@@ -52,7 +85,7 @@ describe('voxel DDA', () => {
       ] as const
 
       for (const testCase of cases) {
-        const hit = voxelRaycast(position(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
+        const hit = ray(position(0.5, 0.5, 0.5), testCase.direction, 2, solidAt(testCase.target))
         expect(Option.isSome(hit)).toBe(true)
         if (Option.isSome(hit)) {
           expect(hit.value.face).toBe(testCase.face)
@@ -63,7 +96,7 @@ describe('voxel DDA', () => {
   it('continues through the empty part of a non-cubic targetable cell', () => {
       const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
       const shapeAt = (bx: number) => (bx === 1 ? SLAB_SHAPE : null)
-      const hit = voxelRaycast(position(0.5, 0.75, 0.5), position(1, 0, 0), 4, targetable, shapeAt)
+      const hit = ray(position(0.5, 0.75, 0.5), position(1, 0, 0), 4, targetable, shapeAt)
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([2, 0, 0])
@@ -73,9 +106,9 @@ describe('voxel DDA', () => {
 
   it('chooses the nearest hit from compound cell geometry', () => {
       const targetable = (bx: number, by: number, bz: number) => bx === 1 && by === 0 && bz === 0
-      const farther: AABB = { minX: 0.75, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
-      const nearer: AABB = { minX: 0.25, minY: 0, minZ: 0, maxX: 0.5, maxY: 1, maxZ: 1 }
-      const hit = voxelRaycast(
+      const farther = box(0.75, 0, 0, 1, 1, 1)
+      const nearer = box(0.25, 0, 0, 0.5, 1, 1)
+      const hit = ray(
         position(0, 0.5, 0.5),
         position(1, 0, 0),
         4,
@@ -92,7 +125,7 @@ describe('voxel DDA', () => {
 
   it('treats an empty compound shape as a miss for that cell', () => {
       const targetable = (bx: number, by: number, bz: number) => by === 0 && bz === 0 && (bx === 1 || bx === 2)
-      const hit = voxelRaycast(
+      const hit = ray(
         position(0.5, 0.5, 0.5),
         position(1, 0, 0),
         4,
@@ -114,14 +147,14 @@ describe('voxel DDA', () => {
         { origin: position(1.5, 1, 0.5), direction: position(0, -1, 0), shape: PRESSURE_PLATE_SHAPE, distance: 15 / 16 },
       ] as const
       for (const testCase of cases) {
-        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt([1, 0, 0]), () => testCase.shape)
+        const hit = ray(testCase.origin, testCase.direction, 4, solidAt([1, 0, 0]), () => testCase.shape)
         expect(Option.isSome(hit)).toBe(true)
         if (Option.isSome(hit)) expect(hit.value.distance).toBeCloseTo(testCase.distance, 12)
       }
   })
 
   it('reports all six faces from the shape narrow phase', () => {
-      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
+      const shape = box(0.25, 0.25, 0.25, 0.75, 0.75, 0.75)
       const cases = [
         { origin: position(0, 0.5, 0.5), direction: position(1, 0, 0), target: [1, 0, 0] as const, face: 'west' },
         { origin: position(0, 0.5, 0.5), direction: position(-1, 0, 0), target: [-1, 0, 0] as const, face: 'east' },
@@ -131,38 +164,38 @@ describe('voxel DDA', () => {
         { origin: position(0.5, 0.5, 0), direction: position(0, 0, -1), target: [0, 0, -1] as const, face: 'south' },
       ] as const
       for (const testCase of cases) {
-        const hit = voxelRaycast(testCase.origin, testCase.direction, 4, solidAt(testCase.target), () => shape)
+        const hit = ray(testCase.origin, testCase.direction, 4, solidAt(testCase.target), () => shape)
         expect(Option.isSome(hit)).toBe(true)
         if (Option.isSome(hit)) expect(hit.value.face).toBe(testCase.face)
       }
   })
 
   it('applies maxDistance to the shape surface and stays deterministic', () => {
-      const ray = () => voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
-      expect(Option.isNone(ray())).toBe(true)
-      const first = voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
-      const second = voxelRaycast(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const shortRay = () => ray(position(0, 0.5, 0.5), position(1, 0, 0), 1.05, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      expect(Option.isNone(shortRay())).toBe(true)
+      const first = ray(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
+      const second = ray(position(0, 0.5, 0.5), position(1, 0, 0), 1.2, solidAt([1, 0, 0]), () => CACTUS_SHAPE)
       expect(first).toStrictEqual(second)
   })
 
   it('treats an invalid out-of-cell shape as a miss', () => {
-      const invalid: AABB = { minX: -1, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }
-      expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
+      const invalid = box(-1, 0, 0, 1, 1, 1)
+      expect(Option.isNone(ray(position(0.5, 0.5, 0.5), position(1, 0, 0), 2, solidAt([1, 0, 0]), () => invalid))).toBe(true)
   })
 
   it('rejects a diagonal ray whose per-axis shape intervals do not overlap', () => {
-      const shape: AABB = { minX: 0.25, minY: 0.25, minZ: 0.25, maxX: 0.75, maxY: 0.75, maxZ: 0.75 }
-      const hit = voxelRaycast(position(0, 0.9, 0.5), position(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
+      const shape = box(0.25, 0.25, 0.25, 0.75, 0.75, 0.75)
+      const hit = ray(position(0, 0.9, 0.5), position(1, -0.02, 0), 3, solidAt([1, 0, 0]), () => shape)
       expect(Option.isNone(hit)).toBe(true)
   })
 
   it('keeps an earlier entry interval when a later axis enters first', () => {
-      const hit = voxelRaycast(
+      const hit = ray(
         position(0, 0.5, 0.5),
         position(1, 0.1, 0),
         3,
         solidAt([1, 0, 0]),
-        () => ({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 }),
+        () => box(0, 0, 0, 1, 1, 1),
       )
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) expect(hit.value.face).toBe('west')
@@ -174,23 +207,106 @@ describe('voxel DDA', () => {
       // difference, whatever length the direction vector happens to have.
       const target = solidAt([5, 0, 0])
       for (const direction of [position(1, 0, 0), position(100, 0, 0)]) {
-        expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), direction, 4.4, target))).toBe(true)
-        expect(Option.isSome(voxelRaycast(position(0.5, 0.5, 0.5), direction, 4.6, target))).toBe(true)
+        expect(Option.isNone(ray(position(0.5, 0.5, 0.5), direction, 4.4, target))).toBe(true)
+        expect(Option.isSome(ray(position(0.5, 0.5, 0.5), direction, 4.6, target))).toBe(true)
       }
   })
 
-  it('returns none for degenerate inputs instead of looping or throwing', () => {
+  it('returns none for degenerate rays and Result failure for invalid block coordinates', () => {
       const anything = () => true
-      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(0, 0, 0), 8, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(1, 0, 0), 0, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(1, 0, 0), -1, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(position(Number.NaN, 0, 0), position(1, 0, 0), 8, anything))).toBe(true)
-      expect(Option.isNone(voxelRaycast(position(0, 0, 0), position(Number.NaN, 0, 0), 8, anything))).toBe(true)
+      expect(Option.isNone(ray(position(0, 0, 0), position(0, 0, 0), 8, anything))).toBe(true)
+      expect(Option.isNone(ray(position(0, 0, 0), position(1, 0, 0), 0, anything))).toBe(true)
+      expect(Option.isNone(ray(position(0, 0, 0), position(1, 0, 0), -1, anything))).toBe(true)
+      expect(Result.isFailure(PositionAxis.result(Number.NaN))).toBe(true)
+      expect(Result.isFailure(rawVoxelRaycast(position(Number.MAX_VALUE, 0, 0), position(1, 0, 0), unwrap(BlockLength.result(8)), anything))).toBe(true)
+  })
+
+  it('returns Result failures for invalid distance, origin, and direction brands', () => {
+    const validOrigin = position(0.5, 0.5, 0.5)
+    const validDirection = position(1, 0, 0)
+    const anything = () => false
+
+    expect(Result.isFailure(rawVoxelRaycast(
+      validOrigin,
+      validDirection,
+      Number.NaN as BlockLength,
+      anything,
+    ))).toBe(true)
+    expect(Result.isFailure(rawVoxelRaycast(
+      kernelPosition(Number.NaN as PositionAxis, PositionAxis(0.5), PositionAxis(0.5)),
+      validDirection,
+      BlockLength(2),
+      anything,
+    ))).toBe(true)
+    expect(Result.isFailure(rawVoxelRaycast(
+      validOrigin,
+      kernelPosition(Number.NaN as PositionAxis, PositionAxis(0), PositionAxis(0)),
+      BlockLength(2),
+      anything,
+    ))).toBe(true)
+  })
+
+  it('returns Result failures when an axis step leaves the safe block-coordinate range', () => {
+    const edge = PositionAxis(Number.MAX_SAFE_INTEGER)
+    const distance = BlockLength(2)
+    const anything = () => false
+    const originsAndDirections = [
+      [kernelPosition(edge, PositionAxis(0.5), PositionAxis(0.5)), position(1, 0, 0)],
+      [kernelPosition(PositionAxis(0.5), edge, PositionAxis(0.5)), position(0, 1, 0)],
+      [kernelPosition(PositionAxis(0.5), PositionAxis(0.5), edge), position(0, 0, 1)],
+    ] as const
+
+    for (const [origin, direction] of originsAndDirections) {
+      expect(Result.isFailure(rawVoxelRaycast(origin, direction, distance, anything))).toBe(true)
+    }
+  })
+
+  it('propagates invalid shape bounds and unrepresentable shape intersections as Result failures', () => {
+    let minXReads = 0
+    const changingShape: AABB = {
+      ...FULL_BLOCK_SHAPE,
+      get minX() {
+        minXReads += 1
+        return minXReads <= 3 ? PositionAxis(0.25) : Number.NaN as PositionAxis
+      },
+    }
+    const invalidBounds = rawVoxelRaycast(
+      position(0.5, 0.5, 0.5),
+      position(1, 0, 0),
+      BlockLength(2),
+      (bx) => bx === 1,
+      () => changingShape,
+    )
+    expect(Result.isFailure(invalidBounds)).toBe(true)
+
+    const invalidCrossing = rawShapeHitAt(
+      position(0.5, 0.5, 0.5),
+      position(1, 0, 0),
+      BlockAxis(1),
+      BlockAxis(0),
+      BlockAxis(0),
+      BlockLength(2),
+      undefined,
+      { travelled: Number.POSITIVE_INFINITY, face: 'west', normalX: -1, normalY: 0, normalZ: 0 },
+    )
+    expect(Result.isFailure(invalidCrossing)).toBe(true)
+
+    const unrepresentableIntersection = rawShapeHitAt(
+      position(-1e308, 0.5, 0.5),
+      position(1e-308, 0, 0),
+      BlockAxis(1),
+      BlockAxis(0),
+      BlockAxis(0),
+      BlockLength(2),
+      () => FULL_BLOCK_SHAPE,
+      { travelled: 1, face: 'west', normalX: -1, normalY: 0, normalZ: 0 },
+    )
+    expect(Result.isFailure(unrepresentableIntersection)).toBe(true)
   })
 
   it('returns none when the walk exhausts its step budget without a targetable cell', () => {
       const nothing = () => false
-      expect(Option.isNone(voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, nothing))).toBe(true)
+      expect(Option.isNone(ray(position(0.5, 0.5, 0.5), position(1, 0, 0), 8, nothing))).toBe(true)
   })
 
   it('visits cells in strictly increasing distance order, never skipping one', () => {
@@ -198,7 +314,7 @@ describe('voxel DDA', () => {
       // block you can shoot through. Recording the visit order is the only way
       // to see that from outside.
       const visited: Array<string> = []
-      voxelRaycast(position(0.5, 0.5, 0.5), position(1, 0, 0), 5, (bx, by, bz) => {
+      ray(position(0.5, 0.5, 0.5), position(1, 0, 0), 5, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -259,7 +375,7 @@ describe('voxel DDA', () => {
       // player cannot mine while looking straight at it.
       for (const axis of NEGATIVE_AXES) {
         const visited: Array<string> = []
-        voxelRaycast(offCentreOrigin, axis.direction, 5, (bx, by, bz) => {
+        ray(offCentreOrigin, axis.direction, 5, (bx, by, bz) => {
           visited.push(`${bx},${by},${bz}`)
           return false
         })
@@ -273,7 +389,7 @@ describe('voxel DDA', () => {
       // first crossing distance, and the sign of the normal.
       for (const axis of NEGATIVE_AXES) {
         const target = axis.cellAfter(3)
-        const hit = voxelRaycast(offCentreOrigin, axis.direction, 8, solidAt(target))
+        const hit = ray(offCentreOrigin, axis.direction, 8, solidAt(target))
         expect(Option.isSome(hit)).toBe(true)
         if (Option.isSome(hit)) {
           expect([hit.value.bx, hit.value.by, hit.value.bz]).toStrictEqual([...target])
@@ -297,7 +413,7 @@ describe('voxel DDA', () => {
       // full cell instead, and the traversal would start one cell too far along
       // — a block you can stand against and not be able to hit.
       const visited: Array<string> = []
-      voxelRaycast(position(3, 0.5, 0.5), position(-1, 0, 0), 3, (bx, by, bz) => {
+      ray(position(3, 0.5, 0.5), position(-1, 0, 0), 3, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -315,7 +431,7 @@ describe('voxel DDA', () => {
       // alternate. Get the -Y arm wrong and it starts 0.25 away instead, so the
       // very first cell is (0,-1,0) rather than (1,0,0).
       const visited: Array<string> = []
-      voxelRaycast(position(0.5, OFF_CENTRE, 0.5), position(1, -1, 0), 4, (bx, by, bz) => {
+      ray(position(0.5, OFF_CENTRE, 0.5), position(1, -1, 0), 4, (bx, by, bz) => {
         visited.push(`${bx},${by},${bz}`)
         return false
       })
@@ -326,7 +442,7 @@ describe('voxel DDA', () => {
       // All three negative arms at once, plus the tie-break between them. The
       // three tMax values are equal at every step here, so the order in which
       // the axes are consulted is fully exposed: X, then Y, then Z.
-      const hit = voxelRaycast(offCentreOrigin, position(-1, -1, -1), 16, solidAt([-2, -2, -2]))
+      const hit = ray(offCentreOrigin, position(-1, -1, -1), 16, solidAt([-2, -2, -2]))
       expect(Option.isSome(hit)).toBe(true)
       if (Option.isSome(hit)) {
         // Z was the last axis stepped, so Z is the face that was entered. Get
@@ -354,21 +470,21 @@ describe('voxel DDA', () => {
       // that fails first.
       for (const axis of NEGATIVE_AXES) {
         const target = solidAt(axis.cellAfter(5))
-        expect(Option.isNone(voxelRaycast(offCentreOrigin, axis.direction, 4.7, target))).toBe(true)
-        expect(Option.isSome(voxelRaycast(offCentreOrigin, axis.direction, 4.8, target))).toBe(true)
+        expect(Option.isNone(ray(offCentreOrigin, axis.direction, 4.7, target))).toBe(true)
+        expect(Option.isSome(ray(offCentreOrigin, axis.direction, 4.8, target))).toBe(true)
       }
   })
 
   it('is deterministic: the same ray against the same world always gives the same hit', () => {
-      FastCheck.assert(
-        FastCheck.property(
-          FastCheck.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
+      fc.assert(
+        fc.property(
+          fc.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true }),
           (dx, dy, dz) => {
             const target = solidAt([4, 0, 0])
-            const first = voxelRaycast(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
-            const second = voxelRaycast(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
+            const first = ray(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
+            const second = ray(position(0.5, 0.5, 0.5), position(dx, dy, dz), 16, target)
             return JSON.stringify(first) === JSON.stringify(second)
           },
         ),

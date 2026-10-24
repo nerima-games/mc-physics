@@ -11,30 +11,64 @@
  *   physics-integrator-is-symplectic
  *   physics-terminal-velocity-cannot-tunnel
  */
+import { Result } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { FastCheck } from 'effect'
+import * as fc from 'fast-check'
+import { PositionAxis } from '@nerima-games/mc-kernel'
+import { BlocksPerSecond, BlocksPerSecondSquared } from '../src/domain/physical-units'
 import {
   CentreY,
   FootY,
   PLAYER_HALF_HEIGHT,
 } from '../src/domain/coordinates'
-import { MAX_DELTA_SECS, MIN_DELTA_SECS, clampDeltaTime } from '../src/domain/delta-time'
-import { GRAVITY_Y, TERMINAL_VELOCITY_Y, integrate, integrateBody, maxFallPerStep, type Body } from '../src/domain/integrate'
+import { DeltaTimeSecs, MAX_DELTA_SECS, MIN_DELTA_SECS } from '../src/domain/delta-time'
+import {
+  GRAVITY_Y,
+  TERMINAL_VELOCITY_Y,
+  integrate as integrateResult,
+  integrateBody as integrateBodyResult,
+  maxFallPerStep as maxFallPerStepResult,
+  type Body,
+  type IntegrationOptions,
+} from '../src/domain/integrate'
 
-const dynamicBody = (over: Partial<Body> = {}): Body => ({
-  kind: 'dynamic',
-  x: 0,
-  y: CentreY(100),
-  z: 0,
-  vx: 0,
-  vy: 0,
-  vz: 0,
-  ...over,
-})
+type BodyOverrides = Omit<Partial<Body>, 'x' | 'z' | 'vx' | 'vy' | 'vz'> & {
+  readonly x?: number
+  readonly z?: number
+  readonly vx?: number
+  readonly vy?: number
+  readonly vz?: number
+}
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isSuccess(result)) return result.success
+  throw new Error('Expected Result.Success')
+}
+
+const integrateBody = (body: Body, delta: ReturnType<typeof DeltaTimeSecs>, options?: IntegrationOptions): Body =>
+  unwrap(integrateBodyResult(body, delta, options))
+
+const integrate = (bodies: ReadonlyArray<Body>, delta: ReturnType<typeof DeltaTimeSecs>, options?: IntegrationOptions) =>
+  unwrap(integrateResult(bodies, delta, options))
+
+const maxFallPerStep = (delta: ReturnType<typeof DeltaTimeSecs>) => unwrap(maxFallPerStepResult(delta))
+
+const dynamicBody = (over: BodyOverrides = {}): Body => {
+  const { kind = 'dynamic', x = 0, y = CentreY(100), z = 0, vx = 0, vy = 0, vz = 0 } = over
+  return {
+    kind,
+    x: PositionAxis(x),
+    y,
+    z: PositionAxis(z),
+    vx: BlocksPerSecond(vx),
+    vy: BlocksPerSecond(vy),
+    vz: BlocksPerSecond(vz),
+  }
+}
 
 const footYMustNotBeAcceptedAsBodyCentre: Body = {
   kind: 'dynamic',
-  x: 0,
+  x: PositionAxis(0),
   // A compile-time negative control for the convention this package is built
   // around: `Body` takes the AABB centre, so a `FootY` must not be assignable to
   // it. `@ts-expect-error` is what makes it a control rather than a comment. If
@@ -43,10 +77,10 @@ const footYMustNotBeAcceptedAsBodyCentre: Body = {
   // value; the `void` below only satisfies `noUnusedLocals`.
   // @ts-expect-error Body coordinates use the AABB centre, never its feet.
   y: FootY(0),
-  z: 0,
-  vx: 0,
-  vy: 0,
-  vz: 0,
+  z: PositionAxis(0),
+  vx: BlocksPerSecond(0),
+  vy: BlocksPerSecond(0),
+  vz: BlocksPerSecond(0),
 }
 
 void footYMustNotBeAcceptedAsBodyCentre
@@ -56,7 +90,7 @@ describe('semi-implicit Euler', () => {
       // Explicit Euler would give y = 100 exactly (old velocity 0). Symplectic
       // gives y = 100 + (g*dt)*dt. The difference is the whole distinction, and
       // it is what stops a bouncing entity from gaining energy every step.
-      const delta = clampDeltaTime(0.02)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const stepped = integrateBody(dynamicBody(), delta)
       expect(stepped.vy).toBeCloseTo(GRAVITY_Y * delta, 12)
       expect(stepped.y).toBeCloseTo(100 + GRAVITY_Y * delta * delta, 12)
@@ -64,12 +98,12 @@ describe('semi-implicit Euler', () => {
   })
 
   it('never lets a dynamic body fall faster than terminal velocity', () => {
-      FastCheck.assert(
-        FastCheck.property(
-          FastCheck.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.integer({ min: 1, max: 400 }),
+      fc.assert(
+        fc.property(
+          fc.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
+          fc.integer({ min: 1, max: 400 }),
           (rawDelta, steps) => {
-            const delta = clampDeltaTime(rawDelta)
+            const delta = DeltaTimeSecs(rawDelta)
             let body = dynamicBody()
             for (let step = 0; step < steps; step += 1) {
               body = integrateBody(body, delta)
@@ -90,11 +124,11 @@ describe('semi-implicit Euler', () => {
       // no test of the resolver itself would notice. Asserted between named
       // constants so that tuning either one fails here.
       const bodyHeight = 2 * Number(PLAYER_HALF_HEIGHT)
-      expect(maxFallPerStep(MAX_DELTA_SECS)).toBeLessThanOrEqual(bodyHeight)
+      expect(maxFallPerStep(DeltaTimeSecs(MAX_DELTA_SECS))).toBeLessThanOrEqual(bodyHeight)
   })
 
   it('leaves static and kinematic bodies completely alone', () => {
-      const delta = clampDeltaTime(0.02)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       for (const kind of ['static', 'kinematic'] as const) {
         const body = dynamicBody({ kind, vy: -5 })
         expect(integrateBody(body, delta)).toStrictEqual(body)
@@ -102,7 +136,7 @@ describe('semi-implicit Euler', () => {
   })
 
   it('is deterministic and order-independent across a world of bodies', () => {
-      const delta = clampDeltaTime(0.02)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const bodies: ReadonlyArray<Body> = [
         dynamicBody({ y: CentreY(10) }),
         dynamicBody({ kind: 'static', y: CentreY(20) }),
@@ -127,7 +161,7 @@ describe('semi-implicit Euler', () => {
   })
 
   it('does not touch horizontal velocity: gravity acts on Y only', () => {
-      const stepped = integrateBody(dynamicBody({ vx: 3, vz: -4 }), clampDeltaTime(0.02))
+      const stepped = integrateBody(dynamicBody({ vx: 3, vz: -4 }), DeltaTimeSecs(MAX_DELTA_SECS))
       expect(stepped.vx).toBe(3)
       expect(stepped.vz).toBe(-4)
   })
@@ -139,7 +173,7 @@ describe('semi-implicit Euler', () => {
 
 describe('air drag (FR-004)', () => {
   it('REGRESSION: the default dragPerSecond (1) reproduces the pre-injection integrator exactly', () => {
-      const delta = clampDeltaTime(0.02)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
       expect(integrateBody(body, delta)).toStrictEqual(
         integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: TERMINAL_VELOCITY_Y }),
@@ -149,16 +183,16 @@ describe('air drag (FR-004)', () => {
   it('PROPERTY: for dragPerSecond in (0, 1], no axis speed increases in one step', () => {
       // gravityY is pinned to 0 so the property isolates drag from the separate
       // vertical acceleration gravity contributes.
-      FastCheck.assert(
-        FastCheck.property(
-          FastCheck.double({ min: 1e-6, max: 1, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
-          FastCheck.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
+      fc.assert(
+        fc.property(
+          fc.double({ min: 1e-6, max: 1, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: -20, max: 20, noNaN: true, noDefaultInfinity: true }),
+          fc.double({ min: MIN_DELTA_SECS, max: MAX_DELTA_SECS, noNaN: true, noDefaultInfinity: true }),
           (dragPerSecond, vx, vy, vz, rawDelta) => {
-            const delta = clampDeltaTime(rawDelta)
-            const stepped = integrateBody(dynamicBody({ vx, vy, vz }), delta, { gravityY: 0, dragPerSecond })
+            const delta = DeltaTimeSecs(rawDelta)
+            const stepped = integrateBody(dynamicBody({ vx, vy, vz }), delta, { gravityY: BlocksPerSecondSquared(0), dragPerSecond })
             return (
               Math.abs(stepped.vx) <= Math.abs(vx) + 1e-9 &&
               Math.abs(stepped.vy) <= Math.abs(vy) + 1e-9 &&
@@ -174,9 +208,9 @@ describe('air drag (FR-004)', () => {
       // Vanilla per-tick drag of ~0.98 at 20 ticks/s is dragPerSecond = 0.98 **
       // 20 ≈ 0.667/s; this checks the continuous formula the other direction,
       // at an arbitrary dt rather than the tick boundary.
-      const delta = clampDeltaTime(0.1)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const dragPerSecond = 0.5
-      const stepped = integrateBody(dynamicBody({ vx: 4, vy: 0, vz: -4 }), delta, { gravityY: 0, dragPerSecond })
+      const stepped = integrateBody(dynamicBody({ vx: 4, vy: 0, vz: -4 }), delta, { gravityY: BlocksPerSecondSquared(0), dragPerSecond })
       const expectedFactor = dragPerSecond ** delta
       expect(stepped.vx).toBeCloseTo(4 * expectedFactor, 12)
       expect(stepped.vz).toBeCloseTo(-4 * expectedFactor, 12)
@@ -187,7 +221,7 @@ describe('air drag (FR-004)', () => {
       // deltaTime, the normal case) is NaN in IEEE 754, and NaN multiplies
       // into every field of the body. >1 is rejected too: that is not "more
       // resistance", it is velocity growing every step — energy from nowhere.
-      const delta = clampDeltaTime(0.02)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
       const withNoDrag = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: TERMINAL_VELOCITY_Y })
       for (const invalid of [-1, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, 2]) {
@@ -206,28 +240,63 @@ describe('air drag (FR-004)', () => {
 
 describe('injected terminal velocity (FR-005)', () => {
   it('caps at the injected value instead of the module default', () => {
-      const shallow = TERMINAL_VELOCITY_Y / 2 // e.g. -16: a slower, shallower fall
-      const delta = clampDeltaTime(0.02)
+      const shallow = BlocksPerSecond(TERMINAL_VELOCITY_Y / 2) // e.g. -16: a slower, shallower fall
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       let body = dynamicBody()
       for (let step = 0; step < 400; step += 1) {
-        body = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: shallow })
+        body = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: BlocksPerSecond(shallow) })
       }
       expect(body.vy).toBe(shallow)
   })
 
   it('REGRESSION: a non-negative or non-finite terminalVelocityY falls back to the module default', () => {
-      const delta = clampDeltaTime(0.05)
+      const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const fallToTerminal = (invalid: number): number => {
         let body = dynamicBody()
         // |TERMINAL_VELOCITY_Y| / |GRAVITY_Y| ≈ 3.26s to reach the asymptote;
         // 200 steps at this delta is ~10s, comfortably past it.
         for (let step = 0; step < 200; step += 1) {
-          body = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: invalid })
+          body = integrateBody(body, delta, {
+            gravityY: GRAVITY_Y,
+            dragPerSecond: 1,
+            terminalVelocityY: invalid as ReturnType<typeof BlocksPerSecond>,
+          })
         }
         return body.vy
       }
       for (const invalid of [0, 5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
         expect(fallToTerminal(invalid)).toBe(TERMINAL_VELOCITY_Y)
       }
+  })
+
+  it('returns failures when computed integration scalars cannot be branded', () => {
+    const delta = DeltaTimeSecs(MAX_DELTA_SECS)
+    const overflowingBody = dynamicBody({ x: Number.MAX_VALUE, vx: Number.MAX_VALUE })
+
+    expect(Result.isFailure(integrateBodyResult(overflowingBody, delta))).toBe(true)
+    expect(Result.isFailure(integrateResult([dynamicBody(), overflowingBody], delta))).toBe(true)
+    expect(Result.isFailure(maxFallPerStepResult(DeltaTimeSecs(Number.MAX_VALUE)))).toBe(true)
+  })
+
+  it('returns failures for invalid integration inputs and gravity', () => {
+    const delta = DeltaTimeSecs(MAX_DELTA_SECS)
+    const invalidBody = { ...dynamicBody(), x: Number.NaN as PositionAxis }
+    const invalidGravity = Number.NaN as BlocksPerSecondSquared
+    const invalidDelta = Number.NaN as ReturnType<typeof DeltaTimeSecs>
+
+    expect(Result.isFailure(integrateBodyResult(invalidBody, delta))).toBe(true)
+    expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, { gravityY: invalidGravity }))).toBe(true)
+    expect(Result.isFailure(maxFallPerStepResult(invalidDelta))).toBe(true)
+  })
+
+  it('uses the valid default terminal velocity when its option is invalid', () => {
+    const result = integrateBodyResult(
+      dynamicBody({ vy: TERMINAL_VELOCITY_Y - 1 }),
+      DeltaTimeSecs(MAX_DELTA_SECS),
+      { terminalVelocityY: Number.NaN as BlocksPerSecond },
+    )
+
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) expect(result.success.vy).toBe(TERMINAL_VELOCITY_Y)
   })
 })

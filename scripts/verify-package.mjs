@@ -28,6 +28,9 @@ const run = (command, args) => {
 // surface without a review of that change.
 const expectedExports = [
   'ARROW_PROFILE',
+  'BlockLength',
+  'BlocksPerSecond',
+  'BlocksPerSecondSquared',
   'CACTUS_SHAPE',
   'COLLISION_SHAPE_AABBS',
   'CONTACT_EPSILON',
@@ -35,7 +38,6 @@ const expectedExports = [
   'DEFAULT_ENTITY_COLLISION_OPTIONS',
   'DEFAULT_EXPLOSION_LIMITS',
   'DEFAULT_GLIDE_CONFIG',
-  'DEFAULT_TNT_FUSE_SECS',
   'DeltaTimeSecs',
   'EGG_PROFILE',
   'FIRST_FRAME_DELTA_SECS',
@@ -43,14 +45,17 @@ const expectedExports = [
   'FootY',
   'GRAVITY_Y',
   'HalfHeight',
+  'InverseMass',
   'MAX_DELTA_SECS',
   'MAX_ITERATIONS',
-  'MAX_TNT_FUSE_ADVANCE_SECS',
   'MIN_CELL_SIZE',
   'MIN_DELTA_SECS',
+  'Mass',
+  'MonotonicTimeSecs',
   'PLAYER_HALF_HEIGHT',
   'PLAYER_HALF_WIDTH',
   'PRESSURE_PLATE_SHAPE',
+  'PerSecond',
   'SLAB_SHAPE',
   'SNOWBALL_PROFILE',
   'TERMINAL_VELOCITY_Y',
@@ -58,21 +63,22 @@ const expectedExports = [
   'aabbOfCollisionShape',
   'aabbsOfBlockShape',
   'advanceFallTracking',
-  'applyExplosionPlan',
+  'applyCreativeFlightInput',
   'applyFluidMotion',
   'applyKnockback',
   'applyMovementInput',
-  'applyPrimedTntPlan',
   'applySurfaceMotion',
   'blockAABB',
   'blockAtFromKernel',
   'blockEnvironmentFromKernel',
   'blockPropertiesAtFromKernel',
+  'blockVectorResult',
   'centreOfFoot',
-  'clampDeltaTime',
+  'clampFrameDelta',
   'clampSneakEdge',
   'collidesWith',
   'collisionOf',
+  'createCreativeFlightState',
   'createFallTrackingState',
   'deltaTimeBetween',
   'detectEntityCollisions',
@@ -92,11 +98,8 @@ const expectedExports = [
   'normalizedOptions',
   'penetrationY',
   'pistonExtrusion',
-  'planExplosion',
-  'planPrimedTnt',
   'position',
   'potentialPairs',
-  'primeTnt',
   'resetFallTrackingState',
   'resolveBody',
   'resolveEntityCollisions',
@@ -109,6 +112,8 @@ const expectedExports = [
   'stepBody',
   'stepProjectile',
   'stepWorld',
+  'toggleCreativeFlight',
+  'velocityVectorResult',
   'voxelRaycast',
 ]
 
@@ -120,9 +125,28 @@ try {
   assert.equal(physics.DeltaTimeSecs(0), 0)
   assert.equal(physics.FULL_BLOCK_SHAPE.minX, 0)
   assert.equal(typeof physics.voxelRaycast, 'function')
-  assert.equal(typeof physics.planExplosion, 'function')
+  assert.equal(typeof physics.applyCreativeFlightInput, 'function')
+  assert.equal('planExplosion' in physics, false)
+  assert.equal('primeTnt' in physics, false)
 
-  run('pnpm', ['pack', '--pack-destination', temporaryDirectory])
+  const declaration = readFileSync(join(root, 'dist/index.d.ts'), 'utf8')
+  for (const name of [
+    'ExplosionBlock',
+    'ExplosionBlockPosition',
+    'ExplosionBlockReader',
+    'ExplosionCommit',
+    'ExplosionEntity',
+    'ExplosionEntityEffect',
+    'ExplosionLimits',
+    'ExplosionMutation',
+    'ExplosionPlan',
+    'ExplosionRequest',
+  ]) {
+    assert.match(declaration, new RegExp(`\\b${name}\\b`))
+  }
+  assert.doesNotMatch(declaration, /\bPrimedTnt[A-Za-z]*\b/)
+
+  run('corepack', ['pnpm', 'pack', '--pack-destination', temporaryDirectory])
   const archiveName = readdirSync(temporaryDirectory).find((name) => name.endsWith('.tgz'))
   if (archiveName === undefined) {
     throw new Error('pnpm pack produced no archive')

@@ -7,6 +7,7 @@
  * the reference implementation, so that changing one is a deliberate act.
  */
 import { describe, expect, it } from 'vitest'
+import { Option, Result } from 'effect'
 import * as physics from '../src/index'
 
 describe('public API surface', () => {
@@ -42,7 +43,8 @@ describe('public API surface', () => {
         'MIN_DELTA_SECS',
         'MAX_DELTA_SECS',
         'FIRST_FRAME_DELTA_SECS',
-        'clampDeltaTime',
+        'MonotonicTimeSecs',
+        'clampFrameDelta',
         'deltaTimeBetween',
         'isClampedDelta',
         // integrate
@@ -75,6 +77,10 @@ describe('public API surface', () => {
         // movement
         'applyMovementInput',
         'applyKnockback',
+        // creative flight
+        'createCreativeFlightState',
+        'toggleCreativeFlight',
+        'applyCreativeFlightInput',
         // kernel-world
         'blockAtFromKernel',
         'blockPropertiesAtFromKernel',
@@ -92,15 +98,8 @@ describe('public API surface', () => {
         // fluid
         'sampleFluidEffects',
         'applyFluidMotion',
-        // explosion and primed TNT
-        'planExplosion',
-        'applyExplosionPlan',
+        // shared explosion data only; mc-sim owns execution
         'DEFAULT_EXPLOSION_LIMITS',
-        'DEFAULT_TNT_FUSE_SECS',
-        'MAX_TNT_FUSE_ADVANCE_SECS',
-        'primeTnt',
-        'planPrimedTnt',
-        'applyPrimedTntPlan',
         // entity interaction (broad-phase, narrow-phase, mass, resolution)
         'detectEntityCollisions',
         'resolveEntityCollisions',
@@ -109,8 +108,17 @@ describe('public API surface', () => {
         'normalizedOptions',
         'potentialPairs',
         'DEFAULT_ENTITY_COLLISION_OPTIONS',
-        'MIN_CELL_SIZE',
         'MAX_ITERATIONS',
+        'MIN_CELL_SIZE',
+        // physics-specific semantic units
+        'BlockLength',
+        'BlocksPerSecond',
+        'BlocksPerSecondSquared',
+        'PerSecond',
+        'Mass',
+        'InverseMass',
+        'blockVectorResult',
+        'velocityVectorResult',
       ]
       expect(Object.keys(physics).sort()).toEqual([...expected].sort())
   })
@@ -133,11 +141,11 @@ describe('the measured constants plan.md §3.4 carries over', () => {
   it('pins DeltaTimeSecs to kernel’s refinement, with the clamp applied at the boundary', () => {
       expect(physics.DeltaTimeSecs(0)).toBe(0)
       expect(physics.DeltaTimeSecs(30)).toBe(30)
-      expect(() => physics.DeltaTimeSecs(-1)).toThrow()
-      expect(() => physics.DeltaTimeSecs(Number.NaN)).toThrow()
+      expect(Result.isFailure(physics.DeltaTimeSecs.result(-1))).toBe(true)
+      expect(Option.isNone(physics.DeltaTimeSecs.option(Number.NaN))).toBe(true)
 
-      expect(physics.isClampedDelta(physics.clampDeltaTime(30))).toBe(true)
-      expect(physics.isClampedDelta(30)).toBe(false)
+      expect(physics.isClampedDelta(physics.clampFrameDelta(physics.DeltaTimeSecs(30)))).toBe(true)
+      expect(physics.isClampedDelta(physics.DeltaTimeSecs(30))).toBe(false)
   })
 
   it('pins gravity, terminal velocity and the player half-extents', () => {
@@ -153,7 +161,11 @@ describe('the measured constants plan.md §3.4 carries over', () => {
       // constant without the other fails here.
       const bodyHeight = 2 * Number(physics.PLAYER_HALF_HEIGHT)
       expect(Math.abs(physics.TERMINAL_VELOCITY_Y)).toBeLessThan(bodyHeight / physics.MAX_DELTA_SECS)
-      expect(physics.maxFallPerStep(physics.MAX_DELTA_SECS)).toBeLessThanOrEqual(bodyHeight)
+      const maxFall = physics.maxFallPerStep(physics.DeltaTimeSecs(physics.MAX_DELTA_SECS))
+      expect(Result.isSuccess(maxFall)).toBe(true)
+      if (Result.isSuccess(maxFall)) {
+        expect(Number(maxFall.success)).toBeLessThanOrEqual(bodyHeight)
+      }
   })
 
   it('the contact epsilon is far above the float error and far below anything perceivable', () => {

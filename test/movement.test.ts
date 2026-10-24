@@ -1,45 +1,65 @@
+import { Result } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { FastCheck } from 'effect'
-import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import * as fc from 'fast-check'
+import { AngleRadians, DeltaTimeSecs, PositionAxis } from '@nerima-games/mc-kernel'
 import {
+  BlocksPerSecond,
+  BlocksPerSecondSquared,
   CentreY,
+  applyKnockback as applyKnockbackResult,
+  applyMovementInput as applyMovementInputResult,
+  velocityVectorResult,
   type Body,
-  applyKnockback,
-  applyMovementInput,
-  position,
+  type VelocityVector,
   type MovementConfig,
   type MovementInput,
 } from '../src/index'
 
+const unwrapResult = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isSuccess(result)) return result.success
+  throw new Error('Expected Result.Success')
+}
+
+const applyMovementInput = (...args: Parameters<typeof applyMovementInputResult>): Body =>
+  unwrapResult(applyMovementInputResult(...args))
+
+const applyKnockback = (body: Body, impulse: VelocityVector): Body =>
+  unwrapResult(applyKnockbackResult(body, impulse))
+
+const velocity = (x: number, y: number, z: number): VelocityVector =>
+  unwrapResult(velocityVectorResult(x, y, z))
+
 const bodyOf = (kind: Body['kind'] = 'dynamic'): Body => ({
   kind,
-  x: 0,
+  x: PositionAxis(0),
   y: CentreY(1),
-  z: 0,
-  vx: 0,
-  vy: 1,
-  vz: 0,
+  z: PositionAxis(0),
+  vx: BlocksPerSecond(0),
+  vy: BlocksPerSecond(1),
+  vz: BlocksPerSecond(0),
 })
 
 const inputOf = (overrides: Partial<MovementInput> = {}): MovementInput => ({
   forward: 1,
   strafe: 1,
-  yawRadians: 0,
+  yawRadians: AngleRadians(0),
   sprint: true,
+  sneak: false,
   jumpPressed: true,
   ...overrides,
 })
 
 const config: MovementConfig = {
-  walkSpeed: 4,
+  walkSpeed: BlocksPerSecond(4),
   sprintMultiplier: 2,
-  groundAcceleration: 100,
-  airAcceleration: 1,
-  jumpVelocity: 6,
+  sneakMultiplier: 0.3,
+  groundAcceleration: BlocksPerSecondSquared(100),
+  airAcceleration: BlocksPerSecondSquared(1),
+  jumpVelocity: BlocksPerSecond(6),
   // Java: ~0.04 blocks/tick^2 swim-up accel x 20 ticks/s = 0.8 blocks/s^2.
-  fluidAscentAcceleration: 0.8,
+  fluidAscentAcceleration: BlocksPerSecondSquared(0.8),
   // Java: ~0.2 blocks/tick swim-up cap x 20 ticks/s = 4 blocks/s.
-  fluidAscentMaxSpeed: 4,
+  fluidAscentMaxSpeed: BlocksPerSecond(4),
 }
 
 describe('movement input', () => {
@@ -51,7 +71,7 @@ describe('movement input', () => {
 
     const rotated = applyMovementInput(
       bodyOf(),
-      inputOf({ strafe: 0, yawRadians: Math.PI / 2, jumpPressed: false }),
+      inputOf({ strafe: 0, yawRadians: AngleRadians(Math.PI / 2), jumpPressed: false }),
       true,
       false,
       DeltaTimeSecs(1),
@@ -62,9 +82,40 @@ describe('movement input', () => {
     expect(rotated.vy).toBe(1)
   })
 
+  it('applies sneak speed and gives sneak precedence over sprint', () => {
+    const walking = applyMovementInput(
+      bodyOf(),
+      inputOf({ strafe: 0, sprint: false, sneak: false, jumpPressed: false }),
+      true,
+      false,
+      DeltaTimeSecs(1),
+      config,
+    )
+    const sprinting = applyMovementInput(
+      bodyOf(),
+      inputOf({ strafe: 0, sprint: true, sneak: false, jumpPressed: false }),
+      true,
+      false,
+      DeltaTimeSecs(1),
+      config,
+    )
+    const sneaking = applyMovementInput(
+      bodyOf(),
+      inputOf({ strafe: 0, sprint: true, sneak: true, jumpPressed: false }),
+      true,
+      false,
+      DeltaTimeSecs(1),
+      config,
+    )
+
+    expect(walking.vz).toBe(-4)
+    expect(sprinting.vz).toBe(-8)
+    expect(sneaking.vz).toBeCloseTo(-4 * config.sneakMultiplier)
+  })
+
   it('uses air acceleration and does not sprint backward or jump while airborne', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vx: 1, vz: 1 },
+      { ...bodyOf(), vx: BlocksPerSecond(1), vz: BlocksPerSecond(1) },
       inputOf({ forward: -1, strafe: 0 }),
       false,
       false,
@@ -78,12 +129,12 @@ describe('movement input', () => {
 
   it('approaches the target speed instead of changing velocity discontinuously', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vx: 10, vz: 0 },
+      { ...bodyOf(), vx: BlocksPerSecond(10), vz: BlocksPerSecond(0) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: false }),
       true,
       false,
       DeltaTimeSecs(0.1),
-      { ...config, groundAcceleration: 2 },
+      { ...config, groundAcceleration: BlocksPerSecondSquared(2) },
     )
     expect(actual.vx).toBeCloseTo(9.8)
     expect(actual.vz).toBe(0)
@@ -91,12 +142,12 @@ describe('movement input', () => {
 
   it('does not cross zero when acceleration exactly cancels velocity', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vx: 1 },
+      { ...bodyOf(), vx: BlocksPerSecond(1) },
       inputOf({ forward: 0, strafe: -1, sprint: false, jumpPressed: false }),
       false,
       false,
       DeltaTimeSecs(0.5),
-      { ...config, airAcceleration: 2 },
+      { ...config, airAcceleration: BlocksPerSecondSquared(2) },
     )
     expect(actual.vx).toBe(0)
   })
@@ -107,37 +158,40 @@ describe('movement input', () => {
     expect(applyMovementInput(staticBody, inputOf(), true, false, DeltaTimeSecs(1), config)).toBe(staticBody)
     expect(applyMovementInput(kinematicBody, inputOf(), true, false, DeltaTimeSecs(1), config)).toBe(kinematicBody)
 
-    // Every delta below is a legal `DeltaTimeSecs` and none of them changes the
-    // answer: what this function sanitises is the injected controls, and
-    // `groundAcceleration` being NaN already pins the per-step change at zero.
+    // Every delta below is a legal `DeltaTimeSecs`; with zero ground
+    // acceleration, malformed control axes leave the body unchanged.
     // The brand's own refusal of a non-finite delta is in test/delta-time.test.ts;
     // a delta that is not a `DeltaTimeSecs` cannot reach this signature at all.
     for (const seconds of [0, 0.001, 0.05, 30]) {
       const actual = applyMovementInput(
         bodyOf(),
-        { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN, sprint: false, jumpPressed: false },
+        { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN as AngleRadians, sprint: false, sneak: false, jumpPressed: false },
         true,
         false,
         DeltaTimeSecs(seconds),
         {
-          walkSpeed: -1,
+          walkSpeed: BlocksPerSecond(-1),
           sprintMultiplier: Number.NaN,
-          groundAcceleration: Number.NaN,
-          airAcceleration: -1,
-          jumpVelocity: Number.NaN,
-          fluidAscentAcceleration: Number.NaN,
-          fluidAscentMaxSpeed: -1,
+          sneakMultiplier: Number.NaN,
+          groundAcceleration: BlocksPerSecondSquared(0),
+          airAcceleration: BlocksPerSecondSquared(-1),
+          jumpVelocity: BlocksPerSecond(-1),
+          fluidAscentAcceleration: BlocksPerSecondSquared(0),
+          fluidAscentMaxSpeed: BlocksPerSecond(-1),
         },
       )
       expect(actual).toEqual(bodyOf())
     }
+
+    const invalidConfig = { ...config, groundAcceleration: Number.NaN as BlocksPerSecondSquared }
+    expect(Result.isFailure(applyMovementInputResult(bodyOf(), inputOf(), true, false, DeltaTimeSecs(0.1), invalidConfig))).toBe(true)
   })
 })
 
 describe('fluid ascent (FR-008: swimming upward)', () => {
   it('increases vy while jump is pressed in fluid, capped at fluidAscentMaxSpeed', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vy: 0 },
+      { ...bodyOf(), vy: BlocksPerSecond(0) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: true }),
       false,
       true,
@@ -149,7 +203,7 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
 
   it('caps vy at fluidAscentMaxSpeed even with a large deltaTime', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vy: 0 },
+      { ...bodyOf(), vy: BlocksPerSecond(0) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: true }),
       false,
       true,
@@ -161,7 +215,7 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
 
   it('leaves vy unchanged in fluid when jump is not pressed', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vy: -1 },
+      { ...bodyOf(), vy: BlocksPerSecond(-1) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: false }),
       false,
       true,
@@ -173,7 +227,7 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
 
   it('leaves vy unchanged in the air when not in fluid, even with jump pressed', () => {
     const actual = applyMovementInput(
-      { ...bodyOf(), vy: 0.5 },
+      { ...bodyOf(), vy: BlocksPerSecond(0.5) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: true }),
       false,
       false,
@@ -185,7 +239,7 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
 
   it('keeps grounded jump behaviour exactly unchanged regardless of the fluid flag', () => {
     const onGround = applyMovementInput(
-      { ...bodyOf(), vy: 0 },
+      { ...bodyOf(), vy: BlocksPerSecond(0) },
       inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: true }),
       true,
       true,
@@ -196,16 +250,20 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
   })
 
   it('property: vy is monotonically non-decreasing and never exceeds max(initial vy, cap) while ascending in fluid', () => {
-    FastCheck.assert(
-      FastCheck.property(
-        FastCheck.double({ min: 0, max: 20, noNaN: true, noDefaultInfinity: true }),
-        FastCheck.double({ min: 0, max: 20, noNaN: true, noDefaultInfinity: true }),
-        FastCheck.double({ min: -10, max: 10, noNaN: true, noDefaultInfinity: true }),
-        FastCheck.double({ min: 0, max: 5, noNaN: true, noDefaultInfinity: true }),
+    fc.assert(
+      fc.property(
+        fc.double({ min: 0, max: 20, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 20, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: -10, max: 10, noNaN: true, noDefaultInfinity: true }),
+        fc.double({ min: 0, max: 5, noNaN: true, noDefaultInfinity: true }),
         (fluidAscentAcceleration, fluidAscentMaxSpeed, vy, seconds) => {
-          const ascentConfig: MovementConfig = { ...config, fluidAscentAcceleration, fluidAscentMaxSpeed }
+          const ascentConfig: MovementConfig = {
+            ...config,
+            fluidAscentAcceleration: BlocksPerSecondSquared(fluidAscentAcceleration),
+            fluidAscentMaxSpeed: BlocksPerSecond(fluidAscentMaxSpeed),
+          }
           const actual = applyMovementInput(
-            { ...bodyOf(), vy },
+            { ...bodyOf(), vy: BlocksPerSecond(vy) },
             inputOf({ forward: 0, strafe: 0, sprint: false, jumpPressed: true }),
             false,
             true,
@@ -222,9 +280,18 @@ describe('fluid ascent (FR-008: swimming upward)', () => {
 
 describe('knockback', () => {
   it('adds finite impulse components only to dynamic bodies', () => {
-    expect(applyKnockback(bodyOf(), position(1, -2, 3))).toEqual({ ...bodyOf(), vx: 1, vy: -1, vz: 3 })
-    expect(applyKnockback(bodyOf(), position(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY))).toEqual(bodyOf())
+    expect(applyKnockback(bodyOf(), velocity(1, -2, 3))).toEqual({
+      ...bodyOf(),
+      vx: BlocksPerSecond(1),
+      vy: BlocksPerSecond(-1),
+      vz: BlocksPerSecond(3),
+    })
+    expect(Result.isFailure(applyKnockbackResult(bodyOf(), {
+      x: Number.NaN as BlocksPerSecond,
+      y: Number.POSITIVE_INFINITY as BlocksPerSecond,
+      z: Number.NEGATIVE_INFINITY as BlocksPerSecond,
+    }))).toBe(true)
     const staticBody = bodyOf('static')
-    expect(applyKnockback(staticBody, position(1, 2, 3))).toBe(staticBody)
+    expect(applyKnockback(staticBody, velocity(1, 2, 3))).toBe(staticBody)
   })
 })

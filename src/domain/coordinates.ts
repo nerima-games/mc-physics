@@ -44,33 +44,65 @@
  * `FULL_BLOCK_SHAPE` below is the reference's `FULL_BLOCK_COLLISION_SHAPE`
  * (`packages/game/domain/aabb-collision-shapes.ts:16-23`).
  */
+import { BlockAxis, type CollisionShape, type Position, PositionAxis } from '@nerima-games/mc-kernel'
+import { Brand, Result } from 'effect'
 import { COLLISION_SHAPE_AABBS, FULL_BLOCK_SHAPE } from './shape-data.js'
-import { Brand } from 'effect'
-import type { CollisionShape } from '@nerima-games/mc-kernel'
+import { BlockLength } from './physical-units.js'
 
 /** Y of the plane an entity's feet rest on. What spawn logic and game rules speak. */
 export type FootY = number & Brand.Brand<'FootY'>
 
-export const FootY: Brand.Brand.Constructor<FootY> = Brand.nominal<FootY>()
+export const FootY: Brand.Constructor<FootY> = Brand.make<FootY>((value) => Number.isFinite(value) || 'FootY must be finite')
 
 /** Y of the centre of an entity's AABB. What the integrator and resolver speak. */
 export type CentreY = number & Brand.Brand<'CentreY'>
 
-export const CentreY: Brand.Brand.Constructor<CentreY> = Brand.nominal<CentreY>()
+export const CentreY: Brand.Constructor<CentreY> = Brand.make<CentreY>((value) => Number.isFinite(value) || 'CentreY must be finite')
 
 /** Vertical half-extent of an entity's AABB. Never negative. */
 export type HalfHeight = number & Brand.Brand<'HalfHeight'>
 
-export const HalfHeight: Brand.Brand.Constructor<HalfHeight> = Brand.refined<HalfHeight>(
-  (value) => Number.isFinite(value) && value > 0,
-  (value) => Brand.error(`HalfHeight must be a positive finite number, received ${value}`),
+export const HalfHeight: Brand.Constructor<HalfHeight> = Brand.make<HalfHeight>(
+  (value) =>
+    (Number.isFinite(value) && value > 0) ||
+    `HalfHeight must be a positive finite number, received ${value}`,
 )
 
 /** THE conversion, foot -> centre. The only one in the repository. */
-export const centreOfFoot = (foot: FootY, halfHeight: HalfHeight): CentreY => CentreY(foot + halfHeight)
+export const centreOfFoot = (
+  foot: FootY,
+  halfHeight: HalfHeight,
+): Result.Result<CentreY, Brand.BrandError> => {
+  const footSnapshot = foot
+  const halfHeightSnapshot = halfHeight
+  const checkedFoot = FootY.result(footSnapshot)
+  if (Result.isFailure(checkedFoot)) {
+    return Result.fail(checkedFoot.failure)
+  }
+  const checkedHalfHeight = HalfHeight.result(halfHeightSnapshot)
+  if (Result.isFailure(checkedHalfHeight)) {
+    return Result.fail(checkedHalfHeight.failure)
+  }
+  return CentreY.result(checkedFoot.success + checkedHalfHeight.success)
+}
 
 /** THE conversion, centre -> foot. The only one in the repository. */
-export const footOfCentre = (centre: CentreY, halfHeight: HalfHeight): FootY => FootY(centre - halfHeight)
+export const footOfCentre = (
+  centre: CentreY,
+  halfHeight: HalfHeight,
+): Result.Result<FootY, Brand.BrandError> => {
+  const centreSnapshot = centre
+  const halfHeightSnapshot = halfHeight
+  const checkedCentre = CentreY.result(centreSnapshot)
+  if (Result.isFailure(checkedCentre)) {
+    return Result.fail(checkedCentre.failure)
+  }
+  const checkedHalfHeight = HalfHeight.result(halfHeightSnapshot)
+  if (Result.isFailure(checkedHalfHeight)) {
+    return Result.fail(checkedHalfHeight.failure)
+  }
+  return FootY.result(checkedCentre.success - checkedHalfHeight.success)
+}
 
 /**
  * The standing plane on top of the block at integer cell `surfaceY`.
@@ -78,25 +110,33 @@ export const footOfCentre = (centre: CentreY, halfHeight: HalfHeight): FootY => 
  * `surfaceY + 1`, because a block occupies [y, y+1]. Named rather than inlined
  * so that the off-by-one lives in one place with a test on it.
  */
-export const standingPlaneAbove = (surfaceY: number): FootY => FootY(surfaceY + 1)
+export const standingPlaneAbove = (surfaceY: BlockAxis): Result.Result<FootY, Brand.BrandError> => {
+  const surfaceSnapshot = surfaceY
+  const checkedSurface = BlockAxis.result(surfaceSnapshot)
+  if (Result.isFailure(checkedSurface)) {
+    return Result.fail(checkedSurface.failure)
+  }
+  return FootY.result(checkedSurface.success + 1)
+}
 
 /** Reference player half-extents (`packages/core/domain/constants.ts:22-24`). */
-export const PLAYER_HALF_WIDTH = 0.3
+const PLAYER_HALF_WIDTH_METRES = 0.3
+export const PLAYER_HALF_WIDTH: BlockLength = BlockLength(PLAYER_HALF_WIDTH_METRES)
 const PLAYER_HALF_HEIGHT_METRES = 0.9
 export const PLAYER_HALF_HEIGHT: HalfHeight = HalfHeight(PLAYER_HALF_HEIGHT_METRES)
 
 /** Structurally identical to this package's old `Vec3`/`vec3`; kernel owns the vocabulary now. */
-export type { Position } from '@nerima-games/mc-kernel'
+export type { Position }
 export { position } from '@nerima-games/mc-kernel'
 
 /** An axis-aligned bounding box. `min <= max` componentwise, by construction. */
 export type AABB = {
-  readonly minX: number
-  readonly minY: number
-  readonly minZ: number
-  readonly maxX: number
-  readonly maxY: number
-  readonly maxZ: number
+  readonly minX: PositionAxis
+  readonly minY: PositionAxis
+  readonly minZ: PositionAxis
+  readonly maxX: PositionAxis
+  readonly maxY: PositionAxis
+  readonly maxZ: PositionAxis
 }
 
 /** One or more collision boxes authored in a block's local unit cell. */
@@ -117,32 +157,103 @@ export const aabbsOfBlockShape = (shape: BlockShape): ReadonlyArray<AABB> => {
  * the "things float" bug seen from the other side.
  */
 export const entityAABB = (
-  x: number,
+  x: PositionAxis,
   centreY: CentreY,
-  z: number,
-  halfWidth: number,
+  z: PositionAxis,
+  halfWidth: BlockLength,
   halfHeight: HalfHeight,
-): AABB => ({
-  maxX: x + halfWidth,
-  maxY: centreY + halfHeight,
-  maxZ: z + halfWidth,
-  minX: x - halfWidth,
-  minY: centreY - halfHeight,
-  minZ: z - halfWidth,
-})
+): Result.Result<AABB, Brand.BrandError | RangeError> => {
+  const xSnapshot = x
+  const centreSnapshot = centreY
+  const zSnapshot = z
+  const halfWidthSnapshot = halfWidth
+  const halfHeightSnapshot = halfHeight
+  const inputs = Result.all([
+    PositionAxis.result(xSnapshot),
+    CentreY.result(centreSnapshot),
+    PositionAxis.result(zSnapshot),
+    BlockLength.result(halfWidthSnapshot),
+    HalfHeight.result(halfHeightSnapshot),
+  ])
+  return Result.flatMap(inputs, ([validX, validCentreY, validZ, validHalfWidth, validHalfHeight]) => {
+    if (validHalfWidth <= 0) {
+      return Result.fail(new RangeError('halfWidth must be positive'))
+    }
+    return Result.map(
+      Result.all([
+        PositionAxis.result(validX - validHalfWidth),
+        PositionAxis.result(validCentreY - validHalfHeight),
+        PositionAxis.result(validZ - validHalfWidth),
+        PositionAxis.result(validX + validHalfWidth),
+        PositionAxis.result(validCentreY + validHalfHeight),
+        PositionAxis.result(validZ + validHalfWidth),
+      ]),
+      ([minX, minY, minZ, maxX, maxY, maxZ]): AABB => ({
+        maxX,
+        maxY,
+        maxZ,
+        minX,
+        minY,
+        minZ,
+      }),
+    )
+  })
+}
 
 export const aabbOfCollisionShape = (shape: CollisionShape): AABB | null =>
   COLLISION_SHAPE_AABBS[shape]
 
 /** The world-space AABB of the block at integer cell (bx, by, bz), given its shape. */
-export const blockAABB = (bx: number, by: number, bz: number, shape: AABB = FULL_BLOCK_SHAPE): AABB => ({
-  maxX: bx + shape.maxX,
-  maxY: by + shape.maxY,
-  maxZ: bz + shape.maxZ,
-  minX: bx + shape.minX,
-  minY: by + shape.minY,
-  minZ: bz + shape.minZ,
-})
+export const blockAABB = (
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
+  shape: AABB = FULL_BLOCK_SHAPE,
+): Result.Result<AABB, Brand.BrandError | RangeError> => {
+  const bxSnapshot = bx
+  const bySnapshot = by
+  const bzSnapshot = bz
+  const minXSnapshot = shape.minX
+  const minYSnapshot = shape.minY
+  const minZSnapshot = shape.minZ
+  const maxXSnapshot = shape.maxX
+  const maxYSnapshot = shape.maxY
+  const maxZSnapshot = shape.maxZ
+  const inputs = Result.all([
+    BlockAxis.result(bxSnapshot),
+    BlockAxis.result(bySnapshot),
+    BlockAxis.result(bzSnapshot),
+    PositionAxis.result(minXSnapshot),
+    PositionAxis.result(minYSnapshot),
+    PositionAxis.result(minZSnapshot),
+    PositionAxis.result(maxXSnapshot),
+    PositionAxis.result(maxYSnapshot),
+    PositionAxis.result(maxZSnapshot),
+  ])
+  return Result.flatMap(inputs, ([validX, validY, validZ, shapeMinX, shapeMinY, shapeMinZ, shapeMaxX, shapeMaxY, shapeMaxZ]) => {
+    if (shapeMinX > shapeMaxX || shapeMinY > shapeMaxY || shapeMinZ > shapeMaxZ) {
+      return Result.fail(new RangeError('block shape bounds must not be inverted'))
+    }
+    return Result.map(
+      Result.all([
+        PositionAxis.result(validX + shapeMinX),
+        PositionAxis.result(validY + shapeMinY),
+        PositionAxis.result(validZ + shapeMinZ),
+        PositionAxis.result(validX + shapeMaxX),
+        PositionAxis.result(validY + shapeMaxY),
+        PositionAxis.result(validZ + shapeMaxZ),
+      ]),
+      ([minX, minY, minZ, maxX, maxY, maxZ]): AABB => ({
+        maxX,
+        maxY,
+        maxZ,
+        minX,
+        minY,
+        minZ,
+      }),
+    )
+  })
+}
 
 /**
  * Overlap test. Touching faces do NOT overlap.
@@ -167,8 +278,27 @@ export const intersects = (a: AABB, b: AABB): boolean =>
  * `intersects` answers whether; this answers how much, which is what a resolver
  * needs and what makes the epsilon below expressible as a test.
  */
-export const penetrationY = (a: AABB, b: AABB): number =>
-  Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY)
+export const penetrationY = (
+  a: AABB,
+  b: AABB,
+): Result.Result<BlockLength, Brand.BrandError | RangeError> => {
+  const aMinYSnapshot = a.minY
+  const aMaxYSnapshot = a.maxY
+  const bMinYSnapshot = b.minY
+  const bMaxYSnapshot = b.maxY
+  const inputs = Result.all([
+    PositionAxis.result(aMinYSnapshot),
+    PositionAxis.result(aMaxYSnapshot),
+    PositionAxis.result(bMinYSnapshot),
+    PositionAxis.result(bMaxYSnapshot),
+  ])
+  return Result.flatMap(inputs, ([aMinY, aMaxY, bMinY, bMaxY]) => {
+    if (aMinY > aMaxY || bMinY > bMaxY) {
+      return Result.fail(new RangeError('AABB bounds must not be inverted'))
+    }
+    return BlockLength.result(Math.min(aMaxY, bMaxY) - Math.max(aMinY, bMinY))
+  })
+}
 
 /**
  * ---------------------------------------------------------------------------
@@ -193,7 +323,8 @@ export const penetrationY = (a: AABB, b: AABB): number =>
  * 1e-9 is roughly seven orders of magnitude above the observed error and seven
  * below any distance a player can perceive.
  */
-export const CONTACT_EPSILON = 1e-9
+const CONTACT_EPSILON_BLOCKS = 1e-9
+export const CONTACT_EPSILON: BlockLength = BlockLength(CONTACT_EPSILON_BLOCKS)
 
 /**
  * Overlap deep enough on EVERY axis to be a collision rather than contact.
