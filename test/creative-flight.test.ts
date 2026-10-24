@@ -66,12 +66,12 @@ describe('creative flight', () => {
   })
 
   it('rejects invalid vertical speed at the Result boundary', () => {
-    const invalidSpeed = Number.NaN as BlocksPerSecond
     expect(Result.isFailure(applyCreativeFlightInput(
       bodyOf(),
       flightEnabled,
       { ascend: true, descend: false },
-      invalidSpeed,
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      Number.NaN,
     ))).toBe(true)
   })
 

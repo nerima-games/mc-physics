@@ -10,7 +10,7 @@ import { Result } from 'effect'
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
 import { AngleRadians, DeltaTimeSecs } from '@nerima-games/mc-kernel'
-import { BlocksPerSecond, BlocksPerSecondSquared, PerSecond, velocityVectorResult, type VelocityVector } from '../src/domain/physical-units'
+import { BlocksPerSecond, velocityVectorResult, type VelocityVector } from '../src/domain/physical-units'
 import { GRAVITY_Y } from '../src/domain/integrate'
 import {
   DEFAULT_GLIDE_CONFIG,
@@ -92,9 +92,14 @@ describe('glideStep', () => {
   })
 
   it('uses the zero-angle fallback for invalid sight and sanitizes dimensionless config', () => {
+    const invalidSight = {
+      pitchRadians: Number.NaN,
+      yawRadians: Number.POSITIVE_INFINITY,
+    }
     const after = glideStep(
       velocity(1, 0, -1),
-      { pitchRadians: Number.NaN as AngleRadians, yawRadians: Number.POSITIVE_INFINITY as AngleRadians },
+      // @ts-expect-error -- preserve raw invalid angles for sight fallback.
+      invalidSight,
       DeltaTimeSecs(0.1),
       { ...DEFAULT_GLIDE_CONFIG, liftCancelFactor: Number.POSITIVE_INFINITY, climbLiftMultiplier: Number.NaN },
     )
@@ -105,19 +110,22 @@ describe('glideStep', () => {
 
   it('returns a failure for invalid velocity and physical config brands', () => {
     expect(Result.isFailure(glideStepResult({
-      x: Number.NaN as BlocksPerSecond,
+      // @ts-expect-error -- preserve a raw invalid component for boundary validation.
+      x: Number.NaN,
       y: BlocksPerSecond(0),
       z: BlocksPerSecond(0),
     }, LEVEL, DeltaTimeSecs(0.1), DEFAULT_GLIDE_CONFIG))).toBe(true)
 
     expect(Result.isFailure(glideStepResult(velocity(1, 0, -1), DOWN, DeltaTimeSecs(0.1), {
       ...DEFAULT_GLIDE_CONFIG,
-      horizontalDragPerSecond: Number.NaN as PerSecond,
+      // @ts-expect-error -- preserve a raw invalid rate for boundary validation.
+      horizontalDragPerSecond: Number.NaN,
     }))).toBe(true)
 
     expect(Result.isFailure(glideStepResult(velocity(1, 0, -1), DOWN, DeltaTimeSecs(0.1), {
       ...DEFAULT_GLIDE_CONFIG,
-      gravityPerSecondSquared: Number.NaN as BlocksPerSecondSquared,
+      // @ts-expect-error -- preserve a raw invalid acceleration for boundary validation.
+      gravityPerSecondSquared: Number.NaN,
     }))).toBe(true)
   })
 

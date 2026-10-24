@@ -339,26 +339,42 @@ describe('entity collision resolution properties', () => {
 describe('entity collision Result boundaries', () => {
   it('propagates invalid ids, inverse masses, velocities, and spatial-hash bounds', () => {
     const first = entityOf('first')
-    const invalidId = { ...entityOf('second', bodyOf('dynamic', 0.75)), id: ' ' as EntityCollider['id'] }
+    const invalidId: EntityCollider = {
+      ...entityOf('second', bodyOf('dynamic', 0.75)),
+      // @ts-expect-error Exercise runtime rejection of an invalid entity id.
+      id: ' ',
+    }
     expect(Result.isFailure(detectEntityCollisionsResult([first, invalidId]))).toBe(true)
     expect(Result.isFailure(resolveEntityCollisionsResult([invalidId]))).toBe(true)
 
-    const invalidMass = { ...entityOf('bad-mass'), mass: Number.NaN as EntityCollider['mass'] }
+    const invalidMass: EntityCollider = {
+      ...entityOf('bad-mass'),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      mass: Number.NaN,
+    }
     expect(Result.isFailure(inverseMassOfResult(invalidMass))).toBe(true)
     expect(Result.isFailure(resolveEntityCollisionsResult([invalidMass]))).toBe(true)
 
-    const invalidVelocity = {
+    const invalidVelocity: EntityCollider = {
       ...entityOf('bad-velocity'),
-      body: { ...bodyOf(), vx: Number.NaN as Body['vx'] },
+      body: {
+        ...bodyOf(),
+        // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+        vx: Number.NaN,
+      },
     }
     expect(Result.isFailure(resolveEntityCollisionsResult([invalidVelocity]))).toBe(true)
 
     const farEntity = {
       ...entityOf('far'),
-      body: { ...bodyOf(), x: (Number.MAX_SAFE_INTEGER + 20) as Body['x'] },
+      body: { ...bodyOf(), x: PositionAxis(Number.MAX_SAFE_INTEGER + 20) },
     }
     expect(Result.isFailure(detectEntityCollisionsResult([farEntity], collisionOptions(1, 1, 0)))).toBe(true)
-    expect(Result.isFailure(potentialPairsResult([], Number.NaN as BlockLength))).toBe(true)
+    expect(Result.isFailure(potentialPairsResult(
+      [],
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      Number.NaN,
+    ))).toBe(true)
   })
 
   it('propagates collider-box, penetration, and collision-pair failures', () => {
@@ -366,9 +382,11 @@ describe('entity collision Result boundaries', () => {
     const ordinaryBody = bodyOf('dynamic', 0.75)
     const unstableBody: Body = {
       ...ordinaryBody,
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
       get x() {
         xReads += 1
-        return xReads === 1 ? ordinaryBody.x : Number.NaN as Body['x']
+        if (xReads === 1) return ordinaryBody.x
+        return Number.NaN
       },
     }
     const changingCollider = entityOf('second', unstableBody)
@@ -442,8 +460,8 @@ describe('entity collision resolver Result boundaries', () => {
   })
 
   it('skips sparse entity slots and propagates failures from changed entity fields', () => {
-    const sparseEntities = [entityOf('first'), undefined] as unknown as ReadonlyArray<EntityCollider>
-    const sparseResult = resolveEntityCollisionsResult(sparseEntities)
+    // @ts-expect-error Exercise the resolver's handling of a malformed sparse entity list.
+    const sparseResult = resolveEntityCollisionsResult([entityOf('first'), undefined])
     expect(Result.isSuccess(sparseResult)).toBe(true)
     if (Result.isSuccess(sparseResult)) {
       expect(sparseResult.success.entities).toHaveLength(2)
@@ -451,12 +469,15 @@ describe('entity collision resolver Result boundaries', () => {
     }
 
     let massReads = 0
-    const changingMass = Object.defineProperty(entityOf('first'), 'mass', {
-      get: () => {
+    const changingMass: EntityCollider = {
+      ...entityOf('first'),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      get mass() {
         massReads += 1
-        return massReads === 1 ? Mass(1) : Number.NaN as EntityCollider['mass']
+        if (massReads === 1) return Mass(1)
+        return Number.NaN
       },
-    }) as EntityCollider
+    }
     expect(Result.isFailure(resolveEntityCollisionsResult([
       changingMass,
       entityOf('second', bodyOf('dynamic', 0.75)),
@@ -466,9 +487,11 @@ describe('entity collision resolver Result boundaries', () => {
     const ordinaryBody = bodyOf('dynamic', 0.75)
     const changingBody: Body = {
       ...ordinaryBody,
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
       get x() {
         xReads += 1
-        return xReads === 1 ? ordinaryBody.x : Number.NaN as Body['x']
+        if (xReads === 1) return ordinaryBody.x
+        return Number.NaN
       },
     }
     expect(Result.isFailure(resolveEntityCollisionsResult([
@@ -491,12 +514,15 @@ describe('remaining entity collision Result boundaries', () => {
 
   it('propagates a mass validation failure discovered while resolving a pair', () => {
     let massReads = 0
-    const changingMass = Object.defineProperty(entityOf('second', bodyOf('dynamic', 0.75)), 'mass', {
-      get: () => {
+    const changingMass: EntityCollider = {
+      ...entityOf('second', bodyOf('dynamic', 0.75)),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      get mass() {
         massReads += 1
-        return massReads <= 2 ? Mass(1) : Number.NaN as EntityCollider['mass']
+        if (massReads <= 2) return Mass(1)
+        return Number.NaN
       },
-    }) as EntityCollider
+    }
 
     const result = resolveEntityCollisionsResult([
       entityOf('first'),

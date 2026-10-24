@@ -73,8 +73,9 @@ describe('kernel-backed world queries', () => {
   })
 
   it('treats a kernel registry Result failure as an empty cell', () => {
-    const registryFailure = () =>
-      Result.fail(new Error('simulated registry failure')) as unknown as ReturnType<typeof resolvedBlockOfId>
+    const invalidId = BlockId.result(Number.NaN)
+    if (Result.isSuccess(invalidId)) throw new Error('Expected an invalid block id')
+    const registryFailure = () => Result.fail(invalidId.failure)
     vi.mocked(resolvedBlockOfId).mockReturnValueOnce(registryFailure()).mockReturnValueOnce(registryFailure())
 
     expect(blockAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0))).toBeNull()

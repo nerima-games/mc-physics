@@ -56,7 +56,12 @@ describe('fallingBlockCandidateAt', () => {
 
   it('returns a failure for invalid block ids and coordinate overflow', () => {
     expect(Result.isFailure(fallingBlockCandidateAt(worldWith(Number.NaN, stone), position))).toBe(true)
-    const invalidPosition = { x: Number.NaN, y: 0, z: 0 } as unknown as BlockPosition
+    const invalidPosition: BlockPosition = {
+      // @ts-expect-error Exercise runtime rejection of a malformed block position.
+      x: Number.NaN,
+      y: BlockAxis(0),
+      z: BlockAxis(0),
+    }
     expect(Result.isFailure(fallingBlockCandidateAt(() => null, invalidPosition))).toBe(true)
 
     const atMinimumY = blockPosition(BlockAxis(0), BlockAxis(Number.MIN_SAFE_INTEGER), BlockAxis(0))

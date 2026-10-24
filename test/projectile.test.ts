@@ -1,7 +1,7 @@
 /* eslint-disable id-length, no-magic-numbers, sort-imports */
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
-import { Brand, Result } from 'effect'
+import { Result } from 'effect'
 import {
   AngleRadians,
   DeltaTimeSecs,
@@ -44,10 +44,7 @@ const unwrap = <Value, Error>(result: Result.Result<Value, Error>): Value => {
   return result.success
 }
 
-const brandOrRaw = <Value>(result: Result.Result<Value, Brand.BrandError>, raw: unknown): Value =>
-  Result.isFailure(result) ? raw as Value : result.success
-
-const axis = (value: number): PositionAxis => brandOrRaw(PositionAxis.result(value), value)
+const axis = (value: number): PositionAxis => unwrap(PositionAxis.result(value))
 const positionOf = (value: NumericPosition): Position => position(axis(value.x), axis(value.y), axis(value.z))
 const box = (value: NumericAABB): AABB => ({
   minX: axis(value.minX),
@@ -57,10 +54,12 @@ const box = (value: NumericAABB): AABB => ({
   maxY: axis(value.maxY),
   maxZ: axis(value.maxZ),
 })
+// @ts-expect-error -- malformed numeric bounds must reach projectile validation unchanged.
+const rawBox = (value: NumericAABB): AABB => value
 const entityId = (value: string) => unwrap(EntityId.result(value))
 const velocity = (x: number, y: number, z: number): VelocityVector =>
   unwrap(velocityVectorResult(x, y, z))
-const age = (value: number) => brandOrRaw(FixedDurationSecs.result(value), value)
+const age = (value: number) => unwrap(FixedDurationSecs.result(value))
 
 const world = (overrides: NumericWorldOverrides = {}): ProjectileWorld => ({
   blockBounds: (start, end) => (overrides.blockBounds?.(start, end) ?? []).map(box),
@@ -76,15 +75,21 @@ const launchProjectile = (launch: Readonly<{
   yawRadians: number
   shooterId?: string
 }>) => rawLaunchProjectile({
-  pitchRadians: brandOrRaw(AngleRadians.result(launch.pitchRadians), launch.pitchRadians),
+  pitchRadians: unwrap(AngleRadians.result(launch.pitchRadians)),
   position: positionOf(launch.position),
   ...(launch.shooterId === undefined ? {} : { shooterId: entityId(launch.shooterId) }),
-  speed: brandOrRaw(BlocksPerSecond.result(launch.speed), launch.speed),
-  yawRadians: brandOrRaw(AngleRadians.result(launch.yawRadians), launch.yawRadians),
+  speed: unwrap(BlocksPerSecond.result(launch.speed)),
+  yawRadians: unwrap(AngleRadians.result(launch.yawRadians)),
 })
 
-const stepProjectile = (state: Projectile, dt: number, flightWorld: ProjectileWorld, profile: ProjectileProfile) =>
-  rawStepProjectile(state, brandOrRaw(DeltaTimeSecs.result(dt), dt), flightWorld, profile)
+const stepProjectile = (state: Projectile, dt: number, flightWorld: ProjectileWorld, profile: ProjectileProfile) => {
+  const checkedDelta = DeltaTimeSecs.result(dt)
+  if (Result.isSuccess(checkedDelta)) {
+    return rawStepProjectile(state, checkedDelta.success, flightWorld, profile)
+  }
+  // @ts-expect-error -- malformed raw deltas exercise projectile boundary validation.
+  return rawStepProjectile(state, dt, flightWorld, profile)
+}
 
 const flight = (value: Readonly<{ age?: number; position: NumericPosition; velocity: NumericPosition }>): Projectile => ({
   ageSeconds: age(value.age ?? 0),
@@ -93,7 +98,12 @@ const flight = (value: Readonly<{ age?: number; position: NumericPosition; veloc
   velocity: velocity(value.velocity.x, value.velocity.y, value.velocity.z),
 })
 
-const withAge = (projectile: Projectile, seconds: number): Projectile => ({ ...projectile, ageSeconds: age(seconds) })
+const withAge = (projectile: Projectile, seconds: number): Projectile => {
+  const checkedAge = FixedDurationSecs.result(seconds)
+  if (Result.isSuccess(checkedAge)) return { ...projectile, ageSeconds: checkedAge.success }
+  // @ts-expect-error -- malformed raw ages exercise projectile state validation.
+  return { ...projectile, ageSeconds: seconds }
+}
 
 describe('projectile profile, trajectory, and collision contracts', () => {
   it('keeps the arrow profile at the mc-physics contract values', () => {
@@ -177,7 +187,10 @@ describe('continuous projectile collisions', () => {
     const noHit = stepProjectile(
       launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 }),
       0.05,
-      world({ blockBounds: () => [{ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }] }),
+      {
+        ...world(),
+        blockBounds: () => [rawBox({ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 })],
+      },
       ARROW_PROFILE,
     )
     expect(noHit.hit).toBeUndefined()
@@ -280,7 +293,15 @@ describe('continuous projectile collisions', () => {
 
 describe('projectile boundaries', () => {
   it('despawns on invalid values, lifetime, and leaving the world', () => {
-    expect(launchProjectile({ pitchRadians: 0, position: { x: Number.NaN, y: 0, z: 0 }, speed: 1, yawRadians: 0 }).state).toBe('despawned')
+    const invalidPosition = { x: Number.NaN, y: PositionAxis(0), z: PositionAxis(0) }
+    const invalidLaunch = {
+      pitchRadians: AngleRadians(0),
+      position: invalidPosition,
+      speed: BlocksPerSecond(1),
+      yawRadians: AngleRadians(0),
+    }
+    // @ts-expect-error -- malformed coordinates exercise launch boundary validation.
+    expect(rawLaunchProjectile(invalidLaunch).state).toBe('despawned')
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 })
     expect(stepProjectile(withAge(projectile, ARROW_PROFILE.maxLifetimeSeconds - 0.01), 0.01, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'lifetime', state: 'despawned' })
     expect(stepProjectile(projectile, 0.05, world({ bounds: { maxX: 0.1, maxY: 1, maxZ: 1, minX: -1, minY: -1, minZ: -1 } }), ARROW_PROFILE).projectile).toMatchObject({ reason: 'world', state: 'despawned' })
@@ -355,7 +376,7 @@ describe('FR-007 per-profile behaviour', () => {
           const timeToLand = (gravity: number): number => {
             const profile: ProjectileProfile = {
               ...ARROW_PROFILE,
-              gravity: brandOrRaw(BlocksPerSecondSquared.result(gravity), gravity),
+              gravity: unwrap(BlocksPerSecondSquared.result(gravity)),
             }
             let state = launchProjectile(launch)
             for (let step = 0; step < 5000 && state.state === 'flying'; step += 1) {
@@ -404,7 +425,8 @@ describe('projectile invalid-state propagation', () => {
     const projectile = rawLaunchProjectile({
       pitchRadians: AngleRadians(0),
       position: positionOf({ x: 0, y: 0, z: 0 }),
-      shooterId: '' as EntityId,
+      // @ts-expect-error -- malformed entity ids exercise launch boundary validation.
+      shooterId: '',
       speed: BlocksPerSecond(1),
       yawRadians: AngleRadians(0),
     })
@@ -414,9 +436,10 @@ describe('projectile invalid-state propagation', () => {
 
   it('despawns when world bounds are malformed or inverted', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 1, yawRadians: 0 })
-    const malformedBounds = world({
-      bounds: { maxX: Number.NaN, maxY: 100, maxZ: 100, minX: -100, minY: -100, minZ: -100 },
-    })
+    const malformedBounds = {
+      ...world(),
+      bounds: rawBox({ maxX: Number.NaN, maxY: 100, maxZ: 100, minX: -100, minY: -100, minZ: -100 }),
+    }
     const invertedBounds = world({
       bounds: { maxX: -1, maxY: 100, maxZ: 100, minX: 1, minY: -100, minZ: -100 },
     })
@@ -460,7 +483,8 @@ describe('projectile invalid-state propagation', () => {
     const invalidEntityWorld: ProjectileWorld = {
       ...world(),
       entities: [{
-        id: '' as EntityId,
+        // @ts-expect-error -- malformed entity ids exercise world validation.
+        id: '',
         bounds: box({ maxX: 2, maxY: 2, maxZ: 2, minX: 1, minY: 1, minZ: 1 }),
       }],
     }
@@ -486,7 +510,8 @@ describe('projectile invalid-state propagation', () => {
       pitchRadians: AngleRadians(0),
       position: positionOf({ x: 0, y: 0, z: 0 }),
       speed: BlocksPerSecond(1),
-      yawRadians: Number.NaN as AngleRadians,
+      // @ts-expect-error -- a raw invalid angle exercises launch boundary validation.
+      yawRadians: Number.NaN,
     })
 
     expect(projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })

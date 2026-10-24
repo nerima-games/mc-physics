@@ -165,7 +165,15 @@ describe('movement input', () => {
     for (const seconds of [0, 0.001, 0.05, 30]) {
       const actual = applyMovementInput(
         bodyOf(),
-        { forward: Number.NaN, strafe: Number.POSITIVE_INFINITY, yawRadians: Number.NaN as AngleRadians, sprint: false, sneak: false, jumpPressed: false },
+        {
+          forward: Number.NaN,
+          strafe: Number.POSITIVE_INFINITY,
+          // @ts-expect-error -- preserve a raw invalid angle to exercise control sanitization.
+          yawRadians: Number.NaN,
+          sprint: false,
+          sneak: false,
+          jumpPressed: false,
+        },
         true,
         false,
         DeltaTimeSecs(seconds),
@@ -183,8 +191,16 @@ describe('movement input', () => {
       expect(actual).toEqual(bodyOf())
     }
 
-    const invalidConfig = { ...config, groundAcceleration: Number.NaN as BlocksPerSecondSquared }
-    expect(Result.isFailure(applyMovementInputResult(bodyOf(), inputOf(), true, false, DeltaTimeSecs(0.1), invalidConfig))).toBe(true)
+    const invalidConfig = { ...config, groundAcceleration: Number.NaN }
+    expect(Result.isFailure(applyMovementInputResult(
+      bodyOf(),
+      inputOf(),
+      true,
+      false,
+      DeltaTimeSecs(0.1),
+      // @ts-expect-error -- preserve a raw invalid config value for boundary validation.
+      invalidConfig,
+    ))).toBe(true)
   })
 })
 
@@ -286,11 +302,16 @@ describe('knockback', () => {
       vy: BlocksPerSecond(-1),
       vz: BlocksPerSecond(3),
     })
-    expect(Result.isFailure(applyKnockbackResult(bodyOf(), {
-      x: Number.NaN as BlocksPerSecond,
-      y: Number.POSITIVE_INFINITY as BlocksPerSecond,
-      z: Number.NEGATIVE_INFINITY as BlocksPerSecond,
-    }))).toBe(true)
+    const invalidImpulse = {
+      x: Number.NaN,
+      y: Number.POSITIVE_INFINITY,
+      z: Number.NEGATIVE_INFINITY,
+    }
+    expect(Result.isFailure(applyKnockbackResult(
+      bodyOf(),
+      // @ts-expect-error -- preserve raw invalid components for boundary validation.
+      invalidImpulse,
+    ))).toBe(true)
     const staticBody = bodyOf('static')
     expect(applyKnockback(staticBody, velocity(1, 2, 3))).toBe(staticBody)
   })

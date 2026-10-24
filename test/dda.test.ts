@@ -229,18 +229,29 @@ describe('voxel DDA', () => {
     expect(Result.isFailure(rawVoxelRaycast(
       validOrigin,
       validDirection,
-      Number.NaN as BlockLength,
+      // @ts-expect-error -- preserve a raw invalid distance for boundary validation.
+      Number.NaN,
       anything,
     ))).toBe(true)
     expect(Result.isFailure(rawVoxelRaycast(
-      kernelPosition(Number.NaN as PositionAxis, PositionAxis(0.5), PositionAxis(0.5)),
+      kernelPosition(
+        // @ts-expect-error -- preserve a raw invalid coordinate for boundary validation.
+        Number.NaN,
+        PositionAxis(0.5),
+        PositionAxis(0.5),
+      ),
       validDirection,
       BlockLength(2),
       anything,
     ))).toBe(true)
     expect(Result.isFailure(rawVoxelRaycast(
       validOrigin,
-      kernelPosition(Number.NaN as PositionAxis, PositionAxis(0), PositionAxis(0)),
+      kernelPosition(
+        // @ts-expect-error -- preserve a raw invalid coordinate for boundary validation.
+        Number.NaN,
+        PositionAxis(0),
+        PositionAxis(0),
+      ),
       BlockLength(2),
       anything,
     ))).toBe(true)
@@ -265,9 +276,11 @@ describe('voxel DDA', () => {
     let minXReads = 0
     const changingShape: AABB = {
       ...FULL_BLOCK_SHAPE,
+      // @ts-expect-error -- preserve a raw invalid bound for boundary validation.
       get minX() {
         minXReads += 1
-        return minXReads <= 3 ? PositionAxis(0.25) : Number.NaN as PositionAxis
+        if (minXReads <= 3) return PositionAxis(0.25)
+        return Number.NaN
       },
     }
     const invalidBounds = rawVoxelRaycast(

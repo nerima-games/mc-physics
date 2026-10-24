@@ -11,6 +11,8 @@ import { BlockAxis, type PositionAxis } from '@nerima-games/mc-kernel'
 import type { ResolveError, ResolveOptions } from './resolve-types.js'
 import { Result } from 'effect'
 
+const EMPTY_SHAPES: ReadonlyArray<AABB> = []
+
 export const blockShapesAtAxes = (
   options: ResolveOptions,
   blockX: ReturnType<typeof BlockAxis>,
@@ -21,7 +23,7 @@ export const blockShapesAtAxes = (
   if (customShapeAt) {
     const shape = customShapeAt(blockX, blockY, blockZ)
     if (shape === null) {
-      return Result.succeed([] as ReadonlyArray<AABB>)
+      return Result.succeed(EMPTY_SHAPES)
     }
     return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
       blockX,
@@ -33,11 +35,11 @@ export const blockShapesAtAxes = (
 
   const properties = options.blockPropertiesAt(blockX, blockY, blockZ)
   if (properties === null) {
-    return Result.succeed([] as ReadonlyArray<AABB>)
+    return Result.succeed(EMPTY_SHAPES)
   }
   const shape = aabbOfCollisionShape(properties.collisionShape)
   if (shape === null) {
-    return Result.succeed([] as ReadonlyArray<AABB>)
+    return Result.succeed(EMPTY_SHAPES)
   }
   return Result.map(blockAABB(blockX, blockY, blockZ, shape), (block) => [block])
 }

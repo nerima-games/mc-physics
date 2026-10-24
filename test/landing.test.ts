@@ -120,7 +120,11 @@ describe('fall tracking', () => {
     expect(Result.isFailure(invalid)).toBe(true)
 
     const invalidState = advanceFallTrackingResult(
-      { accumulatedFallDistance: Number.NaN as BlockLength, isGrounded: false },
+      {
+        // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+        accumulatedFallDistance: Number.NaN,
+        isGrounded: false,
+      },
       bodyAt(1),
       bodyAt(1, -1),
       resolutionAt(1, false),

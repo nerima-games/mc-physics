@@ -131,11 +131,30 @@ describe('coordinate brands', () => {
   })
 
   it('propagates invalid brands through foot, centre, and standing-plane conversions', () => {
-    expect(Result.isFailure(centreOfFoot(Number.NaN as FootY, PLAYER_HALF_HEIGHT))).toBe(true)
-    expect(Result.isFailure(centreOfFoot(FootY(1), Number.NaN as HalfHeight))).toBe(true)
-    expect(Result.isFailure(footOfCentre(Number.NaN as CentreY, PLAYER_HALF_HEIGHT))).toBe(true)
-    expect(Result.isFailure(footOfCentre(CentreY(1), Number.NaN as HalfHeight))).toBe(true)
-    expect(Result.isFailure(standingPlaneAboveResult(Number.NaN as BlockAxis))).toBe(true)
+    expect(Result.isFailure(centreOfFoot(
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      Number.NaN,
+      PLAYER_HALF_HEIGHT,
+    ))).toBe(true)
+    expect(Result.isFailure(centreOfFoot(
+      FootY(1),
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      Number.NaN,
+    ))).toBe(true)
+    expect(Result.isFailure(footOfCentre(
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      Number.NaN,
+      PLAYER_HALF_HEIGHT,
+    ))).toBe(true)
+    expect(Result.isFailure(footOfCentre(
+      CentreY(1),
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      Number.NaN,
+    ))).toBe(true)
+    expect(Result.isFailure(standingPlaneAboveResult(
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      Number.NaN,
+    ))).toBe(true)
   })
 })
 
@@ -158,12 +177,24 @@ describe('coordinate brands reject invalid inputs and computed bounds', () => {
   it('returns Result failures when AABB inputs or arithmetic outputs leave their brands', () => {
     expect(
       Result.isFailure(
-        entityAABBResult(Number.NaN as PositionAxis, CentreY(0), PositionAxis(0), PLAYER_HALF_WIDTH, PLAYER_HALF_HEIGHT),
+        entityAABBResult(
+          // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+          Number.NaN,
+          CentreY(0),
+          PositionAxis(0),
+          PLAYER_HALF_WIDTH,
+          PLAYER_HALF_HEIGHT,
+        ),
       ),
     ).toBe(true)
     expect(
       Result.isFailure(
-        blockAABBResult(Number.POSITIVE_INFINITY as BlockAxis, BlockAxis(0), BlockAxis(0)),
+        blockAABBResult(
+          // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+          Number.POSITIVE_INFINITY,
+          BlockAxis(0),
+          BlockAxis(0),
+        ),
       ),
     ).toBe(true)
     expect(
@@ -191,8 +222,13 @@ describe('coordinate brands reject invalid inputs and computed bounds', () => {
     expect(Result.isFailure(invertedBox)).toBe(true)
     if (Result.isFailure(invertedBox)) expect(invertedBox.failure).toBeInstanceOf(RangeError)
 
+    const invalidShape: AABB = {
+      ...FULL_BLOCK_SHAPE,
+      // @ts-expect-error -- preserve a raw invalid value to exercise boundary validation.
+      minY: Number.POSITIVE_INFINITY,
+    }
     const invalidPenetration = penetrationYResult(
-      { ...FULL_BLOCK_SHAPE, minY: Number.POSITIVE_INFINITY as PositionAxis },
+      invalidShape,
       FULL_BLOCK_SHAPE,
     )
     expect(Result.isFailure(invalidPenetration)).toBe(true)

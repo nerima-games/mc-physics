@@ -131,7 +131,8 @@ describe('pistonExtrusion', () => {
     const invalid = rawPistonExtrusion(entity, {
       axis: 'x',
       before,
-      distance: Number.NaN as Parameters<typeof rawPistonExtrusion>[1]['distance'],
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      distance: Number.NaN,
     })
     const overflow = rawPistonExtrusion(entity, {
       axis: 'x',
@@ -145,7 +146,11 @@ describe('pistonExtrusion', () => {
 
   it('returns failures for invalid AABBs and an unrepresentable required push distance', () => {
     const validEntity = entityAABB(0.5, 64.5, 0.5, 0.3, 0.3)
-    const invalidEntity: AABB = { ...validEntity, minX: Number.NaN as PositionAxis }
+    const invalidEntity: AABB = {
+      ...validEntity,
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      minX: Number.NaN,
+    }
     const invalidBox = rawPistonExtrusion(
       invalidEntity,
       { axis: 'x', before: blockAABB(0, 64, 0), distance: BlockLength(1) },

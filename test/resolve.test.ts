@@ -1632,17 +1632,27 @@ describe('resolver Result boundary coverage', () => {
       maxY: 0,
       minZ: 0,
       maxZ: 0,
-    } as AABB
-    expect(Result.isFailure(forEachCollidingBlockResult(options, invalidBox, () => undefined))).toBe(true)
-    expect(Result.isFailure(isSupportedResult(options, invalidBox))).toBe(true)
+    }
+    expect(Result.isFailure(forEachCollidingBlockResult(
+      options,
+      // @ts-expect-error -- malformed coordinates exercise resolver validation.
+      invalidBox,
+      () => undefined,
+    ))).toBe(true)
+    expect(Result.isFailure(isSupportedResult(
+      options,
+      // @ts-expect-error -- malformed coordinates exercise resolver validation.
+      invalidBox,
+    ))).toBe(true)
 
     const box = boxOf({ kind: 'dynamic', x: 0.5, y: 0.5, z: 0.5, vx: 0, vy: 0, vz: 0 }, HalfHeight(0.25), BlockLength(0.3))
     const invalidState = {
       blocked: false,
-      position: Number.NaN as Body['x'],
+      position: Number.NaN,
       velocity: BlocksPerSecond(1),
     }
     expect(Result.isFailure(clampAxisResult(
+      // @ts-expect-error -- malformed position exercises resolver validation.
       invalidState,
       box.minX,
       box.maxX,
@@ -1658,13 +1668,16 @@ describe('resolver Result boundary coverage', () => {
     expect(Result.isFailure(resolveVerticalResult(options, box, {
       blocked: false,
       position: CentreY(0.5),
-      velocity: Number.NaN as Body['vy'],
+      // @ts-expect-error -- malformed velocity exercises resolver validation.
+      velocity: Number.NaN,
     }, DT))).toBe(true)
     expect(Result.isFailure(resolveVerticalResult(options, box, {
       blocked: false,
       position: CentreY(0.5),
       velocity: BlocksPerSecond(-1),
-    }, Number.NaN as DeltaTimeSecs))).toBe(true)
+    },
+    // @ts-expect-error -- malformed delta exercises resolver validation.
+    Number.NaN))).toBe(true)
     expect(Result.isFailure(resolveVerticalResult(options, box, {
       blocked: false,
       position: CentreY(0.5),
@@ -1840,14 +1853,19 @@ describe('resolver Result boundary coverage', () => {
       blockedX,
       freeZ,
       BlocksPerSecond(0),
-      { ...invalidShapeOptions, stepHeight: Number.NaN as BlockLength },
+      {
+        ...invalidShapeOptions,
+        // @ts-expect-error -- malformed step height exercises resolver validation.
+        stepHeight: Number.NaN,
+      },
     ))).toBe(true)
     expect(Result.isFailure(tryStepUpResult(
       stationaryBody,
       stationaryBody.y,
       blockedX,
       freeZ,
-      Number.NaN as Body['vy'],
+      // @ts-expect-error -- malformed velocity exercises resolver validation.
+      Number.NaN,
       invalidShapeOptions,
     ))).toBe(true)
     expect(Result.isFailure(tryStepUpResult(
@@ -2013,13 +2031,15 @@ describe('resolver Result boundary coverage', () => {
     const start = bodyAt(0.5, 0.5, 0.5)
     expect(Result.isSuccess(resolveSweptMotionResult(start, bodyAt(0.6, 0.5, 0.5), empty))).toBe(true)
     expect(Result.isFailure(resolveSweptMotionResult(
-      { ...start, x: Number.NaN as Body['x'] },
+      // @ts-expect-error -- malformed coordinates exercise swept-motion validation.
+      { ...start, x: Number.NaN },
       start,
       empty,
     ))).toBe(true)
     expect(Result.isFailure(resolveSweptMotionResult(start, bodyAt(2.5, 0.5, 0.5), {
       ...empty,
-      halfWidth: Number.NaN as BlockLength,
+      // @ts-expect-error -- malformed dimensions exercise swept-motion validation.
+      halfWidth: Number.NaN,
     }))).toBe(true)
     expect(Result.isFailure(resolveSweptMotionResult(
       bodyAt(Number.MAX_VALUE, 0.5, 0.5),
@@ -2060,16 +2080,52 @@ describe('resolver Result boundary coverage', () => {
   it('propagates invalid resolver values and contact hazard sampling failures', () => {
     const options = withWorld(() => false)
     const body = bodyAt(0.5, 10, 0.5)
-    const invalidOptions = { ...options, halfWidth: Number.NaN as BlockLength }
-    expect(Result.isFailure(resolveBodyResult(body, DT, invalidOptions))).toBe(true)
-    expect(Result.isFailure(resolveWorldResult([body], Number.NaN as DeltaTimeSecs, options))).toBe(true)
-    expect(Result.isFailure(resolveBodyResult(body, Number.NaN as DeltaTimeSecs, options))).toBe(true)
-    expect(Result.isFailure(stepBodyResult(body, Number.NaN as DeltaTimeSecs, options))).toBe(true)
-    expect(Result.isFailure(stepWorldResult([], Number.NaN as DeltaTimeSecs, options))).toBe(true)
-    expect(Result.isFailure(resolveBodyResult({ ...body, x: Number.NaN as Body['x'] }, DT, options))).toBe(true)
-    expect(Result.isFailure(stepBodyResult({ ...body, vx: Number.NaN as Body['vx'] }, DT, options))).toBe(true)
+    const invalidOptions = { ...options, halfWidth: Number.NaN }
+    expect(Result.isFailure(resolveBodyResult(
+      body,
+      DT,
+      // @ts-expect-error -- malformed dimensions exercise resolver validation.
+      invalidOptions,
+    ))).toBe(true)
+    expect(Result.isFailure(resolveWorldResult(
+      [body],
+      // @ts-expect-error -- malformed delta exercises resolver validation.
+      Number.NaN,
+      options,
+    ))).toBe(true)
+    expect(Result.isFailure(resolveBodyResult(
+      body,
+      // @ts-expect-error -- malformed delta exercises resolver validation.
+      Number.NaN,
+      options,
+    ))).toBe(true)
+    expect(Result.isFailure(stepBodyResult(
+      body,
+      // @ts-expect-error -- malformed delta exercises resolver validation.
+      Number.NaN,
+      options,
+    ))).toBe(true)
+    expect(Result.isFailure(stepWorldResult(
+      [],
+      // @ts-expect-error -- malformed delta exercises resolver validation.
+      Number.NaN,
+      options,
+    ))).toBe(true)
+    expect(Result.isFailure(resolveBodyResult(
+      // @ts-expect-error -- malformed position exercises resolver validation.
+      { ...body, x: Number.NaN },
+      DT,
+      options,
+    ))).toBe(true)
+    expect(Result.isFailure(stepBodyResult(
+      // @ts-expect-error -- malformed velocity exercises resolver validation.
+      { ...body, vx: Number.NaN },
+      DT,
+      options,
+    ))).toBe(true)
     expect(Result.isFailure(maxSpeedWithoutTunnellingResult(
-      Number.NaN as BlockLength,
+      // @ts-expect-error -- malformed size exercises tunnelling-guard validation.
+      Number.NaN,
       BlockLength(1),
       DeltaTimeSecs(1),
     ))).toBe(true)
@@ -2079,11 +2135,14 @@ describe('resolver Result boundary coverage', () => {
       ...cactus,
       properties: {
         ...cactus.properties,
-        contactDamage: Number.NaN as typeof cactus.properties.contactDamage,
+        contactDamage: Number.NaN,
       },
     }
     const hazardousOptions = withWorld(() => false, {
-      environment: { blockAt: () => hazardousSample },
+      environment: {
+        // @ts-expect-error -- malformed hazard data exercises environment validation.
+        blockAt: () => hazardousSample,
+      },
     })
     const staticBody: Body = { ...bodyAt(0.5, 0.5, 0.5), kind: 'static' }
     expect(Result.isFailure(resolveBodyResult(staticBody, DT, hazardousOptions))).toBe(true)
@@ -2095,10 +2154,15 @@ describe('resolver Result boundary coverage', () => {
       let reads = 0
       const body: Body = {
         ...bodyAt(0.5, 1.5, 0.5, vx, 0, vz),
+        // @ts-expect-error -- malformed coordinates exercise reconstruction validation.
         get x() {
-          const value = values[Math.min(reads, values.length - 1)]!
+          const value = values.at(Math.min(reads, values.length - 1))
           reads += 1
-          return Number.isNaN(value) ? Number.NaN as Body['x'] : PositionAxis(value)
+          if (value === undefined) throw new Error('Expected a scripted coordinate sample')
+          if (Number.isNaN(value)) {
+            return Number.NaN
+          }
+          return PositionAxis(value)
         },
       }
       return { body, reads: () => reads }

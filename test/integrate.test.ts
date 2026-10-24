@@ -259,7 +259,8 @@ describe('injected terminal velocity (FR-005)', () => {
           body = integrateBody(body, delta, {
             gravityY: GRAVITY_Y,
             dragPerSecond: 1,
-            terminalVelocityY: invalid as ReturnType<typeof BlocksPerSecond>,
+            // @ts-expect-error Exercise runtime fallback for malformed terminal velocity.
+            terminalVelocityY: invalid,
           })
         }
         return body.vy
@@ -280,20 +281,29 @@ describe('injected terminal velocity (FR-005)', () => {
 
   it('returns failures for invalid integration inputs and gravity', () => {
     const delta = DeltaTimeSecs(MAX_DELTA_SECS)
-    const invalidBody = { ...dynamicBody(), x: Number.NaN as PositionAxis }
-    const invalidGravity = Number.NaN as BlocksPerSecondSquared
-    const invalidDelta = Number.NaN as ReturnType<typeof DeltaTimeSecs>
+    const invalidBody: Body = {
+      ...dynamicBody(),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      x: Number.NaN,
+    }
 
     expect(Result.isFailure(integrateBodyResult(invalidBody, delta))).toBe(true)
-    expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, { gravityY: invalidGravity }))).toBe(true)
-    expect(Result.isFailure(maxFallPerStepResult(invalidDelta))).toBe(true)
+    expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, {
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      gravityY: Number.NaN,
+    }))).toBe(true)
+    // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+    expect(Result.isFailure(maxFallPerStepResult(Number.NaN))).toBe(true)
   })
 
   it('uses the valid default terminal velocity when its option is invalid', () => {
     const result = integrateBodyResult(
       dynamicBody({ vy: TERMINAL_VELOCITY_Y - 1 }),
       DeltaTimeSecs(MAX_DELTA_SECS),
-      { terminalVelocityY: Number.NaN as BlocksPerSecond },
+      {
+        // @ts-expect-error Exercise runtime fallback for malformed terminal velocity.
+        terminalVelocityY: Number.NaN,
+      },
     )
 
     expect(Result.isSuccess(result)).toBe(true)

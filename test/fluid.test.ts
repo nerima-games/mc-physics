@@ -72,7 +72,11 @@ describe('fluid motion', () => {
 
     const invalidCoefficients: FluidMotionCoefficients = {
       ...coefficients,
-      water: { ...coefficients.water, dragPerSecond: Number.NaN as PerSecond },
+      water: {
+        ...coefficients.water,
+        // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+        dragPerSecond: Number.NaN,
+      },
     }
     expect(Result.isFailure(applyFluidMotionResult(bodyOf(), DeltaTimeSecs(0.5), effects, invalidCoefficients))).toBe(true)
   })

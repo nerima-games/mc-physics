@@ -123,7 +123,11 @@ describe('environment material sampling', () => {
   })
 
   it('returns a failure for non-finite AABB coordinates', () => {
-    const invalidBox: AABB = { ...bodyBox(1.5), minX: Number.NaN as PositionAxis }
+    const invalidBox: AABB = {
+      ...bodyBox(1.5),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      minX: Number.NaN,
+    }
     const environment = environmentOf({})
     expect(Result.isFailure(sampleSurfaceEffectsResult(invalidBox, environment))).toBe(true)
     expect(Result.isFailure(sampleBlockHazardsResult(invalidBox, environment))).toBe(true)
@@ -138,7 +142,7 @@ describe('environment material sampling', () => {
     expect(Result.isFailure(supportFailure)).toBe(true)
     if (Result.isFailure(supportFailure)) expect(supportFailure.failure).toBeInstanceOf(RangeError)
 
-    const outOfRangeDragBox: AABB = { ...bodyBox(1.5), maxY: Number.MAX_VALUE as PositionAxis }
+    const outOfRangeDragBox: AABB = { ...bodyBox(1.5), maxY: PositionAxis(Number.MAX_VALUE) }
     expect(Result.isFailure(sampleSurfaceEffectsResult(outOfRangeDragBox, environmentOf({})))).toBe(true)
   })
 
@@ -167,7 +171,12 @@ describe('environment material sampling', () => {
       vx: 0,
       vz: -0,
     })
-    expect(Result.isFailure(applySurfaceMotionResult({ ...bodyOf(), vx: Number.NaN as BlocksPerSecond }, effects))).toBe(true)
+    const invalidBody: Body = {
+      ...bodyOf(),
+      // @ts-expect-error Exercise runtime rejection of a malformed branded value.
+      vx: Number.NaN,
+    }
+    expect(Result.isFailure(applySurfaceMotionResult(invalidBody, effects))).toBe(true)
   })
 })
 
@@ -276,11 +285,12 @@ describe('environment hazards', () => {
 
   it('returns a Result failure when a sampled contact-damage brand is invalid', () => {
     const cactus = sampleOf('cactus')
-    const invalidDamageSample = {
+    const invalidDamageSample: typeof cactus = {
       ...cactus,
       properties: {
         ...cactus.properties,
-        contactDamage: Number.NaN as typeof cactus.properties.contactDamage,
+        // @ts-expect-error Exercise runtime rejection of a malformed kernel property value.
+        contactDamage: Number.NaN,
       },
     }
     const environment: BlockEnvironment = { blockAt: () => invalidDamageSample }
@@ -380,14 +390,14 @@ describe('fluid sampling', () => {
   it('returns a failure when a finite AABB span overflows', () => {
     const invalidBox: AABB = {
       ...fluidBox,
-      minX: -Number.MAX_VALUE as PositionAxis,
-      maxX: Number.MAX_VALUE as PositionAxis,
+      minX: PositionAxis(-Number.MAX_VALUE),
+      maxX: PositionAxis(Number.MAX_VALUE),
     }
     expect(Result.isFailure(sampleFluidEffectsResult(invalidBox, environmentOf({}), () => null))).toBe(true)
   })
 
   it('returns a failure when a valid fluid volume extends beyond the block-coordinate range', () => {
-    const unscannableBox: AABB = { ...fluidBox, maxX: Number.MAX_VALUE as PositionAxis }
+    const unscannableBox: AABB = { ...fluidBox, maxX: PositionAxis(Number.MAX_VALUE) }
     const result = sampleFluidEffectsResult(unscannableBox, environmentOf({}), () => null)
 
     expect(Result.isFailure(result)).toBe(true)
