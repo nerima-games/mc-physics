@@ -5,9 +5,9 @@ import type {
   BlockProperties,
   FlowingFluidKind,
 } from '@nerima-games/mc-kernel'
-import type { BlockRegistryResolutionFailure } from '@nerima-games/mc-kernel/domain/block-registry'
-import type { Brand, Result } from 'effect'
 import type { BlocksPerSecondSquared, PerSecond } from './physical-units.js'
+import type { Brand, Result } from 'effect'
+import type { BlockRegistryResolutionFailure } from '@nerima-games/mc-kernel/domain/block-registry'
 import type { BlockShape } from './coordinates.js'
 
 export type FluidFlow = Readonly<{ readonly x: number; readonly y: number; readonly z: number }>
