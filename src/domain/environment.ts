@@ -7,19 +7,22 @@ import {
   collidesWith,
   intersects,
   isRestingOn,
-  position,
 } from './coordinates.js'
+import { BlockAxis, BlockContactDamage, PositionAxis } from '@nerima-games/mc-kernel'
 import type {
   BlockEnvironment,
   BlockHazards,
   BlockSample,
+  EnvironmentError,
   FluidEffects,
+  FluidFlow,
   FluidStateAt,
   SurfaceEffects,
 } from './environment-types.js'
+import { BlockLength, BlocksPerSecond } from './physical-units.js'
+import { Brand, Result } from 'effect'
 import type { Body } from './integrate.js'
 import { FULL_BLOCK_SHAPE } from './shape-data.js'
-import type { Position } from '@nerima-games/mc-kernel'
 
 const DEFAULT_SURFACE_EFFECTS: SurfaceEffects = { friction: 1, movementDrag: 0 }
 
@@ -39,22 +42,62 @@ const cellBounds = (box: AABB): Readonly<{
   minZ: Math.floor(box.minZ),
 })
 
-const forEachCell = (box: AABB, visit: (bx: number, by: number, bz: number) => void): void => {
-  const bounds = cellBounds(box)
-  for (let bx = bounds.minX; bx <= bounds.maxX; bx += 1) {
-    for (let by = bounds.minY; by <= bounds.maxY; by += 1) {
-      for (let bz = bounds.minZ; bz <= bounds.maxZ; bz += 1) {
-        visit(bx, by, bz)
+const forEachCoordinateRange = (
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, EnvironmentError>,
+): Result.Result<void, EnvironmentError> => {
+  const bounds = Result.all([
+    BlockAxis.result(minX),
+    BlockAxis.result(maxX),
+    BlockAxis.result(minY),
+    BlockAxis.result(maxY),
+    BlockAxis.result(minZ),
+    BlockAxis.result(maxZ),
+  ])
+  if (Result.isFailure(bounds)) {
+    return Result.fail(bounds.failure)
+  }
+  const [validMinX, validMaxX, validMinY, validMaxY, validMinZ, validMaxZ] = bounds.success
+
+  for (let bx = Number(validMinX); bx <= validMaxX; bx += 1) {
+    for (let by = Number(validMinY); by <= validMaxY; by += 1) {
+      for (let bz = Number(validMinZ); bz <= validMaxZ; bz += 1) {
+        const visited = visit(BlockAxis(bx), BlockAxis(by), BlockAxis(bz))
+        if (Result.isFailure(visited)) {
+          return visited
+        }
       }
     }
   }
+  return Result.succeed(globalThis.undefined)
+}
+
+const forEachCell = (
+  box: AABB,
+  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, EnvironmentError>,
+): Result.Result<void, EnvironmentError> => {
+  const bounds = cellBounds(box)
+  return forEachCoordinateRange(
+    bounds.minX,
+    bounds.maxX,
+    bounds.minY,
+    bounds.maxY,
+    bounds.minZ,
+    bounds.maxZ,
+    visit,
+  )
 }
 
 const localShapeAt = (
   environment: BlockEnvironment,
-  bx: number,
-  by: number,
-  bz: number,
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
   knownSample: BlockSample,
 ): ReadonlyArray<AABB> => {
   const customShapeAt = environment.blockShapeAt
@@ -80,9 +123,14 @@ const finiteOr = (value: number, fallback: number): number => {
   return fallback
 }
 
-const nonNegative = (value: number): number => Math.max(0, finiteOr(value, 0))
-
 const clampedUnit = (value: number): number => Math.min(1, Math.max(0, finiteOr(value, 0)))
+
+const finiteSurfaceEffect = (value: number, name: string): Result.Result<number, RangeError> => {
+  if (!Number.isFinite(value)) {
+    return Result.fail(new RangeError(`${name} must be finite`))
+  }
+  return Result.succeed(value)
+}
 
 const touchesCell = (box: AABB, cell: AABB): boolean =>
   box.minX <= cell.maxX &&
@@ -92,153 +140,244 @@ const touchesCell = (box: AABB, cell: AABB): boolean =>
   box.minZ <= cell.maxZ &&
   box.maxZ >= cell.minZ
 
-export const sampleSurfaceEffects = (box: AABB, environment: BlockEnvironment): SurfaceEffects => {
+export const sampleSurfaceEffects = (
+  box: AABB,
+  environment: BlockEnvironment,
+): Result.Result<SurfaceEffects, EnvironmentError> => {
   const feetCell = Math.floor(box.minY)
   const minX = Math.floor(box.minX)
   const maxX = Math.floor(box.maxX)
   const minZ = Math.floor(box.minZ)
   const maxZ = Math.floor(box.maxZ)
-  const { friction: defaultFriction, movementDrag: defaultMovementDrag } = DEFAULT_SURFACE_EFFECTS
-  let friction = defaultFriction
-  let movementDrag = defaultMovementDrag
+  let { friction, movementDrag } = DEFAULT_SURFACE_EFFECTS
 
-  for (let bx = minX; bx <= maxX; bx += 1) {
-    for (let bz = minZ; bz <= maxZ; bz += 1) {
-      for (let by = feetCell - 1; by <= feetCell; by += 1) {
-        const sample = environment.blockAt(bx, by, bz)
-        if (sample !== null) {
-          for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
-            if (isRestingOn(box, blockAABB(bx, by, bz, shape))) {
-              friction = Math.min(friction, clampedUnit(sample.properties.friction))
-              break
-            }
-          }
+  const supportScan = forEachCoordinateRange(minX, maxX, feetCell - 1, feetCell, minZ, maxZ, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
+      }
+
+      for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
+        const worldShape = blockAABB(bx, by, bz, shape)
+        if (Result.isFailure(worldShape)) {
+          return Result.fail(worldShape.failure)
+        }
+        if (isRestingOn(box, worldShape.success)) {
+          friction = Math.min(friction, clampedUnit(sample.properties.friction))
+          break
         }
       }
-    }
+      return Result.succeed(globalThis.undefined)
+    }),
+  )
+  if (Result.isFailure(supportScan)) {
+    return Result.fail(supportScan.failure)
   }
 
-  forEachCell(box, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null || !intersects(box, blockAABB(bx, by, bz))) {
-      return
-    }
-    movementDrag = Math.max(movementDrag, clampedUnit(sample.properties.movementDrag))
-  })
+  const dragScan = forEachCell(box, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
+      }
+      return Result.map(blockAABB(bx, by, bz), (cell) => {
+        if (intersects(box, cell)) {
+          movementDrag = Math.max(movementDrag, clampedUnit(sample.properties.movementDrag))
+        }
+      })
+    }),
+  )
+  if (Result.isFailure(dragScan)) {
+    return Result.fail(dragScan.failure)
+  }
 
-  return { friction, movementDrag }
+  return Result.succeed({ friction, movementDrag })
 }
 
-export const applySurfaceMotion = (body: Body, effects: SurfaceEffects): Body => {
+export const applySurfaceMotion = (
+  body: Body,
+  effects: SurfaceEffects,
+): Result.Result<Body, Brand.BrandError | RangeError> => {
   if (body.kind !== 'dynamic') {
-    return body
+    return Result.succeed(body)
   }
 
-  const multiplier = clampedUnit(effects.friction) * (1 - clampedUnit(effects.movementDrag))
-  /*
-   * An absent vertical drag multiplies by exactly 1, which IEEE-754 leaves
-   * bit-identical for every vy including -0 and NaN.
-   */
-  const vy = body.vy * (1 - clampedUnit(effects.movementDragY ?? 0))
-  return { ...body, vx: body.vx * multiplier, vy, vz: body.vz * multiplier }
+  const movementDragYOptionSnapshot = effects.movementDragY
+  let movementDragYSnapshot = 0
+  if (typeof movementDragYOptionSnapshot !== 'undefined') {
+    movementDragYSnapshot = movementDragYOptionSnapshot
+  }
+  const checkedEffects = Result.all([
+    finiteSurfaceEffect(effects.friction, 'friction'),
+    finiteSurfaceEffect(effects.movementDrag, 'movementDrag'),
+    finiteSurfaceEffect(movementDragYSnapshot, 'movementDragY'),
+  ])
+  if (Result.isFailure(checkedEffects)) {
+    return Result.fail(checkedEffects.failure)
+  }
+
+  const vxSnapshot = body.vx
+  const vySnapshot = body.vy
+  const vzSnapshot = body.vz
+  const inputs = Result.all([
+    BlocksPerSecond.result(vxSnapshot),
+    BlocksPerSecond.result(vySnapshot),
+    BlocksPerSecond.result(vzSnapshot),
+  ])
+  return Result.flatMap(inputs, ([vx, vy, vz]) => {
+    const [friction, movementDrag, movementDragY] = checkedEffects.success
+    const multiplier = clampedUnit(friction) * (1 - clampedUnit(movementDrag))
+    const verticalMultiplier = 1 - clampedUnit(movementDragY)
+    return Result.map(
+      Result.all([
+        BlocksPerSecond.result(vx * multiplier),
+        BlocksPerSecond.result(vy * verticalMultiplier),
+        BlocksPerSecond.result(vz * multiplier),
+      ]),
+      ([nextVx, nextVy, nextVz]): Body => ({ ...body, vx: nextVx, vy: nextVy, vz: nextVz }),
+    )
+  })
 }
 
-export const sampleBlockHazards = (box: AABB, environment: BlockEnvironment): BlockHazards => {
-  let contactDamage = 0
+export const sampleBlockHazards = (
+  box: AABB,
+  environment: BlockEnvironment,
+): Result.Result<BlockHazards, EnvironmentError> => {
+  let contactDamage = BlockContactDamage(0)
   let suffocating = false
   let climbable = false
 
-  forEachCell(box, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null) {
-      return
-    }
-
-    const cell = blockAABB(bx, by, bz)
-    const touches = touchesCell(box, cell)
-    if (touches && sample.capabilities.climbable) {
-      climbable = true
-    }
-
-    const damage = nonNegative(sample.properties.contactDamage)
-    if (touches && damage > contactDamage) {
-      contactDamage = damage
-    }
-    for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
-      const collisionBox = blockAABB(bx, by, bz, shape)
-      if (collidesWith(box, collisionBox) && sample.capabilities.suffocates) {
-        suffocating = true
+  const scan = forEachCell(box, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
       }
-    }
-  })
 
-  return { climbable, contactDamage, suffocating }
+      return Result.flatMap(blockAABB(bx, by, bz), (cell) => {
+        const touches = touchesCell(box, cell)
+        const damageSnapshot = sample.properties.contactDamage
+        const damage = BlockContactDamage.result(damageSnapshot)
+        if (Result.isFailure(damage)) {
+          return Result.fail(damage.failure)
+        }
+        if (touches && sample.capabilities.climbable) {
+          climbable = true
+        }
+        if (touches && damage.success > contactDamage) {
+          contactDamage = damage.success
+        }
+
+        for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
+          const collisionBox = blockAABB(bx, by, bz, shape)
+          if (Result.isFailure(collisionBox)) {
+            return Result.fail(collisionBox.failure)
+          }
+          if (collidesWith(box, collisionBox.success) && sample.capabilities.suffocates) {
+            suffocating = true
+          }
+        }
+        return Result.succeed(globalThis.undefined)
+      })
+    }),
+  )
+  if (Result.isFailure(scan)) {
+    return Result.fail(scan.failure)
+  }
+
+  return Result.succeed({ climbable, contactDamage, suffocating })
 }
 
 const overlapLength = (aMin: number, aMax: number, bMin: number, bMax: number): number =>
   Math.max(0, Math.min(aMax, bMax) - Math.max(aMin, bMin))
 
-const overlapVolume = (a: AABB, b: AABB): number =>
-  overlapLength(a.minX, a.maxX, b.minX, b.maxX) *
-  overlapLength(a.minY, a.maxY, b.minY, b.maxY) *
-  overlapLength(a.minZ, a.maxZ, b.minZ, b.maxZ)
-
-const validFlow = (flow: Position): Position => position(finiteOr(flow.x, 0), finiteOr(flow.y, 0), finiteOr(flow.z, 0))
+const validFlow = (flow: FluidFlow): FluidFlow => ({
+  x: finiteOr(flow.x, 0),
+  y: finiteOr(flow.y, 0),
+  z: finiteOr(flow.z, 0),
+})
 
 export const sampleFluidEffects = (
   box: AABB,
   environment: BlockEnvironment,
   fluidStateAt: FluidStateAt,
-): FluidEffects => {
-  const bodyVolume = Math.max(0, (box.maxX - box.minX) * (box.maxY - box.minY) * (box.maxZ - box.minZ))
-  if (bodyVolume === 0) {
-    return { flow: position(0, 0, 0), lavaVolume: 0, waterVolume: 0 }
-  }
-
-  let waterVolume = 0
-  let lavaVolume = 0
-  let totalVolume = 0
-  let flowX = 0
-  let flowY = 0
-  let flowZ = 0
-
-  forEachCell(box, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null || sample.properties.fluid === 'none') {
-      return
+): Result.Result<FluidEffects, EnvironmentError> => {
+  const widthResults = Result.all([
+    BlockLength.result(box.maxX - box.minX),
+    BlockLength.result(box.maxY - box.minY),
+    BlockLength.result(box.maxZ - box.minZ),
+  ])
+  return Result.flatMap(widthResults, ([widthX, widthY, widthZ]) => {
+    if (widthX <= 0 || widthY <= 0 || widthZ <= 0) {
+      return Result.succeed({ flow: { x: 0, y: 0, z: 0 }, lavaVolume: 0, waterVolume: 0 })
     }
 
-    const state = fluidStateAt(bx, by, bz, sample.properties.fluid)
-    if (state === null) {
-      return
+    let waterVolume = 0
+    let lavaVolume = 0
+    let totalVolume = 0
+    let flowX = 0
+    let flowY = 0
+    let flowZ = 0
+
+    const scan = forEachCell(box, (bx, by, bz) =>
+      Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+        if (sample === null) {
+          return Result.succeed(globalThis.undefined)
+        }
+        const kind = sample.properties.fluid
+        if (kind === 'none') {
+          return Result.succeed(globalThis.undefined)
+        }
+
+        const state = fluidStateAt(bx, by, bz, kind)
+        if (state === null) {
+          return Result.succeed(globalThis.undefined)
+        }
+        const levelSnapshot = state.level
+        const level = clampedUnit(levelSnapshot)
+        if (level === 0) {
+          return Result.succeed(globalThis.undefined)
+        }
+
+        return Result.flatMap(PositionAxis.result(level), (maxY) =>
+          Result.flatMap(
+            blockAABB(bx, by, bz, { ...FULL_BLOCK_SHAPE, maxY }),
+            (fluidBox) => {
+              const volumeX = overlapLength(box.minX, box.maxX, fluidBox.minX, fluidBox.maxX) / widthX
+              const volumeY = overlapLength(box.minY, box.maxY, fluidBox.minY, fluidBox.maxY) / widthY
+              const volumeZ = overlapLength(box.minZ, box.maxZ, fluidBox.minZ, fluidBox.maxZ) / widthZ
+              const contribution = volumeX * volumeY * volumeZ
+              if (contribution === 0) {
+                return Result.succeed(globalThis.undefined)
+              }
+
+              if (kind === 'water') {
+                waterVolume += contribution
+              } else {
+                lavaVolume += contribution
+              }
+              totalVolume += contribution
+              const flowSnapshot = state.flow
+              const flow = validFlow(flowSnapshot)
+              flowX += flow.x * contribution
+              flowY += flow.y * contribution
+              flowZ += flow.z * contribution
+              return Result.succeed(globalThis.undefined)
+            },
+          ),
+        )
+      }),
+    )
+    if (Result.isFailure(scan)) {
+      return Result.fail(scan.failure)
     }
 
-    const level = clampedUnit(state.level)
-    if (level === 0) {
-      return
+    let flow: FluidFlow = { x: 0, y: 0, z: 0 }
+    if (totalVolume !== 0) {
+      flow = {
+        x: finiteOr(flowX / totalVolume, 0),
+        y: finiteOr(flowY / totalVolume, 0),
+        z: finiteOr(flowZ / totalVolume, 0),
+      }
     }
-
-    const fluidBox = blockAABB(bx, by, bz, { ...FULL_BLOCK_SHAPE, maxY: level })
-    const volume = overlapVolume(box, fluidBox) / bodyVolume
-    if (volume === 0) {
-      return
-    }
-
-    if (sample.properties.fluid === 'water') {
-      waterVolume += volume
-    } else {
-      lavaVolume += volume
-    }
-    totalVolume += volume
-    const flow = validFlow(state.flow)
-    flowX += flow.x * volume
-    flowY += flow.y * volume
-    flowZ += flow.z * volume
+    return Result.succeed({ flow, lavaVolume: clampedUnit(lavaVolume), waterVolume: clampedUnit(waterVolume) })
   })
-
-  let flow = position(0, 0, 0)
-  if (totalVolume !== 0) {
-    flow = position(flowX / totalVolume, flowY / totalVolume, flowZ / totalVolume)
-  }
-  return { flow, lavaVolume: clampedUnit(lavaVolume), waterVolume: clampedUnit(waterVolume) }
 }

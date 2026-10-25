@@ -2,12 +2,15 @@ import {
   type AABB,
   CONTACT_EPSILON,
   CentreY,
-  blockAABB,
+  HalfHeight,
   collidesWith,
 } from './coordinates.js'
+import { BlockLength, BlocksPerSecond } from './physical-units.js'
+import type { ResolveError, ResolveOptions } from './resolve-types.js'
 import { blockShapesAt, boxAt } from './resolve-shapes.js'
 import type { Body } from './integrate.js'
-import type { ResolveOptions } from './resolve-types.js'
+import { PositionAxis } from '@nerima-games/mc-kernel'
+import { Result } from 'effect'
 
 type SweepAxis = 'x' | 'y' | 'z'
 
@@ -15,6 +18,8 @@ type SweepHit = {
   readonly time: number
   readonly axis: SweepAxis
 }
+
+type SweepMotion = Readonly<{ readonly from: Body; readonly target: Body; readonly done: boolean }>
 
 type Vec3Delta = {
   readonly dx: number
@@ -40,6 +45,7 @@ type SweepAxisComponents = {
 }
 
 const AXIS_ORDER: ReadonlyArray<SweepAxis> = ['y', 'x', 'z']
+const ZERO_VELOCITY = BlocksPerSecond(0)
 
 const axisPriority = (axis: SweepAxis): number => AXIS_ORDER.indexOf(axis)
 
@@ -48,7 +54,7 @@ const forEachSweptCandidate = (
   end: Body,
   options: ResolveOptions,
   visit: (block: AABB) => void,
-): void => {
+): Result.Result<void, ResolveError> => {
   const dx = end.x - start.x
   const dy = end.y - start.y
   const dz = end.z - start.z
@@ -86,8 +92,12 @@ const forEachSweptCandidate = (
             && by >= previousMinY && by <= previousMaxY
             && bz >= previousMinZ && bz <= previousMaxZ
           if (!duplicate) {
-            for (const shape of blockShapesAt(options, bx, by, bz)) {
-              visit(blockAABB(bx, by, bz, shape))
+            const shapes = blockShapesAt(options, bx, by, bz)
+            if (Result.isFailure(shapes)) {
+              return Result.fail(shapes.failure)
+            }
+            for (const block of shapes.success) {
+              visit(block)
             }
           }
         }
@@ -102,6 +112,7 @@ const forEachSweptCandidate = (
     previousMinZ = minZ
     previousMaxZ = maxZ
   }
+  return Result.succeed(globalThis.undefined)
 }
 
 const sweepAxisComponents = (
@@ -114,22 +125,28 @@ const sweepAxisComponents = (
   { axis: 'z', delta: delta.dz, max: bounds.maxZ, min: bounds.minZ, origin: start.z },
 ]
 
-const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | null => {
+const sweptHit = (start: Body, end: Body, options: ResolveOptions): Result.Result<SweepHit | null, ResolveError> => {
   const delta = { dx: end.x - start.x, dy: end.y - start.y, dz: end.z - start.z }
   const startBox = boxAt(options, start.x, start.y, start.z)
   const endBox = boxAt(options, end.x, end.y, end.z)
+  if (Result.isFailure(startBox)) {
+    return Result.fail(startBox.failure)
+  }
+  if (Result.isFailure(endBox)) {
+    return Result.fail(endBox.failure)
+  }
   let nearestTime = 0
   let nearestAxis: SweepAxis = 'y'
   let hasNearest = false
 
-  forEachSweptCandidate(start, end, options, (block) => {
+  const candidates = forEachSweptCandidate(start, end, options, (block) => {
     const touchesVerticalFace =
-      Math.abs(startBox.minY - block.maxY) <= CONTACT_EPSILON
-      || Math.abs(startBox.maxY - block.minY) <= CONTACT_EPSILON
+      Math.abs(startBox.success.minY - block.maxY) <= CONTACT_EPSILON
+      || Math.abs(startBox.success.maxY - block.minY) <= CONTACT_EPSILON
     if (Math.abs(delta.dy) <= CONTACT_EPSILON && touchesVerticalFace) {
       return
     }
-    if (collidesWith(endBox, block)) {
+    if (collidesWith(endBox.success, block)) {
       return
     }
 
@@ -196,17 +213,23 @@ const sweptHit = (start: Body, end: Body, options: ResolveOptions): SweepHit | n
       hasNearest = true
     }
   })
-
-  if (!hasNearest) {
-    return null
+  if (Result.isFailure(candidates)) {
+    return Result.fail(candidates.failure)
   }
-  return { axis: nearestAxis, time: nearestTime }
+  if (!hasNearest) {
+    return Result.succeed(null)
+  }
+  return Result.succeed({ axis: nearestAxis, time: nearestTime })
 }
 
 export const DIAMETER_FACTOR: number = 1 + 1
 const MAX_SWEEP_COLLISIONS_PER_STEP = 3
 
-export const resolveSweptMotion = (start: Body, integrated: Body, options: ResolveOptions): Body => {
+const resolveSweptMotionChecked = (
+  start: Body,
+  integrated: Body,
+  options: ResolveOptions,
+): Result.Result<Body, ResolveError> => {
   const minimumBodySpan = Math.min(
     DIAMETER_FACTOR * options.halfWidth,
     DIAMETER_FACTOR * Number(options.halfHeight),
@@ -216,35 +239,112 @@ export const resolveSweptMotion = (start: Body, integrated: Body, options: Resol
     && Math.abs(integrated.y - start.y) <= minimumBodySpan
     && Math.abs(integrated.z - start.z) <= minimumBodySpan
   ) {
-    return integrated
+    return Result.succeed(integrated)
   }
 
-  let from = start
-  let target = integrated
+  let motion: Result.Result<SweepMotion, ResolveError> =
+    Result.succeed({ done: false, from: start, target: integrated })
   for (let collision = 0; collision < MAX_SWEEP_COLLISIONS_PER_STEP; collision += 1) {
-    const hit = sweptHit(from, target, options)
-    if (hit === null) {
-      break
-    }
-
-    const dx = target.x - from.x
-    const dy = target.y - from.y
-    const dz = target.z - from.z
-    const contact: Body = {
-      ...target,
-      x: from.x + dx * hit.time,
-      y: CentreY(from.y + dy * hit.time),
-      z: from.z + dz * hit.time,
-    }
-    if (hit.axis === 'x') {
-      target = { ...target, vx: 0, x: contact.x }
-    } else if (hit.axis === 'y') {
-      target = { ...target, vy: 0, y: contact.y }
-    } else {
-      target = { ...target, vz: 0, z: contact.z }
-    }
-    from = contact
+    motion = Result.flatMap(motion, (current) => {
+      if (current.done) {
+        return Result.succeed(current)
+      }
+      return Result.flatMap(sweptHit(current.from, current.target, options), (hit): Result.Result<SweepMotion, ResolveError> => {
+        if (hit === null) {
+          const done: SweepMotion = { ...current, done: true }
+          return Result.succeed(done)
+        }
+        const dx = current.target.x - current.from.x
+        const dy = current.target.y - current.from.y
+        const dz = current.target.z - current.from.z
+        const contactPositions = Result.all([
+          PositionAxis.result(current.from.x + dx * hit.time),
+          CentreY.result(current.from.y + dy * hit.time),
+          PositionAxis.result(current.from.z + dz * hit.time),
+        ])
+        return Result.map(contactPositions, ([contactX, contactY, contactZ]): SweepMotion => {
+          const contact: Body = { ...current.target, x: contactX, y: contactY, z: contactZ }
+          let { target } = current
+          if (hit.axis === 'x') {
+            target = { ...target, vx: ZERO_VELOCITY, x: contact.x }
+          } else if (hit.axis === 'y') {
+            target = { ...target, vy: ZERO_VELOCITY, y: contact.y }
+          } else {
+            target = { ...target, vz: ZERO_VELOCITY, z: contact.z }
+          }
+          return { done: false, from: contact, target }
+        })
+      })
+    })
   }
 
-  return target
+  return Result.map(motion, (current) => current.target)
+}
+
+export const resolveSweptMotionFromValidated = (
+  start: Body,
+  integrated: Body,
+  options: ResolveOptions,
+): Result.Result<Body, ResolveError> => resolveSweptMotionChecked(start, integrated, options)
+
+export const resolveSweptMotion = (
+  start: Body,
+  integrated: Body,
+  options: ResolveOptions,
+): Result.Result<Body, ResolveError> => {
+  const checkedBodies = Result.all([
+    PositionAxis.result(start.x),
+    CentreY.result(start.y),
+    PositionAxis.result(start.z),
+    BlocksPerSecond.result(start.vx),
+    BlocksPerSecond.result(start.vy),
+    BlocksPerSecond.result(start.vz),
+    PositionAxis.result(integrated.x),
+    CentreY.result(integrated.y),
+    PositionAxis.result(integrated.z),
+    BlocksPerSecond.result(integrated.vx),
+    BlocksPerSecond.result(integrated.vy),
+    BlocksPerSecond.result(integrated.vz),
+    BlockLength.result(options.halfWidth),
+    HalfHeight.result(options.halfHeight),
+  ])
+  if (Result.isFailure(checkedBodies)) {
+    return Result.fail(checkedBodies.failure)
+  }
+  const [
+    startX,
+    startY,
+    startZ,
+    startVx,
+    startVy,
+    startVz,
+    integratedX,
+    integratedY,
+    integratedZ,
+    integratedVx,
+    integratedVy,
+    integratedVz,
+    halfWidth,
+    halfHeight,
+  ] = checkedBodies.success
+  const checkedStart: Body = {
+    ...start,
+    vx: startVx,
+    vy: startVy,
+    vz: startVz,
+    x: startX,
+    y: startY,
+    z: startZ,
+  }
+  const checkedIntegrated: Body = {
+    ...integrated,
+    vx: integratedVx,
+    vy: integratedVy,
+    vz: integratedVz,
+    x: integratedX,
+    y: integratedY,
+    z: integratedZ,
+  }
+  const checkedOptions: ResolveOptions = { ...options, halfHeight, halfWidth }
+  return resolveSweptMotionChecked(checkedStart, checkedIntegrated, checkedOptions)
 }

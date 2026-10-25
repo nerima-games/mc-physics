@@ -3,6 +3,7 @@ import {
   DeltaTimeSecs,
   FootY,
   HalfHeight,
+  BlocksPerSecond,
   integrateBody,
   type Body,
 } from '../src/index.js'
@@ -10,11 +11,20 @@ import {
   FixedDurationSecs,
   InterpolationFraction,
   MonotonicTimeSecs,
+  PositionAxis,
   SessionEpoch,
   SimulationTick,
 } from '@nerima-games/mc-kernel'
 
-const body: Body = { kind: 'dynamic', x: 0, y: CentreY(0), z: 0, vx: 0, vy: 0, vz: 0 }
+const body: Body = {
+  kind: 'dynamic',
+  x: PositionAxis(0),
+  y: CentreY(0),
+  z: PositionAxis(0),
+  vx: BlocksPerSecond(0),
+  vy: BlocksPerSecond(0),
+  vz: BlocksPerSecond(0),
+}
 const delta = DeltaTimeSecs(0.05)
 const fixedDuration = FixedDurationSecs(0.05)
 const centre = CentreY(0)

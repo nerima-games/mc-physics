@@ -25,23 +25,25 @@
  * assumed frame rate), the same conversion `applyFluidMotion`
  * (`domain/fluid.ts`) already performs for its drag coefficients.
  */
-import { type DeltaTimeSecs, type Position, tickDuration } from '@nerima-games/mc-kernel'
+import { AngleRadians, DeltaTimeSecs, tickDuration } from '@nerima-games/mc-kernel'
+import { BlocksPerSecond, BlocksPerSecondSquared, PerSecond, type VelocityVector } from './physical-units.js'
+import { Brand, Option, Result } from 'effect'
 
 /** Look direction as pitch/yaw — same fields as `ArrowLaunch` (`domain/projectile.ts`) and `MovementInput.yawRadians`. */
 export type GlideSight = Readonly<{
-  readonly pitchRadians: number
-  readonly yawRadians: number
+  readonly pitchRadians: AngleRadians
+  readonly yawRadians: AngleRadians
 }>
 
 export type GlideConfig = Readonly<{
-  readonly gravityPerSecondSquared: number
+  readonly gravityPerSecondSquared: BlocksPerSecondSquared
   readonly liftCancelFactor: number
-  readonly diveConversionPerSecond: number
-  readonly climbConversionPerSecond: number
+  readonly diveConversionPerSecond: BlocksPerSecondSquared
+  readonly climbConversionPerSecond: PerSecond
   readonly climbLiftMultiplier: number
-  readonly turnRatePerSecond: number
-  readonly horizontalDragPerSecond: number
-  readonly verticalDragPerSecond: number
+  readonly turnRatePerSecond: PerSecond
+  readonly horizontalDragPerSecond: PerSecond
+  readonly verticalDragPerSecond: PerSecond
 }>
 
 const finiteOrZero = (value: number): number => {
@@ -65,23 +67,26 @@ const decayRatePerSecond = (perTick: number): number => -Math.log(perTick) / TIC
 const TURN_KEEP_PER_TICK = 0.9
 const HORIZONTAL_DRAG_KEEP_PER_TICK = 0.99
 const VERTICAL_DRAG_KEEP_PER_TICK = 0.98
+const GLIDE_GRAVITY_PER_SECOND_SQUARED_VALUE = -1.6
+const GLIDE_DIVE_CONVERSION_PER_SECOND_VALUE = 0.8
+const GLIDE_CLIMB_CONVERSION_PER_SECOND_VALUE = 0.8
 
 /** -0.08/tick (community-reversed elytra gravity — see module header) converted to a per-second rate. */
-export const GLIDE_GRAVITY_PER_SECOND_SQUARED = -1.6
+export const GLIDE_GRAVITY_PER_SECOND_SQUARED: BlocksPerSecondSquared = BlocksPerSecondSquared(GLIDE_GRAVITY_PER_SECOND_SQUARED_VALUE)
 /** Fraction of gravity cancelled at pitch 0 (level flight); the rest is the residual glide-down rate. */
 export const GLIDE_LIFT_CANCEL_FACTOR = 0.9
 /** Flat, dt-scaled forward-speed gain from a downward look. Independent of current speed, so it cannot compound step over step — see the "cannot compound" property test. */
-export const GLIDE_DIVE_CONVERSION_PER_SECOND = 0.8
+export const GLIDE_DIVE_CONVERSION_PER_SECOND: BlocksPerSecondSquared = BlocksPerSecondSquared(GLIDE_DIVE_CONVERSION_PER_SECOND_VALUE)
 /** Horizontal-speed-to-lift conversion rate while climbing, on the same 0.04/tick order as the dive conversion. */
-export const GLIDE_CLIMB_CONVERSION_PER_SECOND = 0.8
+export const GLIDE_CLIMB_CONVERSION_PER_SECOND: PerSecond = PerSecond(GLIDE_CLIMB_CONVERSION_PER_SECOND_VALUE)
 /** Unitless: how much of the horizontal speed spent climbing becomes vertical speed. */
 export const GLIDE_CLIMB_LIFT_MULTIPLIER = 3.5
 /** A 10%-per-tick turn-toward-look-direction blend, continuised. */
-export const GLIDE_TURN_RATE_PER_SECOND: number = decayRatePerSecond(TURN_KEEP_PER_TICK)
+export const GLIDE_TURN_RATE_PER_SECOND: PerSecond = PerSecond(decayRatePerSecond(TURN_KEEP_PER_TICK))
 /** Community-reversed per-tick horizontal air drag, continuised. */
-export const GLIDE_HORIZONTAL_DRAG_PER_SECOND: number = decayRatePerSecond(HORIZONTAL_DRAG_KEEP_PER_TICK)
+export const GLIDE_HORIZONTAL_DRAG_PER_SECOND: PerSecond = PerSecond(decayRatePerSecond(HORIZONTAL_DRAG_KEEP_PER_TICK))
 /** Community-reversed per-tick vertical air drag, continuised. */
-export const GLIDE_VERTICAL_DRAG_PER_SECOND: number = decayRatePerSecond(VERTICAL_DRAG_KEEP_PER_TICK)
+export const GLIDE_VERTICAL_DRAG_PER_SECOND: PerSecond = PerSecond(decayRatePerSecond(VERTICAL_DRAG_KEEP_PER_TICK))
 
 export const DEFAULT_GLIDE_CONFIG: GlideConfig = {
   climbConversionPerSecond: GLIDE_CLIMB_CONVERSION_PER_SECOND,
@@ -99,88 +104,102 @@ export const DEFAULT_GLIDE_CONFIG: GlideConfig = {
  * grounded check (the caller's job — see the module header).
  */
 export const glideStep = (
-  velocity: Position,
+  velocity: VelocityVector,
   sight: GlideSight,
   deltaTime: DeltaTimeSecs,
   config: GlideConfig = DEFAULT_GLIDE_CONFIG,
-): Position => {
-  const seconds = nonNegativeFinite(deltaTime)
-  const vx0 = finiteOrZero(velocity.x)
-  const vy0 = finiteOrZero(velocity.y)
-  const vz0 = finiteOrZero(velocity.z)
-  const pitch = finiteOrZero(sight.pitchRadians)
-  const yaw = finiteOrZero(sight.yawRadians)
+): Result.Result<VelocityVector, Brand.BrandError> => {
+  const vxSnapshot = velocity.x
+  const vySnapshot = velocity.y
+  const vzSnapshot = velocity.z
+  const pitchSnapshot = sight.pitchRadians
+  const yawSnapshot = sight.yawRadians
+  const deltaSnapshot = deltaTime
+  const gravitySnapshot = config.gravityPerSecondSquared
+  const diveConversionSnapshot = config.diveConversionPerSecond
+  const climbConversionSnapshot = config.climbConversionPerSecond
+  const turnRateSnapshot = config.turnRatePerSecond
+  const horizontalDragSnapshot = config.horizontalDragPerSecond
+  const verticalDragSnapshot = config.verticalDragPerSecond
+  const inputs = Result.all([
+    BlocksPerSecond.result(vxSnapshot),
+    BlocksPerSecond.result(vySnapshot),
+    BlocksPerSecond.result(vzSnapshot),
+    DeltaTimeSecs.result(deltaSnapshot),
+    BlocksPerSecondSquared.result(gravitySnapshot),
+    BlocksPerSecondSquared.result(diveConversionSnapshot),
+    PerSecond.result(climbConversionSnapshot),
+    PerSecond.result(turnRateSnapshot),
+    PerSecond.result(horizontalDragSnapshot),
+    PerSecond.result(verticalDragSnapshot),
+  ])
 
-  const cosPitch = Math.cos(pitch)
-  const sinPitch = Math.sin(pitch)
-  /*
-   * Same look-vector convention as `launchProjectile` (domain/projectile.ts):
-   * positive pitch looks down, yaw 0 faces -Z.
-   */
-  const lookX = -Math.sin(yaw) * cosPitch
-  const lookZ = -Math.cos(yaw) * cosPitch
-  const horizontalLookLength = Math.hypot(lookX, lookZ)
+  return Result.flatMap(inputs, ([vx0, vy0, vz0, seconds, gravityValue, diveConversionValue, climbConversionValue, turnRateValue, horizontalDragValue, verticalDragValue]) => {
+    const pitchOption = AngleRadians.option(pitchSnapshot)
+    const yawOption = AngleRadians.option(yawSnapshot)
+    let pitch = 0
+    if (Option.isSome(pitchOption)) {
+      pitch = pitchOption.value
+    }
+    let yaw = 0
+    if (Option.isSome(yawOption)) {
+      yaw = yawOption.value
+    }
+    const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch)
+    /*
+     * Same look-vector convention as `launchProjectile` (domain/projectile.ts):
+     * positive pitch looks down, yaw 0 faces -Z.
+     */
+    const lookX = -Math.sin(yaw) * cosPitch
+    const lookZ = -Math.cos(yaw) * cosPitch
+    const horizontalLookLength = Math.hypot(lookX, lookZ)
 
-  /*
-   * Gravity, cancelled most at level flight and least at the pitch extremes —
-   * this is what makes gliding "float" instead of falling.
-   */
-  const gravity = finiteOrZero(config.gravityPerSecondSquared)
-  const liftCancelFactor = clamp01(finiteOrZero(config.liftCancelFactor))
-  const cosPitchSquared = cosPitch * cosPitch
-  const effectiveGravity = gravity * (1 - liftCancelFactor * cosPitchSquared)
-  let vy = vy0 + effectiveGravity * seconds
+    const gravity = gravityValue
+    const liftCancelFactor = clamp01(finiteOrZero(config.liftCancelFactor))
+    const cosPitchSquared = cosPitch * cosPitch
+    const effectiveGravity = gravity * (1 - liftCancelFactor * cosPitchSquared)
+    let vy = vy0 + effectiveGravity * seconds
 
-  /*
-   * Diving converts descent into forward speed. Flat rate * dt, never scaled
-   * by the existing speed, so repeated steps converge to a fixed point
-   * instead of compounding (see the module header and its property test).
-   */
-  const diveConversion = nonNegativeFinite(config.diveConversionPerSecond)
-  const divePush = diveConversion * Math.max(0, sinPitch) * seconds
-  /*
-   * `cos(pitch)` of a finite double is never exactly 0 (cos of the doubles
-   * nearest pi/2 is ~6.1e-17), so the horizontal look length is always
-   * positive and the normalisation cannot divide by zero.
-   */
-  let vx = vx0 + (lookX / horizontalLookLength) * divePush
-  let vz = vz0 + (lookZ / horizontalLookLength) * divePush
+    const diveConversion = nonNegativeFinite(diveConversionValue)
+    const divePush = diveConversion * Math.max(0, sinPitch) * seconds
+    let vx = vx0 + (lookX / horizontalLookLength) * divePush
+    let vz = vz0 + (lookZ / horizontalLookLength) * divePush
 
-  // Climbing spends horizontal speed to gain altitude.
-  const climbConversion = nonNegativeFinite(config.climbConversionPerSecond)
-  const climbLiftMultiplier = nonNegativeFinite(config.climbLiftMultiplier)
-  const horizontalSpeed = Math.hypot(vx, vz)
-  const climbRate = climbConversion * Math.max(0, -sinPitch) * seconds
-  const climbPull = Math.min(horizontalSpeed, climbRate * horizontalSpeed)
-  if (horizontalSpeed > 0) {
-    const remaining = (horizontalSpeed - climbPull) / horizontalSpeed
-    vx *= remaining
-    vz *= remaining
-  }
-  vy += climbPull * climbLiftMultiplier
+    const climbConversion = nonNegativeFinite(climbConversionValue)
+    const climbLiftMultiplier = nonNegativeFinite(finiteOrZero(config.climbLiftMultiplier))
+    const horizontalSpeed = Math.hypot(vx, vz)
+    const climbRate = climbConversion * Math.max(0, -sinPitch) * seconds
+    const climbPull = Math.min(horizontalSpeed, climbRate * horizontalSpeed)
+    if (horizontalSpeed > 0) {
+      const remaining = (horizontalSpeed - climbPull) / horizontalSpeed
+      vx *= remaining
+      vz *= remaining
+    }
+    vy += climbPull * climbLiftMultiplier
 
-  /*
-   * Turn: blend the horizontal direction toward the look direction at a rate
-   * independent of speed — the continuous-time analogue of a per-tick
-   * fractional approach (see `decayRatePerSecond`).
-   */
-  const turnRate = nonNegativeFinite(config.turnRatePerSecond)
-  const turnBlend = 1 - Math.exp(-turnRate * seconds)
-  const speedAfterConversion = Math.hypot(vx, vz)
-  if (speedAfterConversion > 0 && horizontalLookLength > 0) {
-    const targetX = (lookX / horizontalLookLength) * speedAfterConversion
-    const targetZ = (lookZ / horizontalLookLength) * speedAfterConversion
-    vx += (targetX - vx) * turnBlend
-    vz += (targetZ - vz) * turnBlend
-  }
+    const turnRate = nonNegativeFinite(turnRateValue)
+    const turnBlend = 1 - Math.exp(-turnRate * seconds)
+    const speedAfterConversion = Math.hypot(vx, vz)
+    if (speedAfterConversion > 0 && horizontalLookLength > 0) {
+      const targetX = (lookX / horizontalLookLength) * speedAfterConversion
+      const targetZ = (lookZ / horizontalLookLength) * speedAfterConversion
+      vx += (targetX - vx) * turnBlend
+      vz += (targetZ - vz) * turnBlend
+    }
 
-  // Drag, continuous form: `applyFluidMotion` (domain/fluid.ts) uses the same
-  // `exp(-rate * seconds)` idiom for a per-second drag coefficient.
-  const horizontalDrag = Math.exp(-nonNegativeFinite(config.horizontalDragPerSecond) * seconds)
-  const verticalDrag = Math.exp(-nonNegativeFinite(config.verticalDragPerSecond) * seconds)
-  vx *= horizontalDrag
-  vz *= horizontalDrag
-  vy *= verticalDrag
+    const horizontalDrag = Math.exp(-nonNegativeFinite(horizontalDragValue) * seconds)
+    const verticalDrag = Math.exp(-nonNegativeFinite(verticalDragValue) * seconds)
+    vx *= horizontalDrag
+    vz *= horizontalDrag
+    vy *= verticalDrag
 
-  return { x: finiteOrZero(vx), y: finiteOrZero(vy), z: finiteOrZero(vz) }
+    return Result.map(
+      Result.all([
+        BlocksPerSecond.result(vx),
+        BlocksPerSecond.result(vy),
+        BlocksPerSecond.result(vz),
+      ]),
+      ([nextVx, nextVy, nextVz]): VelocityVector => ({ x: nextVx, y: nextVy, z: nextVz }),
+    )
+  })
 }

@@ -199,7 +199,7 @@ one frame’s fall INTO the floor`）。`g·dt²` との一致まで見ており
 
 `stepBody` / `stepWorld` が「積分 → 解決」の合成に**名前を与えている**。
 手で 2 行書くこともできるが、そのとき逆順は diff に現れない。
-`clampDeltaTime` が delta の唯一の正規の入口であるのと同じ役割である。
+`clampFrameDelta` is the frame-boundary entry point for raw deltas.
 
 現時点で書けている関連テスト（`test/integrate.test.ts`）:
 
@@ -294,25 +294,21 @@ one frame’s fall INTO the floor`）。`g·dt²` との一致まで見ており
 これは Tag のキー衝突（`mc-sim/domain/kernel-vocabulary.ts` の `ClockPort`）と**同じ根**である。
 名前が同一で不変条件が違う 2 つのものを、型システムは区別できない。
 
-### 現在の形: kernel の述語 + 境界のクランプ + assert 可能な述語
+### Current shape: kernel brand + frame-boundary clamp + checkable predicate
 
 ```typescript
-// kernel の refinement、逐語。クランプ済みではない。
-export const DeltaTimeSecs = Brand.refined<DeltaTimeSecs>(
-  (value) => Number.isFinite(value) && value >= 0,
-  (value) => Brand.error(`DeltaTimeSecs must be a finite, non-negative number of seconds, received ${value}`),
-)
-
-// 積分に渡す前に通す境界。参照実装の式そのまま。
-export const clampDeltaTime = (rawDeltaSecs: number): DeltaTimeSecs
+// Re-export mc-kernel's finite, non-negative delta brand and frame clamp.
+export { DeltaTimeSecs, clampFrameDelta } from '@nerima-games/mc-kernel'
 
 // ブランドが意図的に強制しなくなった述語。要る場所で assert できる。
 export const isClampedDelta = (deltaSecs: number): boolean
 ```
 
+`DeltaTimeSecs` is the kernel's Effect 4 `Brand.make` constructor. Use its `.option` or `.result` method for untrusted values; direct construction throws `BrandError` for invalid values.
+
 **クランプは弱まっていない。属すべき場所に移った。**
 「30 秒バックグラウンドにあったタブをどうするか」は delta を生んだ**ループ**の問いであって、
-量そのものの性質ではない。`clampDeltaTime` は積分に適した delta を作る唯一の正規の入口であり続ける
+量そのものの性質ではない。`clampFrameDelta` は積分に適した delta を作る唯一の正規の入口であり続ける
 （mc-sim は kernel のブランドに対して既に同じことをしている: `mc-sim/domain/frame-timing.ts`）。
 `isClampedDelta` は、その不変条件に実際に依存する場所——積分器のテストと、
 将来フレームループ境界に置くアサーション——で invariant を**検査可能**にする。
@@ -330,8 +326,8 @@ export const isClampedDelta = (deltaSecs: number): boolean
 - `floors a zero, negative or backwards-clock delta at 0.001s`
 - `maps NaN to the first-frame delta rather than letting it poison every position`
 - `uses 0.016s for the first frame, where there is no previous timestamp to subtract`
-- `REGRESSION: clampDeltaTime is the boundary — its output is always inside the safe range`
-  —— `isClampedDelta(clampDeltaTime(raw))` を 500 runs のプロパティテストで検査する。
+- `REGRESSION: clampFrameDelta is the boundary — its output is always inside the safe range`
+  —— `isClampedDelta(clampFrameDelta(raw))` を 500 runs のプロパティテストで検査する。
   かつて「コンストラクタが弾く」で言おうとしていたことを、**それが実際に真である場所**で言い直したもの
 
 `test/integrate.test.ts`、ブランド側:
@@ -727,10 +723,10 @@ opt-in にしてある 2 つ目の理由がこれで、既定の 0 でのみ「�
 
 ### 9-6 返り値に入れなかったもの
 
-`Resolution` は `{ body, isGrounded }` だけである。参照実装も同じ
-（`{ position, velocity, isGrounded }`）。
-「壁に当たったか」「天井に当たったか」は速度が 0 になったことから消費側で導けるので、
-実需が現れるまで界面に足さない。
+Since 0.4.0, `Resolution` contains `{ body, isGrounded, hazards }`. Hazards are
+sampled once from the resolved post-collision AABB. The result still omits wall
+and ceiling contact flags: callers can derive those outcomes from the resolved
+velocity when they need them.
 
 ### 9-7 前提条件: **ステップ前にめり込んでいないこと**
 

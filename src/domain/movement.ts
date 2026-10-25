@@ -1,24 +1,28 @@
-import type { DeltaTimeSecs, Position } from '@nerima-games/mc-kernel'
+import { AngleRadians, DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { BlocksPerSecond, BlocksPerSecondSquared, type VelocityVector } from './physical-units.js'
+import { Brand, Option, Result } from 'effect'
 import type { Body } from './integrate.js'
 
 export type MovementInput = Readonly<{
   readonly forward: number
   readonly strafe: number
-  readonly yawRadians: number
+  readonly yawRadians: AngleRadians
   readonly sprint: boolean
+  readonly sneak: boolean
   readonly jumpPressed: boolean
 }>
 
 export type MovementConfig = Readonly<{
-  readonly walkSpeed: number
+  readonly walkSpeed: BlocksPerSecond
   readonly sprintMultiplier: number
-  readonly groundAcceleration: number
-  readonly airAcceleration: number
-  readonly jumpVelocity: number
+  readonly sneakMultiplier: number
+  readonly groundAcceleration: BlocksPerSecondSquared
+  readonly airAcceleration: BlocksPerSecondSquared
+  readonly jumpVelocity: BlocksPerSecond
   /** Java: ~0.04 blocks/tick^2 swim-up accel x 20 ticks/s = 0.8 blocks/s^2 (per-second unit). */
-  readonly fluidAscentAcceleration: number
+  readonly fluidAscentAcceleration: BlocksPerSecondSquared
   /** Java: ~0.2 blocks/tick swim-up cap x 20 ticks/s = 4 blocks/s (per-second unit). */
-  readonly fluidAscentMaxSpeed: number
+  readonly fluidAscentMaxSpeed: BlocksPerSecond
 }>
 
 const finiteOrZero = (value: number): number => {
@@ -52,58 +56,122 @@ export const applyMovementInput = (
   inFluid: boolean,
   deltaTime: DeltaTimeSecs,
   config: MovementConfig,
-): Body => {
+): Result.Result<Body, Brand.BrandError> => {
   if (body.kind !== 'dynamic') {
-    return body
+    return Result.succeed(body)
   }
 
-  const forward = clamp(finiteOrZero(input.forward), -1, 1)
-  const strafe = clamp(finiteOrZero(input.strafe), -1, 1)
-  const inputLength = Math.hypot(forward, strafe)
-  let inputScale = 1
-  if (inputLength > 1) {
-    inputScale = 1 / inputLength
-  }
-  const yaw = finiteOrZero(input.yawRadians)
-  const directionX = (-Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * inputScale
-  const directionZ = (-Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * inputScale
-  const walkSpeed = Math.max(0, finiteOrZero(config.walkSpeed))
-  const sprintMultiplier = Math.max(0, finiteOrZero(config.sprintMultiplier))
-  let speed = walkSpeed
-  if (input.sprint && forward > 0) {
-    speed *= sprintMultiplier
-  }
-  let accelerationValue = config.airAcceleration
-  if (isGrounded) {
-    accelerationValue = config.groundAcceleration
-  }
-  const acceleration = Math.max(0, finiteOrZero(accelerationValue))
-  const seconds = Math.max(0, finiteOrZero(deltaTime))
-  const maximumChange = acceleration * seconds
-  const nextVx = approach(body.vx, directionX * speed, maximumChange)
-  const nextVz = approach(body.vz, directionZ * speed, maximumChange)
-  const jumpVelocity = Math.max(0, finiteOrZero(config.jumpVelocity))
-  const fluidAscentAcceleration = Math.max(0, finiteOrZero(config.fluidAscentAcceleration))
-  const fluidAscentMaxSpeed = Math.max(0, finiteOrZero(config.fluidAscentMaxSpeed))
-  let nextVy = body.vy
-  if (isGrounded && input.jumpPressed) {
-    nextVy = Math.max(body.vy, jumpVelocity)
-  } else if (inFluid && input.jumpPressed && nextVy < fluidAscentMaxSpeed) {
-    nextVy = Math.min(fluidAscentMaxSpeed, nextVy + fluidAscentAcceleration * seconds)
-  }
+  const forwardSnapshot = input.forward
+  const strafeSnapshot = input.strafe
+  const yawSnapshot = input.yawRadians
+  const sprintSnapshot = input.sprint
+  const sneakSnapshot = input.sneak
+  const jumpPressedSnapshot = input.jumpPressed
+  const walkSpeedSnapshot = config.walkSpeed
+  const sprintMultiplierSnapshot = config.sprintMultiplier
+  const sneakMultiplierSnapshot = config.sneakMultiplier
+  const groundAccelerationSnapshot = config.groundAcceleration
+  const airAccelerationSnapshot = config.airAcceleration
+  const jumpVelocitySnapshot = config.jumpVelocity
+  const fluidAscentAccelerationSnapshot = config.fluidAscentAcceleration
+  const fluidAscentMaxSpeedSnapshot = config.fluidAscentMaxSpeed
+  const deltaSnapshot = deltaTime
+  const vxSnapshot = body.vx
+  const vySnapshot = body.vy
+  const vzSnapshot = body.vz
 
-  return { ...body, vx: nextVx, vy: nextVy, vz: nextVz }
+  const inputs = Result.all([
+    BlocksPerSecond.result(vxSnapshot),
+    BlocksPerSecond.result(vySnapshot),
+    BlocksPerSecond.result(vzSnapshot),
+    DeltaTimeSecs.result(deltaSnapshot),
+    BlocksPerSecond.result(walkSpeedSnapshot),
+    BlocksPerSecondSquared.result(groundAccelerationSnapshot),
+    BlocksPerSecondSquared.result(airAccelerationSnapshot),
+    BlocksPerSecond.result(jumpVelocitySnapshot),
+    BlocksPerSecondSquared.result(fluidAscentAccelerationSnapshot),
+    BlocksPerSecond.result(fluidAscentMaxSpeedSnapshot),
+  ])
+
+  return Result.flatMap(inputs, ([vx, vy, vz, secondsValue, walkSpeedValue, groundAccelerationValue, airAccelerationValue, jumpVelocityValue, fluidAscentAccelerationValue, fluidAscentMaxSpeedValue]) => {
+    const forward = clamp(finiteOrZero(forwardSnapshot), -1, 1)
+    const strafe = clamp(finiteOrZero(strafeSnapshot), -1, 1)
+    const inputLength = Math.hypot(forward, strafe)
+    let inputScale = 1
+    if (inputLength > 1) {
+      inputScale = 1 / inputLength
+    }
+    const yawOption = AngleRadians.option(yawSnapshot)
+    let yaw = 0
+    if (Option.isSome(yawOption)) {
+      yaw = yawOption.value
+    }
+    const directionX = (-Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * inputScale
+    const directionZ = (-Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * inputScale
+    const walkSpeed = Math.max(0, walkSpeedValue)
+    const sprintMultiplier = Math.max(0, finiteOrZero(sprintMultiplierSnapshot))
+    const sneakMultiplier = Math.max(0, finiteOrZero(sneakMultiplierSnapshot))
+    let speed = walkSpeed
+    if (sneakSnapshot) {
+      speed = walkSpeed * sneakMultiplier
+    } else if (sprintSnapshot && forward > 0) {
+      speed = walkSpeed * sprintMultiplier
+    }
+    let accelerationValue = airAccelerationValue
+    if (isGrounded) {
+      accelerationValue = groundAccelerationValue
+    }
+    const maximumChange = Math.max(0, accelerationValue) * secondsValue
+    const nextVx = approach(vx, directionX * speed, maximumChange)
+    const nextVz = approach(vz, directionZ * speed, maximumChange)
+    let nextVy: number = vy
+    if (isGrounded && jumpPressedSnapshot) {
+      nextVy = Math.max(vy, Math.max(0, jumpVelocityValue))
+    } else if (inFluid && jumpPressedSnapshot && nextVy < Math.max(0, fluidAscentMaxSpeedValue)) {
+      nextVy = Math.min(
+        Math.max(0, fluidAscentMaxSpeedValue),
+        nextVy + Math.max(0, fluidAscentAccelerationValue) * secondsValue,
+      )
+    }
+
+    return Result.map(
+      Result.all([
+        BlocksPerSecond.result(nextVx),
+        BlocksPerSecond.result(nextVy),
+        BlocksPerSecond.result(nextVz),
+      ]),
+      ([validVx, validVy, validVz]): Body => ({ ...body, vx: validVx, vy: validVy, vz: validVz }),
+    )
+  })
 }
 
-export const applyKnockback = (body: Body, impulse: Position): Body => {
+export const applyKnockback = (body: Body, impulse: VelocityVector): Result.Result<Body, Brand.BrandError> => {
   if (body.kind !== 'dynamic') {
-    return body
+    return Result.succeed(body)
   }
 
-  return {
-    ...body,
-    vx: body.vx + finiteOrZero(impulse.x),
-    vy: body.vy + finiteOrZero(impulse.y),
-    vz: body.vz + finiteOrZero(impulse.z),
-  }
+  const bodyVxSnapshot = body.vx
+  const bodyVySnapshot = body.vy
+  const bodyVzSnapshot = body.vz
+  const impulseXSnapshot = impulse.x
+  const impulseYSnapshot = impulse.y
+  const impulseZSnapshot = impulse.z
+  const values = Result.all([
+    BlocksPerSecond.result(bodyVxSnapshot),
+    BlocksPerSecond.result(bodyVySnapshot),
+    BlocksPerSecond.result(bodyVzSnapshot),
+    BlocksPerSecond.result(impulseXSnapshot),
+    BlocksPerSecond.result(impulseYSnapshot),
+    BlocksPerSecond.result(impulseZSnapshot),
+  ])
+  return Result.flatMap(values, ([vx, vy, vz, impulseX, impulseY, impulseZ]) =>
+    Result.map(
+      Result.all([
+        BlocksPerSecond.result(vx + impulseX),
+        BlocksPerSecond.result(vy + impulseY),
+        BlocksPerSecond.result(vz + impulseZ),
+      ]),
+      ([nextVx, nextVy, nextVz]): Body => ({ ...body, vx: nextVx, vy: nextVy, vz: nextVz }),
+    ),
+  )
 }

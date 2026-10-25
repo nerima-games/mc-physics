@@ -18,7 +18,9 @@
  * there room to do so.
  */
 import { type AABB, CONTACT_EPSILON, collidesWith } from './coordinates.js'
-import type { Position } from '@nerima-games/mc-kernel'
+import { BlockLength, type BlockVector, blockVectorResult } from './physical-units.js'
+import { Brand, Result } from 'effect'
+import { PositionAxis } from '@nerima-games/mc-kernel'
 
 /** The piston's extension axis. A Java piston arm moves one block along exactly one axis per stroke. */
 export type PistonAxis = 'x' | 'y' | 'z'
@@ -27,7 +29,7 @@ export type PistonAxis = 'x' | 'y' | 'z'
 export type PistonBlockMove = Readonly<{
   readonly axis: PistonAxis
   readonly before: AABB
-  readonly distance: number
+  readonly distance: BlockLength
 }>
 
 /**
@@ -40,11 +42,14 @@ export type PistonBlockMove = Readonly<{
  * obstacle rather than the full clearing distance.
  */
 export type PistonExtrusion = Readonly<{
-  readonly displacement: Position
+  readonly displacement: BlockVector
   readonly crushed: boolean
 }>
 
-const ZERO_EXTRUSION: PistonExtrusion = { crushed: false, displacement: { x: 0, y: 0, z: 0 } }
+const ZERO_EXTRUSION: PistonExtrusion = {
+  crushed: false,
+  displacement: { x: BlockLength(0), y: BlockLength(0), z: BlockLength(0) },
+}
 
 const OTHER_AXES: Readonly<Record<PistonAxis, readonly [PistonAxis, PistonAxis]>> = {
   x: ['y', 'z'],
@@ -72,24 +77,59 @@ const axisMax = (box: AABB, axis: PistonAxis): number => {
   return box.maxZ
 }
 
-const translatedOnAxis = (box: AABB, axis: PistonAxis, delta: number): AABB => {
-  if (axis === 'x') {
-    return { ...box, maxX: box.maxX + delta, minX: box.minX + delta }
-  }
-  if (axis === 'y') {
-    return { ...box, maxY: box.maxY + delta, minY: box.minY + delta }
-  }
-  return { ...box, maxZ: box.maxZ + delta, minZ: box.minZ + delta }
+const aabbResult = (box: AABB): Result.Result<AABB, Brand.BrandError> => {
+  const { minX, minY, minZ, maxX, maxY, maxZ } = box
+  return Result.map(
+    Result.all([
+      PositionAxis.result(minX),
+      PositionAxis.result(minY),
+      PositionAxis.result(minZ),
+      PositionAxis.result(maxX),
+      PositionAxis.result(maxY),
+      PositionAxis.result(maxZ),
+    ]),
+    ([validMinX, validMinY, validMinZ, validMaxX, validMaxY, validMaxZ]): AABB => ({
+      maxX: validMaxX,
+      maxY: validMaxY,
+      maxZ: validMaxZ,
+      minX: validMinX,
+      minY: validMinY,
+      minZ: validMinZ,
+    }),
+  )
 }
 
-const displacementOn = (axis: PistonAxis, amount: number): Position => {
+const translatedOnAxis = (
+  box: AABB,
+  axis: PistonAxis,
+  delta: BlockLength,
+): Result.Result<AABB, Brand.BrandError> => {
   if (axis === 'x') {
-    return { x: amount, y: 0, z: 0 }
+    return Result.map(
+      Result.all([PositionAxis.result(box.minX + delta), PositionAxis.result(box.maxX + delta)]),
+      ([minX, maxX]): AABB => ({ ...box, maxX, minX }),
+    )
   }
   if (axis === 'y') {
-    return { x: 0, y: amount, z: 0 }
+    return Result.map(
+      Result.all([PositionAxis.result(box.minY + delta), PositionAxis.result(box.maxY + delta)]),
+      ([minY, maxY]): AABB => ({ ...box, maxY, minY }),
+    )
   }
-  return { x: 0, y: 0, z: amount }
+  return Result.map(
+    Result.all([PositionAxis.result(box.minZ + delta), PositionAxis.result(box.maxZ + delta)]),
+    ([minZ, maxZ]): AABB => ({ ...box, maxZ, minZ }),
+  )
+}
+
+const displacementOn = (axis: PistonAxis, amount: BlockLength) => {
+  if (axis === 'x') {
+    return blockVectorResult(amount, 0, 0)
+  }
+  if (axis === 'y') {
+    return blockVectorResult(0, amount, 0)
+  }
+  return blockVectorResult(0, 0, amount)
 }
 
 /**
@@ -102,11 +142,16 @@ const displacementOn = (axis: PistonAxis, amount: number): Position => {
  * leading face directly instead of the overlap depth is what keeps this
  * correct regardless of how much of `entity` the moved block covers.
  */
-const pushDistance = (entity: AABB, after: AABB, axis: PistonAxis, sign: number): number => {
+const pushDistance = (
+  entity: AABB,
+  after: AABB,
+  axis: PistonAxis,
+  sign: number,
+): Result.Result<BlockLength, Brand.BrandError> => {
   if (sign > 0) {
-    return axisMax(after, axis) - axisMin(entity, axis)
+    return BlockLength.result(axisMax(after, axis) - axisMin(entity, axis))
   }
-  return axisMin(after, axis) - axisMax(entity, axis)
+  return BlockLength.result(axisMin(after, axis) - axisMax(entity, axis))
 }
 
 /**
@@ -147,27 +192,53 @@ export const pistonExtrusion = (
   entity: AABB,
   move: PistonBlockMove,
   obstacles: ReadonlyArray<AABB> = [],
-): PistonExtrusion => {
-  if (move.distance === 0) {
-    return ZERO_EXTRUSION
+): Result.Result<PistonExtrusion, Brand.BrandError> => {
+  const { axis } = move
+  const distance = BlockLength.result(move.distance)
+  if (Result.isFailure(distance)) {
+    return Result.fail(distance.failure)
+  }
+  const checkedBoxes = Result.all([
+    aabbResult(entity),
+    aabbResult(move.before),
+    Result.all(obstacles.map(aabbResult)),
+  ])
+  if (Result.isFailure(checkedBoxes)) {
+    return Result.fail(checkedBoxes.failure)
+  }
+  const [checkedEntity, before, checkedObstacles] = checkedBoxes.success
+  if (distance.success === 0) {
+    return Result.succeed(ZERO_EXTRUSION)
   }
 
-  const after = translatedOnAxis(move.before, move.axis, move.distance)
-  if (!collidesWith(entity, after)) {
-    return ZERO_EXTRUSION
+  const after = translatedOnAxis(before, axis, distance.success)
+  if (Result.isFailure(after)) {
+    return Result.fail(after.failure)
+  }
+  if (!collidesWith(checkedEntity, after.success)) {
+    return Result.succeed(ZERO_EXTRUSION)
   }
 
-  const sign = Math.sign(move.distance)
-  const needed = Math.abs(pushDistance(entity, after, move.axis, sign))
+  const sign = Math.sign(distance.success)
+  const neededResult = pushDistance(checkedEntity, after.success, axis, sign)
+  if (Result.isFailure(neededResult)) {
+    return Result.fail(neededResult.failure)
+  }
+  const needed = Math.abs(neededResult.success)
 
   let room = Number.POSITIVE_INFINITY
-  for (const obstacle of obstacles) {
-    room = Math.min(room, roomBefore(entity, obstacle, move.axis, sign))
+  for (const obstacle of checkedObstacles) {
+    room = Math.min(room, roomBefore(checkedEntity, obstacle, axis, sign))
   }
   room = Math.max(0, room)
 
   const actual = Math.min(needed, room)
-  const crushed = actual + CONTACT_EPSILON < needed
-
-  return { crushed, displacement: displacementOn(move.axis, actual * sign) }
+  const actualDistance = BlockLength.result(actual * sign)
+  return Result.flatMap(actualDistance, (pushAmount) => {
+    const displacement = displacementOn(axis, pushAmount)
+    return Result.map(displacement, (value): PistonExtrusion => ({
+      crushed: actual + CONTACT_EPSILON < needed,
+      displacement: value,
+    }))
+  })
 }

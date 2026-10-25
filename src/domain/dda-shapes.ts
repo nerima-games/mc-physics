@@ -11,7 +11,9 @@ import {
   aabbsOfBlockShape,
   blockAABB,
 } from './coordinates.js'
-import { type BlockFace, type Position } from '@nerima-games/mc-kernel'
+import { BlockAxis, type BlockFace, type Position, PositionAxis, position } from '@nerima-games/mc-kernel'
+import { Brand, Result } from 'effect'
+import { BlockLength } from './physical-units.js'
 import { FULL_BLOCK_SHAPE } from './shape-data.js'
 
 /**
@@ -20,7 +22,7 @@ import { FULL_BLOCK_SHAPE } from './shape-data.js'
  * Invalid or out-of-cell shapes are ignored rather than extending the raycast
  * into a neighbouring voxel owned by another DDA step.
  */
-export type RaycastShapeAt = (bx: number, by: number, bz: number) => BlockShape | null
+export type RaycastShapeAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => BlockShape | null
 
 /**
  * One grid-boundary crossing, as produced by the walk loop in dda.ts: how far
@@ -37,7 +39,7 @@ export type AxisCrossing = {
 }
 
 type ShapeHit = {
-  readonly distance: number
+  readonly distance: BlockLength
   readonly face: BlockFace
   readonly normal: Position
 }
@@ -76,27 +78,33 @@ const axisSlabs = (origin: Position, direction: Position, box: AABB): ReadonlyAr
   { axis: 'z', direction: direction.z, highFace: 'south', lowFace: 'north', max: box.maxZ, min: box.minZ, origin: origin.z },
 ]
 
-const axisNormal = (axis: 'x' | 'y' | 'z', magnitude: number): Position => {
+const axisNormal = (axis: 'x' | 'y' | 'z', magnitude: -1 | 1): Position => {
+  const zero = PositionAxis(0)
+  const signed = PositionAxis(magnitude)
   if (axis === 'x') {
-    return { x: magnitude, y: 0, z: 0 }
+    return position(signed, zero, zero)
   }
   if (axis === 'y') {
-    return { x: 0, y: magnitude, z: 0 }
+    return position(zero, signed, zero)
   }
-  return { x: 0, y: 0, z: magnitude }
+  return position(zero, zero, signed)
 }
 
 /** Ray/AABB slab intersection. Axis order is the deterministic X -> Y -> Z tie-break. */
-const intersectShape = (origin: Position, direction: Position, box: AABB): ShapeHit | null => {
+const intersectShape = (
+  origin: Position,
+  direction: Position,
+  box: AABB,
+): Result.Result<ShapeHit | null, Brand.BrandError> => {
   let nearDistance = Number.NEGATIVE_INFINITY
   let farDistance = Number.POSITIVE_INFINITY
   let face: BlockFace = 'west'
-  let normal: Position = { x: -1, y: 0, z: 0 }
+  let normal: Position = axisNormal('x', -1)
 
   for (const slab of axisSlabs(origin, direction, box)) {
     if (slab.direction === 0) {
       if (slab.origin < slab.min || slab.origin > slab.max) {
-        return null
+        return Result.succeed(null)
       }
     } else {
       const lowDistance = (slab.min - slab.origin) / slab.direction
@@ -115,33 +123,50 @@ const intersectShape = (origin: Position, direction: Position, box: AABB): Shape
       }
       farDistance = Math.min(farDistance, leavingDistance)
       if (nearDistance > farDistance) {
-        return null
+        return Result.succeed(null)
       }
     }
   }
 
-  return { distance: nearDistance, face, normal }
+  return Result.map(BlockLength.result(nearDistance), (distance): ShapeHit => ({ distance, face, normal }))
 }
 
-const crossingShapeHit = (crossing: AxisCrossing): ShapeHit => ({
-  distance: crossing.travelled,
-  face: crossing.face,
-  normal: { x: crossing.normalX, y: crossing.normalY, z: crossing.normalZ },
-})
+const positionResult = (x: number, y: number, z: number) =>
+  Result.map(
+    Result.all([PositionAxis.result(x), PositionAxis.result(y), PositionAxis.result(z)]),
+    ([validX, validY, validZ]) => position(validX, validY, validZ),
+  )
+
+const crossingShapeHit = (crossing: AxisCrossing): Result.Result<ShapeHit, Brand.BrandError> => {
+  const distance = BlockLength.result(crossing.travelled)
+  if (Result.isFailure(distance)) {
+    return Result.fail(distance.failure)
+  }
+  const normal = positionResult(crossing.normalX, crossing.normalY, crossing.normalZ)
+  return Result.map(normal, (value): ShapeHit => ({ distance: distance.success, face: crossing.face, normal: value }))
+}
 
 const nearestShapeHit = (
   origin: Position,
   direction: Position,
-  cellX: number,
-  cellY: number,
-  cellZ: number,
+  cellX: BlockAxis,
+  cellY: BlockAxis,
+  cellZ: BlockAxis,
   shapes: ReadonlyArray<AABB>,
-  maxDistance: number,
-): ShapeHit | null => {
+  maxDistance: BlockLength,
+): Result.Result<ShapeHit | null, Brand.BrandError | RangeError> => {
   let nearest: ShapeHit | null = null
   for (const localShape of shapes) {
     if (isCellShape(localShape)) {
-      const candidateHit = intersectShape(origin, direction, blockAABB(cellX, cellY, cellZ, localShape))
+      const box = blockAABB(cellX, cellY, cellZ, localShape)
+      if (Result.isFailure(box)) {
+        return Result.fail(box.failure)
+      }
+      const candidate = intersectShape(origin, direction, box.success)
+      if (Result.isFailure(candidate)) {
+        return Result.fail(candidate.failure)
+      }
+      const candidateHit = candidate.success
       if (
         candidateHit !== null &&
         candidateHit.distance <= maxDistance &&
@@ -151,21 +176,22 @@ const nearestShapeHit = (
       }
     }
   }
-  return nearest
+  return Result.succeed(nearest)
 }
 
 export const shapeHitAt = (
   origin: Position,
   direction: Position,
-  cellX: number,
-  cellY: number,
-  cellZ: number,
-  maxDistance: number,
+  cellX: BlockAxis,
+  cellY: BlockAxis,
+  cellZ: BlockAxis,
+  maxDistance: BlockLength,
   shapeAt: RaycastShapeAt | undefined,
   crossing: AxisCrossing,
-): ShapeHit | null => {
+): Result.Result<ShapeHit | null, Brand.BrandError | RangeError> => {
   if (typeof shapeAt === 'undefined') {
-    return crossingShapeHit(crossing)
+    const hit = crossingShapeHit(crossing)
+    return Result.map(hit, (value) => value)
   }
   const shape = shapeAt(cellX, cellY, cellZ) ?? FULL_BLOCK_SHAPE
   return nearestShapeHit(origin, direction, cellX, cellY, cellZ, aabbsOfBlockShape(shape), maxDistance)

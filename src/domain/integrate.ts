@@ -37,11 +37,14 @@
  * See docs/design-notes.md, regressions `physics-integrator-is-symplectic` and
  * `physics-resolve-runs-after-integrate`.
  */
+import { BlockLength, BlocksPerSecond, BlocksPerSecondSquared } from './physical-units.js'
+import { type Brand, Result } from 'effect'
+import { DeltaTimeSecs, PositionAxis } from '@nerima-games/mc-kernel'
 import { CentreY } from './coordinates.js'
-import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 /** Reference gravity (`packages/game/application/game-state-support.ts:10`). */
-export const GRAVITY_Y = -9.82
+const GRAVITY_Y_VALUE = -9.82
+export const GRAVITY_Y: BlocksPerSecondSquared = BlocksPerSecondSquared(GRAVITY_Y_VALUE)
 
 /**
  * Downward speed cap, m/s.
@@ -55,19 +58,20 @@ export const GRAVITY_Y = -9.82
  * inequality rather than the constant, so tuning one number cannot silently
  * break the other.
  */
-export const TERMINAL_VELOCITY_Y = -32
+const TERMINAL_VELOCITY_Y_VALUE = -32
+export const TERMINAL_VELOCITY_Y: BlocksPerSecond = BlocksPerSecond(TERMINAL_VELOCITY_Y_VALUE)
 
 export type BodyKind = 'dynamic' | 'static' | 'kinematic'
 
 export type Body = {
   readonly kind: BodyKind
-  readonly x: number
+  readonly x: PositionAxis
   /** CENTRE Y. See domain/coordinates.ts on why the distinction is typed. */
   readonly y: CentreY
-  readonly z: number
-  readonly vx: number
-  readonly vy: number
-  readonly vz: number
+  readonly z: PositionAxis
+  readonly vx: BlocksPerSecond
+  readonly vy: BlocksPerSecond
+  readonly vz: BlocksPerSecond
 }
 
 /**
@@ -89,66 +93,113 @@ export type Body = {
  *
  * `terminalVelocityY` (default `TERMINAL_VELOCITY_Y`) overrides the downward
  * speed cap. Only a finite, negative value is a meaningful cap on falling;
- * anything else falls back to the module default.
+ * invalid supplied values fail.
  */
-/** Only a finite, negative value is a valid downward-speed cap; anything else falls back to the default. */
-const normalizeTerminalVelocityY = (value: number): number => {
-  if (Number.isFinite(value) && value < 0) {
-    return value
-  }
-  return TERMINAL_VELOCITY_Y
-}
-
 /**
  * Only a finite value in [0, 1] is a meaningful per-second drag multiplier.
  * A negative base raised to a non-integer exponent (deltaTime is a fractional
  * seconds value) is NaN in IEEE 754, and NaN then multiplies into every field
  * of the body — position included — via `draggedVx/Vy/Vz`. Above 1 is
  * rejected too: that is not "more resistance", it is velocity growing every
- * step, i.e. energy injected from nowhere. Anything invalid falls back to 1
- * (no drag).
+ * step, i.e. energy injected from nowhere. Invalid supplied values fail.
  */
-const normalizeDragPerSecond = (value: number): number => {
-  if (Number.isFinite(value) && value >= 0 && value <= 1) {
-    return value
-  }
-  return 1
-}
-
 export type IntegrationOptions = Readonly<{
-  gravityY?: number
+  gravityY?: BlocksPerSecondSquared
   dragPerSecond?: number
-  terminalVelocityY?: number
+  terminalVelocityY?: BlocksPerSecond
 }>
 
-export const integrateBody = (body: Body, deltaTime: DeltaTimeSecs, options: IntegrationOptions = {}): Body => {
-  if (body.kind !== 'dynamic') {
-    return body
+export const integrateBody = (
+  body: Body,
+  deltaTime: DeltaTimeSecs,
+  options: IntegrationOptions = {},
+): Result.Result<Body, Brand.BrandError | RangeError> => {
+  const xSnapshot = body.x
+  const ySnapshot = body.y
+  const zSnapshot = body.z
+  const vxSnapshot = body.vx
+  const vySnapshot = body.vy
+  const vzSnapshot = body.vz
+  const deltaSnapshot = deltaTime
+  const checkedInputs = Result.all([
+    PositionAxis.result(xSnapshot),
+    CentreY.result(ySnapshot),
+    PositionAxis.result(zSnapshot),
+    BlocksPerSecond.result(vxSnapshot),
+    BlocksPerSecond.result(vySnapshot),
+    BlocksPerSecond.result(vzSnapshot),
+    DeltaTimeSecs.result(deltaSnapshot),
+  ])
+  if (Result.isFailure(checkedInputs)) {
+    return Result.fail(checkedInputs.failure)
   }
 
-  const gravityY = options.gravityY ?? GRAVITY_Y
-  const drag = normalizeDragPerSecond(options.dragPerSecond ?? 1) ** deltaTime
-  const draggedVx = body.vx * drag
-  const draggedVy = body.vy * drag
-  const draggedVz = body.vz * drag
+  const [x, y, z, vx, vy, vz, validDeltaTime] = checkedInputs.success
+  if (body.kind !== 'dynamic') {
+    return Result.succeed(body)
+  }
+
+  const gravityOptionSnapshot = options.gravityY
+  let gravitySnapshot = GRAVITY_Y
+  if (typeof gravityOptionSnapshot !== 'undefined') {
+    gravitySnapshot = gravityOptionSnapshot
+  }
+  const checkedGravity = BlocksPerSecondSquared.result(gravitySnapshot)
+  if (Result.isFailure(checkedGravity)) {
+    return Result.fail(checkedGravity.failure)
+  }
+  const dragOptionSnapshot = options.dragPerSecond
+  let dragSnapshot = 1
+  if (typeof dragOptionSnapshot !== 'undefined') {
+    dragSnapshot = dragOptionSnapshot
+  }
+  if (!Number.isFinite(dragSnapshot) || dragSnapshot < 0 || dragSnapshot > 1) {
+    return Result.fail(new RangeError('dragPerSecond must be finite and between 0 and 1'))
+  }
+  const drag = dragSnapshot ** validDeltaTime
+  const draggedVx = vx * drag
+  const draggedVy = vy * drag
+  const draggedVz = vz * drag
 
   // Velocity first, position from the NEW velocity. See the file header.
-  const acceleratedY = draggedVy + gravityY * deltaTime
-  const safeTerminalVelocityY = normalizeTerminalVelocityY(options.terminalVelocityY ?? TERMINAL_VELOCITY_Y)
-  let clampedY = acceleratedY
-  if (acceleratedY < safeTerminalVelocityY) {
-    clampedY = safeTerminalVelocityY
+  const acceleratedY = draggedVy + checkedGravity.success * validDeltaTime
+  const terminalVelocityOptionSnapshot = options.terminalVelocityY
+  let terminalSnapshot = TERMINAL_VELOCITY_Y
+  if (typeof terminalVelocityOptionSnapshot !== 'undefined') {
+    terminalSnapshot = terminalVelocityOptionSnapshot
   }
+  const checkedTerminal = Result.flatMap(BlocksPerSecond.result(terminalSnapshot), (value) => {
+    if (value < 0) {
+      return Result.succeed(value)
+    }
+    return Result.fail(new RangeError('terminalVelocityY must be negative'))
+  })
+  return Result.flatMap(checkedTerminal, (safeTerminalVelocityY) => {
+    let clampedY = acceleratedY
+    if (acceleratedY < safeTerminalVelocityY) {
+      clampedY = safeTerminalVelocityY
+    }
 
-  return {
-    kind: body.kind,
-    vx: draggedVx,
-    vy: clampedY,
-    vz: draggedVz,
-    x: body.x + draggedVx * deltaTime,
-    y: CentreY(body.y + clampedY * deltaTime),
-    z: body.z + draggedVz * deltaTime,
-  }
+    return Result.map(
+      Result.all([
+        BlocksPerSecond.result(draggedVx),
+        BlocksPerSecond.result(clampedY),
+        BlocksPerSecond.result(draggedVz),
+        PositionAxis.result(x + draggedVx * validDeltaTime),
+        CentreY.result(y + clampedY * validDeltaTime),
+        PositionAxis.result(z + draggedVz * validDeltaTime),
+      ]),
+      ([nextVx, nextVy, nextVz, nextX, nextY, nextZ]): Body => ({
+        kind: body.kind,
+        vx: nextVx,
+        vy: nextVy,
+        vz: nextVz,
+        x: nextX,
+        y: nextY,
+        z: nextZ,
+      }),
+    )
+  })
 }
 
 /** Advance a whole world by one step. Order-independent: bodies do not interact here. */
@@ -156,7 +207,8 @@ export const integrate = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
   options: IntegrationOptions = {},
-): ReadonlyArray<Body> => bodies.map((body) => integrateBody(body, deltaTime, options))
+): Result.Result<ReadonlyArray<Body>, Brand.BrandError | RangeError> =>
+  Result.all(bodies.map((body) => integrateBody(body, deltaTime, options)))
 
 /**
  * The largest distance a body can fall in one step.
@@ -164,4 +216,11 @@ export const integrate = (
  * Exposed so the tunnelling invariant can be asserted as an inequality between
  * named constants instead of as a magic number in a test.
  */
-export const maxFallPerStep = (maxDeltaSecs: number): number => Math.abs(TERMINAL_VELOCITY_Y) * maxDeltaSecs
+export const maxFallPerStep = (maxDeltaSecs: DeltaTimeSecs): Result.Result<BlockLength, Brand.BrandError> => {
+  const deltaSnapshot = maxDeltaSecs
+  const checkedDelta = DeltaTimeSecs.result(deltaSnapshot)
+  if (Result.isFailure(checkedDelta)) {
+    return Result.fail(checkedDelta.failure)
+  }
+  return BlockLength.result(Math.abs(TERMINAL_VELOCITY_Y) * checkedDelta.success)
+}

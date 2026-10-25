@@ -3,28 +3,35 @@ import type {
   BlockEnvironment,
   EnvironmentBlockShapeAt,
 } from './environment-types.js'
+import { type BlockAxis, BlockId, isEmpty, resolvedBlockOfId } from '@nerima-games/mc-kernel'
 import type {
   BlockPropertiesAt,
   BlockShapeAt,
   ResolveOptions,
 } from './resolve-types.js'
-import { isEmpty, resolvedBlockOfId } from '@nerima-games/mc-kernel'
+import type { BlockLength } from './physical-units.js'
 import type { HalfHeight } from './coordinates.js'
+import { Result } from 'effect'
 
 /** Reads the block id stored at a world-space block coordinate. */
-export type BlockIdAt = (bx: number, by: number, bz: number) => number | null
+export type BlockIdAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
 
 const resolvedBlockAt = (
   blockIdAt: BlockIdAt,
-  bx: number,
-  by: number,
-  bz: number,
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
 ) => {
-  const blockId = blockIdAt(bx, by, bz)
-  if (blockId === null || isEmpty(blockId)) {
-    return null
+  const rawBlockId = blockIdAt(bx, by, bz)
+  if (rawBlockId === null) {
+    return Result.succeed(null)
   }
-  return resolvedBlockOfId(blockId) ?? null
+  return Result.flatMap(BlockId.result(rawBlockId), (blockId) => {
+    if (isEmpty(blockId)) {
+      return Result.succeed(null)
+    }
+    return Result.map(resolvedBlockOfId(blockId), (resolved) => resolved ?? null)
+  })
 }
 
 /** Adapts a kernel-backed block-id lookup to the environment sample contract. */
@@ -33,7 +40,7 @@ export const blockAtFromKernel = (blockIdAt: BlockIdAt): BlockAt => (bx, by, bz)
 
 /** Adapts a kernel-backed block-id lookup to the resolver's property contract. */
 export const blockPropertiesAtFromKernel = (blockIdAt: BlockIdAt): BlockPropertiesAt => (bx, by, bz) =>
-  resolvedBlockAt(blockIdAt, bx, by, bz)?.properties ?? null
+  Result.map(resolvedBlockAt(blockIdAt, bx, by, bz), (resolved) => resolved?.properties ?? null)
 
 /** Builds an environment that uses kernel block properties and capabilities directly. */
 export const blockEnvironmentFromKernel = (
@@ -52,10 +59,10 @@ export const blockEnvironmentFromKernel = (
 
 export type KernelResolveOptions = Readonly<{
   readonly blockIdAt: BlockIdAt
-  readonly halfWidth: number
+  readonly halfWidth: BlockLength
   readonly halfHeight: HalfHeight
   readonly blockShapeAt?: BlockShapeAt
-  readonly stepHeight?: number
+  readonly stepHeight?: BlockLength
 }>
 
 /** Builds block-resolution options without duplicating the kernel registry data. */
@@ -69,11 +76,13 @@ export const resolveOptionsFromKernel = ({
   const options: {
     blockPropertiesAt: BlockPropertiesAt
     blockShapeAt?: BlockShapeAt
+    environment: BlockEnvironment
     halfHeight: HalfHeight
-    halfWidth: number
-    stepHeight?: number
+    halfWidth: BlockLength
+    stepHeight?: BlockLength
   } = {
     blockPropertiesAt: blockPropertiesAtFromKernel(blockIdAt),
+    environment: blockEnvironmentFromKernel(blockIdAt, blockShapeAt),
     halfHeight,
     halfWidth,
   }

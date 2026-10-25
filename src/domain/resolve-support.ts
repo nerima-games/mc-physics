@@ -2,115 +2,176 @@ import {
   type AABB,
   CONTACT_EPSILON,
   CentreY,
-  blockAABB,
   isRestingOn,
 } from './coordinates.js'
 import { type AxisState, clampAxis } from './resolve-axis.js'
-import { blockShapesAt, boxAt, forEachCollidingBlock } from './resolve-shapes.js'
+import { BlockAxis, PositionAxis } from '@nerima-games/mc-kernel'
+import { BlockLength, BlocksPerSecond } from './physical-units.js'
+import type { ResolveError, ResolveOptions } from './resolve-types.js'
+import { blockShapesAtAxes, boxAt, forEachCollidingBlock } from './resolve-shapes.js'
 import type { Body } from './integrate.js'
-import type { ResolveOptions } from './resolve-types.js'
+import { Result } from 'effect'
 
-export const isSupported = (options: ResolveOptions, box: AABB): boolean => {
+export const isSupported = (options: ResolveOptions, box: AABB): Result.Result<boolean, ResolveError> => {
   const feetCell = Math.floor(box.minY)
-  const bxMax = Math.floor(box.maxX)
-  const bzMax = Math.floor(box.maxZ)
+  const bounds = Result.all([
+    BlockAxis.result(Math.floor(box.minX)),
+    BlockAxis.result(Math.floor(box.maxX)),
+    BlockAxis.result(feetCell - 1),
+    BlockAxis.result(feetCell),
+    BlockAxis.result(Math.floor(box.minZ)),
+    BlockAxis.result(Math.floor(box.maxZ)),
+  ])
+  if (Result.isFailure(bounds)) {
+    return Result.fail(bounds.failure)
+  }
+  const [minX, maxX, minY, maxY, minZ, maxZ] = bounds.success
 
-  for (let bx = Math.floor(box.minX); bx <= bxMax; bx += 1) {
-    for (let bz = Math.floor(box.minZ); bz <= bzMax; bz += 1) {
-      for (let by = feetCell - 1; by <= feetCell; by += 1) {
-        for (const shape of blockShapesAt(options, bx, by, bz)) {
-          if (isRestingOn(box, blockAABB(bx, by, bz, shape))) {
-            return true
+  for (let bx = Number(minX); bx <= maxX; bx += 1) {
+    for (let bz = Number(minZ); bz <= maxZ; bz += 1) {
+      for (let by = Number(minY); by <= maxY; by += 1) {
+        const shapes = blockShapesAtAxes(options, BlockAxis(bx), BlockAxis(by), BlockAxis(bz))
+        if (Result.isFailure(shapes)) {
+          return Result.fail(shapes.failure)
+        }
+        for (const block of shapes.success) {
+          if (isRestingOn(box, block)) {
+            return Result.succeed(true)
           }
         }
       }
     }
   }
 
-  return false
+  return Result.succeed(false)
 }
 
 const highestStepSupport = (
   options: ResolveOptions,
   horizontalBox: AABB,
-  feetY: number,
-  stepHeight: number,
-): number | null => {
-  const minimumTop = feetY - CONTACT_EPSILON
-  const maximumTop = feetY + stepHeight + CONTACT_EPSILON
-  const probe: AABB = {
-    maxX: horizontalBox.maxX,
-    maxY: maximumTop,
-    maxZ: horizontalBox.maxZ,
-    minX: horizontalBox.minX,
-    minY: minimumTop,
-    minZ: horizontalBox.minZ,
-  }
-  let top: number | null = null
-  forEachCollidingBlock(options, probe, (block) => {
-    if (block.maxY < minimumTop || block.maxY > maximumTop) {
-      return
+  feetY: PositionAxis,
+  stepHeight: BlockLength,
+): Result.Result<PositionAxis | null, ResolveError> => {
+  const minimumTop = PositionAxis.result(feetY - CONTACT_EPSILON)
+  const maximumTop = PositionAxis.result(feetY + stepHeight + CONTACT_EPSILON)
+  const probeY = Result.all([minimumTop, maximumTop])
+  return Result.flatMap(probeY, ([minY, maxY]) => {
+    const probe: AABB = {
+      maxX: horizontalBox.maxX,
+      maxY,
+      maxZ: horizontalBox.maxZ,
+      minX: horizontalBox.minX,
+      minY,
+      minZ: horizontalBox.minZ,
     }
-    if (top === null || block.maxY > top) {
-      top = block.maxY
+    let top: PositionAxis | null = null
+    const visited = forEachCollidingBlock(options, probe, (block) => {
+      if (block.maxY < minY || block.maxY > maxY) {
+        return
+      }
+      if (top === null || block.maxY > top) {
+        top = block.maxY
+      }
+    })
+    if (Result.isFailure(visited)) {
+      return Result.fail(visited.failure)
     }
+    return Result.succeed(top)
   })
-  return top
 }
 
 export const tryStepUp = (
   body: Body,
   resolvedY: CentreY,
-  alongX: AxisState,
-  alongZ: AxisState,
-  verticalVelocity: number,
+  alongX: AxisState<PositionAxis>,
+  alongZ: AxisState<PositionAxis>,
+  verticalVelocity: BlocksPerSecond,
   options: ResolveOptions,
-): Body | null => {
-  const stepHeight = options.stepHeight ?? 0
-  if (stepHeight <= 0 || verticalVelocity > 0 || (!alongX.blocked && !alongZ.blocked)) {
-    return null
+): Result.Result<Body | null, ResolveError> => {
+  const stepHeightSnapshot = options.stepHeight ?? BlockLength(0)
+  const checkedStepHeight = BlockLength.result(stepHeightSnapshot)
+  const checkedVelocity = BlocksPerSecond.result(verticalVelocity)
+  if (Result.isFailure(checkedStepHeight)) {
+    return Result.fail(checkedStepHeight.failure)
+  }
+  if (Result.isFailure(checkedVelocity)) {
+    return Result.fail(checkedVelocity.failure)
+  }
+  const stepHeight = checkedStepHeight.success
+  if (stepHeight < 0) {
+    return Result.fail(new RangeError('stepHeight must be non-negative'))
+  }
+  if (stepHeight <= 0 || checkedVelocity.success > 0 || (!alongX.blocked && !alongZ.blocked)) {
+    return Result.succeed(null)
   }
 
-  const raisedY = CentreY(Number(resolvedY) + stepHeight)
-  const raisedBox = boxAt(options, body.x, raisedY, body.z)
+  const raisedY = CentreY.result(Number(resolvedY) + stepHeight)
+  if (Result.isFailure(raisedY)) {
+    return Result.fail(raisedY.failure)
+  }
+  const raisedBox = boxAt(options, body.x, raisedY.success, body.z)
+  if (Result.isFailure(raisedBox)) {
+    return Result.fail(raisedBox.failure)
+  }
   const raisedX = clampAxis(
     { blocked: false, position: body.x, velocity: body.vx },
-    raisedBox.minX,
-    raisedBox.maxX,
+    raisedBox.success.minX,
+    raisedBox.success.maxX,
     options.halfWidth,
     options,
-    raisedBox,
-    (block) => block.minX,
-    (block) => block.maxX,
+    raisedBox.success,
+    {
+      farFace: (block) => block.maxX,
+      nearFace: (block) => block.minX,
+      positionResult: PositionAxis.result,
+    },
   )
-  const raisedAfterX = boxAt(options, raisedX.position, raisedY, body.z)
+  if (Result.isFailure(raisedX)) {
+    return Result.fail(raisedX.failure)
+  }
+  const raisedAfterX = boxAt(options, raisedX.success.position, raisedY.success, body.z)
+  if (Result.isFailure(raisedAfterX)) {
+    return Result.fail(raisedAfterX.failure)
+  }
   const raisedZ = clampAxis(
     { blocked: false, position: body.z, velocity: body.vz },
-    raisedAfterX.minZ,
-    raisedAfterX.maxZ,
+    raisedAfterX.success.minZ,
+    raisedAfterX.success.maxZ,
     options.halfWidth,
     options,
-    raisedAfterX,
-    (block) => block.minZ,
-    (block) => block.maxZ,
+    raisedAfterX.success,
+    {
+      farFace: (block) => block.maxZ,
+      nearFace: (block) => block.minZ,
+      positionResult: PositionAxis.result,
+    },
   )
-  if (raisedX.blocked || raisedZ.blocked) {
-    return null
+  if (Result.isFailure(raisedZ)) {
+    return Result.fail(raisedZ.failure)
+  }
+  if (raisedX.success.blocked || raisedZ.success.blocked) {
+    return Result.succeed(null)
   }
 
-  const horizontalBox = boxAt(options, raisedX.position, resolvedY, raisedZ.position)
-  const supportTop = highestStepSupport(options, horizontalBox, horizontalBox.minY, stepHeight)
-  if (supportTop === null) {
-    return null
+  const horizontalBox = boxAt(options, raisedX.success.position, resolvedY, raisedZ.success.position)
+  if (Result.isFailure(horizontalBox)) {
+    return Result.fail(horizontalBox.failure)
+  }
+  const supportTop = highestStepSupport(options, horizontalBox.success, horizontalBox.success.minY, stepHeight)
+  if (Result.isFailure(supportTop)) {
+    return Result.fail(supportTop.failure)
+  }
+  if (supportTop.success === null) {
+    return Result.succeed(null)
   }
 
-  return {
+  return Result.map(CentreY.result(supportTop.success + options.halfHeight), (y): Body => ({
     kind: 'dynamic',
-    vx: raisedX.velocity,
-    vy: verticalVelocity,
-    vz: raisedZ.velocity,
-    x: raisedX.position,
-    y: CentreY(supportTop + options.halfHeight),
-    z: raisedZ.position,
-  }
+    vx: raisedX.success.velocity,
+    vy: checkedVelocity.success,
+    vz: raisedZ.success.velocity,
+    x: raisedX.success.position,
+    y,
+    z: raisedZ.success.position,
+  }))
 }

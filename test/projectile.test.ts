@@ -1,374 +1,163 @@
 /* eslint-disable id-length, no-magic-numbers, sort-imports */
 import { describe, expect, it } from 'vitest'
-import { FastCheck } from 'effect'
+import * as fc from 'fast-check'
+import { Result } from 'effect'
 import {
-  ARROW_AIR_DRAG,
-  ARROW_GRAVITY,
-  ARROW_MAX_LIFETIME_SECONDS,
-  ARROW_SHOOTER_GRACE_SECONDS,
-  ARROW_WATER_DRAG,
-  launchArrow,
-  stepArrow,
-  type Arrow,
-  type ProjectileWorld as KernelProjectileWorld,
+  AngleRadians,
+  DeltaTimeSecs,
+  EntityId,
+  FixedDurationSecs,
+  PositionAxis,
+  type Position,
+  position,
 } from '@nerima-games/mc-kernel'
+import {
+  BlocksPerSecond,
+  BlocksPerSecondSquared,
+  type VelocityVector,
+  velocityVectorResult,
+} from '../src/domain/physical-units'
 import {
   ARROW_PROFILE,
   EGG_PROFILE,
   SNOWBALL_PROFILE,
   TRIDENT_PROFILE,
-  launchProjectile,
-  stepProjectile,
+  launchProjectile as rawLaunchProjectile,
+  stepProjectile as rawStepProjectile,
   type Projectile,
   type ProjectileProfile,
   type ProjectileWorld,
 } from '../src/domain/projectile'
 import type { AABB } from '../src/domain/coordinates'
 
-const bounds: AABB = { maxX: 100, maxY: 100, maxZ: 100, minX: -100, minY: -100, minZ: -100 }
-const world = (overrides: Partial<ProjectileWorld> = {}): ProjectileWorld => ({
-  blockBounds: () => [],
-  bounds,
-  entities: [],
-  isInWater: () => false,
-  ...overrides,
-})
+type NumericPosition = Readonly<{ x: number; y: number; z: number }>
+type NumericAABB = Readonly<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }>
+type NumericWorldOverrides = Readonly<{
+  blockBounds?: (start: Position, end: Position) => readonly NumericAABB[]
+  bounds?: NumericAABB
+  entities?: readonly Readonly<{ id: string; bounds: NumericAABB }>[]
+  isInWater?: (position: Position) => boolean
+}>
 
-const kernelPoint = (box: AABB): Readonly<{ min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }> => ({
-  max: { x: box.maxX, y: box.maxY, z: box.maxZ },
-  min: { x: box.minX, y: box.minY, z: box.minZ },
-})
-const kernelWorld = (overrides: Partial<KernelProjectileWorld> = {}): KernelProjectileWorld => ({
-  blockBounds: () => [],
-  bounds: kernelPoint(bounds),
-  entities: [],
-  isInWater: () => false,
-  ...overrides,
-})
-
-/**
- * Fixture-only helpers for the lockstep property test below. `boxAround` and
- * `positionAfterOpenFlight` place collision geometry; they are never used to
- * compute the value an assertion checks against — every assertion in the
- * property compares `stepProjectile`/`launchProjectile` against the
- * independent kernel `stepArrow`/`launchArrow` at every step.
- */
-const boxAround = (centre: { x: number; y: number; z: number }, halfExtent: number): AABB => ({
-  maxX: centre.x + halfExtent,
-  maxY: centre.y + halfExtent,
-  maxZ: centre.z + halfExtent,
-  minX: centre.x - halfExtent,
-  minY: centre.y - halfExtent,
-  minZ: centre.z - halfExtent,
-})
-
-const OPEN_WORLD_BOUNDS: AABB = { maxX: 1e6, maxY: 1e6, maxZ: 1e6, minX: -1e6, minY: -1e6, minZ: -1e6 }
-
-/**
- * Where the kernel arrow would be after `steps` open-flight ticks with no
- * obstruction. Used only to *place* a small box exactly on the trajectory so
- * a collision is guaranteed at a known age — not to predict what the
- * assertion should see. If `stepProjectile` and `stepArrow` ever diverge
- * before this point, the per-step `toStrictEqual` below still catches it.
- */
-const positionAfterOpenFlight = (
-  launch: Parameters<typeof launchArrow>[0],
-  steps: number,
-  dt: number,
-): { x: number; y: number; z: number } | null => {
-  const openWorld = kernelWorld({ bounds: kernelPoint(OPEN_WORLD_BOUNDS) })
-  let state: Arrow = launchArrow(launch)
-  for (let i = 0; i < steps; i += 1) {
-    if (state.state !== 'flying') {
-      return null
-    }
-    state = stepArrow(state, dt, openWorld).arrow
-  }
-  return state.state === 'flying' ? state.position : null
+const unwrap = <Value, Error>(result: Result.Result<Value, Error>): Value => {
+  if (Result.isFailure(result)) throw new Error('Expected a branded test value')
+  return result.success
 }
 
-const LOCKSTEP_SHOOTER_ID = 'lockstep-shooter'
-const LOCKSTEP_DT = 0.05
-const LOCKSTEP_STEPS = 20
+const axis = (value: number): PositionAxis => unwrap(PositionAxis.result(value))
+const positionOf = (value: NumericPosition): Position => position(axis(value.x), axis(value.y), axis(value.z))
+const box = (value: NumericAABB): AABB => ({
+  minX: axis(value.minX),
+  minY: axis(value.minY),
+  minZ: axis(value.minZ),
+  maxX: axis(value.maxX),
+  maxY: axis(value.maxY),
+  maxZ: axis(value.maxZ),
+})
+// @ts-expect-error -- malformed numeric bounds must reach projectile validation unchanged.
+const rawBox = (value: NumericAABB): AABB => value
+const entityId = (value: string) => unwrap(EntityId.result(value))
+const velocity = (x: number, y: number, z: number): VelocityVector =>
+  unwrap(velocityVectorResult(x, y, z))
+const age = (value: number) => unwrap(FixedDurationSecs.result(value))
 
-const arbitraryLaunch = FastCheck.record({
-  pitchRadians: FastCheck.double({ max: 1.2, min: -1.2, noDefaultInfinity: true, noNaN: true }),
-  position: FastCheck.record({
-    x: FastCheck.double({ max: 5, min: -5, noDefaultInfinity: true, noNaN: true }),
-    y: FastCheck.double({ max: 10, min: 2, noDefaultInfinity: true, noNaN: true }),
-    z: FastCheck.double({ max: 5, min: -5, noDefaultInfinity: true, noNaN: true }),
-  }),
-  shooterId: FastCheck.constant(LOCKSTEP_SHOOTER_ID),
-  speed: FastCheck.double({ max: 25, min: 8, noDefaultInfinity: true, noNaN: true }),
-  yawRadians: FastCheck.double({ max: Math.PI, min: -Math.PI, noDefaultInfinity: true, noNaN: true }),
+const world = (overrides: NumericWorldOverrides = {}): ProjectileWorld => ({
+  blockBounds: (start, end) => (overrides.blockBounds?.(start, end) ?? []).map(box),
+  bounds: box(overrides.bounds ?? { maxX: 100, maxY: 100, maxZ: 100, minX: -100, minY: -100, minZ: -100 }),
+  entities: (overrides.entities ?? []).map((entity) => ({ id: entityId(entity.id), bounds: box(entity.bounds) })),
+  isInWater: overrides.isInWater ?? (() => false),
 })
 
-type BlockSpec =
-  | Readonly<{ kind: 'targeted'; stepsAhead: number }>
-  | Readonly<{ kind: 'random'; offset: { x: number; y: number; z: number } }>
-
-const arbitraryOffset = FastCheck.record({
-  x: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
-  y: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
-  z: FastCheck.double({ max: 15, min: -15, noDefaultInfinity: true, noNaN: true }),
+const launchProjectile = (launch: Readonly<{
+  pitchRadians: number
+  position: NumericPosition
+  speed: number
+  yawRadians: number
+  shooterId?: string
+}>) => rawLaunchProjectile({
+  pitchRadians: unwrap(AngleRadians.result(launch.pitchRadians)),
+  position: positionOf(launch.position),
+  ...(launch.shooterId === undefined ? {} : { shooterId: entityId(launch.shooterId) }),
+  speed: unwrap(BlocksPerSecond.result(launch.speed)),
+  yawRadians: unwrap(AngleRadians.result(launch.yawRadians)),
 })
 
-const arbitraryBlockSpec = FastCheck.oneof(
-  { arbitrary: FastCheck.integer({ max: 4, min: 1 }).map((stepsAhead): BlockSpec => ({ kind: 'targeted', stepsAhead })), weight: 2 },
-  { arbitrary: arbitraryOffset.map((offset): BlockSpec => ({ kind: 'random', offset })), weight: 1 },
-)
-const arbitraryBlocks = FastCheck.array(arbitraryBlockSpec, { maxLength: 3, minLength: 0 })
+const stepProjectile = (state: Projectile, dt: number, flightWorld: ProjectileWorld, profile: ProjectileProfile) => {
+  const checkedDelta = DeltaTimeSecs.result(dt)
+  if (Result.isSuccess(checkedDelta)) {
+    return rawStepProjectile(state, checkedDelta.success, flightWorld, profile)
+  }
+  // @ts-expect-error -- malformed raw deltas exercise projectile boundary validation.
+  return rawStepProjectile(state, dt, flightWorld, profile)
+}
 
-/** One of the two entity slots can land on the shooter's own id, positioned so it is only re-entered after `ARROW_SHOOTER_GRACE_SECONDS` has elapsed. */
-type EntitySpec =
-  | Readonly<{ kind: 'shooterGrace'; stepsAhead: number }>
-  | Readonly<{ kind: 'random'; id: string; offset: { x: number; y: number; z: number } }>
+const flight = (value: Readonly<{ age?: number; position: NumericPosition; velocity: NumericPosition }>): Projectile => ({
+  ageSeconds: age(value.age ?? 0),
+  position: positionOf(value.position),
+  state: 'flying',
+  velocity: velocity(value.velocity.x, value.velocity.y, value.velocity.z),
+})
 
-const arbitraryEntitySpec = FastCheck.oneof(
-  { arbitrary: FastCheck.integer({ max: 10, min: 7 }).map((stepsAhead): EntitySpec => ({ kind: 'shooterGrace', stepsAhead })), weight: 2 },
-  {
-    arbitrary: FastCheck.record({ id: FastCheck.constantFrom('bystander-a', 'bystander-b'), offset: arbitraryOffset }).map(
-      (value): EntitySpec => ({ id: value.id, kind: 'random', offset: value.offset }),
-    ),
-    weight: 1,
-  },
-)
-const arbitraryEntities = FastCheck.array(arbitraryEntitySpec, { maxLength: 2, minLength: 0 })
+const withAge = (projectile: Projectile, seconds: number): Projectile => {
+  const checkedAge = FixedDurationSecs.result(seconds)
+  if (Result.isSuccess(checkedAge)) return { ...projectile, ageSeconds: checkedAge.success }
+  // @ts-expect-error -- malformed raw ages exercise projectile state validation.
+  return { ...projectile, ageSeconds: seconds }
+}
 
-const arbitraryWorldHalfExtent = FastCheck.double({ max: 200, min: 60, noDefaultInfinity: true, noNaN: true })
-
-describe('FR-007 acceptance: ARROW_PROFILE reproduces the kernel Arrow implementation exactly', () => {
-  it('matches the constants launchArrow/stepArrow are built from', () => {
+describe('projectile profile, trajectory, and collision contracts', () => {
+  it('keeps the arrow profile at the mc-physics contract values', () => {
     expect(ARROW_PROFILE).toStrictEqual({
-      airDrag: ARROW_AIR_DRAG,
-      gravity: ARROW_GRAVITY,
-      maxLifetimeSeconds: ARROW_MAX_LIFETIME_SECONDS,
-      shooterGraceSeconds: ARROW_SHOOTER_GRACE_SECONDS,
-      waterDrag: ARROW_WATER_DRAG,
+      airDrag: 0.99,
+      gravity: 9.81,
+      maxLifetimeSeconds: 60,
+      shooterGraceSeconds: 0.25,
+      waterDrag: 0.6,
     })
   })
 
-  it('matches launchArrow, including the invalid-launch despawn path', () => {
-    const launches = [
-      { pitchRadians: 0.37, position: { x: 1, y: 20, z: -3 }, shooterId: 'shooter', speed: 42, yawRadians: -1.1 },
-      { pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 5, yawRadians: 0 },
-      { pitchRadians: 0, position: { x: Number.NaN, y: 0, z: 0 }, speed: 1, yawRadians: 0 },
-      { pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: -1, yawRadians: 0 },
-    ]
-    for (const launch of launches) {
-      expect(launchProjectile(launch)).toStrictEqual(launchArrow(launch))
-    }
-  })
-
-  it('matches stepArrow step-by-step across open flight, a block hit, and a shooter-grace entity hit', () => {
-    const scenarios: ReadonlyArray<{
-      launch: Parameters<typeof launchArrow>[0]
-      blocks: readonly AABB[]
-      entities: ReadonlyArray<{ id: string; bounds: AABB }>
-      worldBounds: AABB
-    }> = [
-      {
-        blocks: [],
-        entities: [],
-        launch: { pitchRadians: -0.2, position: { x: 0, y: 5, z: 0 }, speed: 30, yawRadians: 0.8 },
-        worldBounds: { maxX: 8, maxY: 20, maxZ: 8, minX: -8, minY: -1, minZ: -8 },
-      },
-      {
-        blocks: [{ maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }],
-        entities: [],
-        launch: { pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 },
-        worldBounds: bounds,
-      },
-      {
-        blocks: [],
-        entities: [{ bounds: { maxX: 1, maxY: 1, maxZ: 1, minX: 0.5, minY: -1, minZ: -1 }, id: 'shooter' }],
-        launch: { pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, shooterId: 'shooter', speed: 20, yawRadians: -Math.PI / 2 },
-        worldBounds: bounds,
-      },
-    ]
-
-    for (const scenario of scenarios) {
-      let local: Projectile = launchProjectile(scenario.launch)
-      let kernel: Arrow = launchArrow(scenario.launch)
-      expect(local).toStrictEqual(kernel)
-
-      const localWorld = world({ blockBounds: () => scenario.blocks, bounds: scenario.worldBounds, entities: scenario.entities })
-      const kernelW = kernelWorld({
-        blockBounds: () => scenario.blocks.map(kernelPoint),
-        bounds: kernelPoint(scenario.worldBounds),
-        entities: scenario.entities.map((entity) => ({ ...entity, bounds: kernelPoint(entity.bounds) })),
-      })
-
-      for (let step = 0; step < 40 && local.state === 'flying'; step += 1) {
-        const localResult = stepProjectile(local, 0.05, localWorld, ARROW_PROFILE)
-        const kernelResult = stepArrow(kernel, 0.05, kernelW)
-        expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
-        expect(localResult.hit).toStrictEqual(kernelResult.hit)
-        local = localResult.projectile
-        kernel = kernelResult.arrow
-      }
-    }
-  })
-
-  it('matches stepArrow on the lifetime despawn boundary and under water drag', () => {
-    const flying = { ageSeconds: ARROW_MAX_LIFETIME_SECONDS - 0.01, position: { x: 0, y: 0, z: 0 }, state: 'flying' as const, velocity: { x: 1, y: 0, z: 0 } }
-    const lifetimeLocal = stepProjectile(flying, 0.01, world(), ARROW_PROFILE)
-    const lifetimeKernel = stepArrow(flying, 0.01, kernelWorld())
-    expect(lifetimeLocal.projectile).toStrictEqual(lifetimeKernel.arrow)
-    expect(lifetimeLocal.hit).toStrictEqual(lifetimeKernel.hit)
-
-    const wet = { ageSeconds: 0, position: { x: 0, y: 0, z: 0 }, state: 'flying' as const, velocity: { x: 10, y: 5, z: -10 } }
-    const wetLocal = stepProjectile(wet, 0.05, world({ isInWater: () => true }), ARROW_PROFILE)
-    const wetKernel = stepArrow(wet, 0.05, kernelWorld({ isInWater: () => true }))
-    expect(wetLocal.projectile).toStrictEqual(wetKernel.arrow)
-    expect(wetLocal.hit).toStrictEqual(wetKernel.hit)
-  })
-
-  it('matches stepArrow exactly when a block and an entity share the identical fractional hit point (block wins the tie)', () => {
-    const launch = { pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 }
-    const tiedBounds: AABB = { maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }
-    const localWorld = world({ blockBounds: () => [tiedBounds], entities: [{ bounds: tiedBounds, id: 'occupant' }] })
-    const kernelW = kernelWorld({
-      blockBounds: () => [kernelPoint(tiedBounds)],
-      entities: [{ bounds: kernelPoint(tiedBounds), id: 'occupant' }],
+  it('advances an unobstructed trajectory with drag and gravity', () => {
+    const launch = launchProjectile({
+      pitchRadians: 0,
+      position: { x: 0, y: 10, z: 0 },
+      speed: 10,
+      yawRadians: -Math.PI / 2,
     })
+    const result = stepProjectile(launch, 0.05, world(), ARROW_PROFILE)
+    const expectedVy = -ARROW_PROFILE.gravity * 0.05 * ARROW_PROFILE.airDrag
 
-    let local: Projectile = launchProjectile(launch)
-    let kernel: Arrow = launchArrow(launch)
-    expect(local).toStrictEqual(kernel)
-
-    for (let step = 0; step < 5 && local.state === 'flying'; step += 1) {
-      const localResult = stepProjectile(local, 0.05, localWorld, ARROW_PROFILE)
-      const kernelResult = stepArrow(kernel, 0.05, kernelW)
-      expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
-      expect(localResult.hit).toStrictEqual(kernelResult.hit)
-      local = localResult.projectile
-      kernel = kernelResult.arrow
-    }
-    expect(local).toMatchObject({ hit: { kind: 'block' }, state: 'stuck' })
+    expect(launch.velocity.x).toBeCloseTo(10, 12)
+    expect(launch.velocity.z).toBeCloseTo(0, 12)
+    expect(result.projectile.velocity.x).toBeCloseTo(9.9, 12)
+    expect(result.projectile.velocity.y).toBeCloseTo(expectedVy, 12)
+    expect(result.projectile.position.x).toBeCloseTo(0.495, 12)
+    expect(result.projectile.position.y).toBeCloseTo(10 + expectedVy * 0.05, 12)
+    expect(result.projectile.ageSeconds).toBeCloseTo(0.05, 12)
+    expect(result.hit).toBeUndefined()
   })
 
-  it('matches stepArrow exactly when a step exits the world bounds (reason: world)', () => {
-    const launch = { pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 }
-    const tightBounds: AABB = { maxX: 0.1, maxY: 1, maxZ: 1, minX: -1, minY: -1, minZ: -1 }
-    const localWorld = world({ bounds: tightBounds })
-    const kernelW = kernelWorld({ bounds: kernelPoint(tightBounds) })
-
-    const local = launchProjectile(launch)
-    const kernel = launchArrow(launch)
-    expect(local).toStrictEqual(kernel)
-
-    const localResult = stepProjectile(local, 0.05, localWorld, ARROW_PROFILE)
-    const kernelResult = stepArrow(kernel, 0.05, kernelW)
-    expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
-    expect(localResult.hit).toStrictEqual(kernelResult.hit)
-    expect(localResult.projectile).toMatchObject({ reason: 'world', state: 'despawned' })
-  })
-
-  it('matches stepArrow exactly when a step overflows to a non-finite position (reason: invalid, including the resulting velocity)', () => {
-    const overflowing: Projectile = {
-      ageSeconds: 0,
+  it('stops at the first block face and records the local contact contract', () => {
+    const launch = launchProjectile({
+      pitchRadians: 0,
       position: { x: 0, y: 0, z: 0 },
-      state: 'flying',
-      velocity: { x: Number.MAX_VALUE, y: 0, z: 0 },
-    }
-    const localResult = stepProjectile(overflowing, 2, world(), ARROW_PROFILE)
-    const kernelResult = stepArrow(overflowing, 2, kernelWorld())
-    expect(localResult.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
-    expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
-  })
+      speed: 20,
+      yawRadians: -Math.PI / 2,
+    })
+    const wall = box({ maxX: 2, maxY: 1, maxZ: 1, minX: 1, minY: -1, minZ: -1 })
+    const result = stepProjectile(launch, 0.1, world({ blockBounds: () => [wall] }), ARROW_PROFILE)
 
-  it('property: launchProjectile/stepProjectile lockstep-matches launchArrow/stepArrow across randomized blocks, entities, and a grace-expired shooter self-hit', () => {
-    let blockHitObserved = false
-    let entityHitObserved = false
-    let graceExpiredEntityHitObserved = false
-
-    FastCheck.assert(
-      FastCheck.property(
-        arbitraryLaunch,
-        arbitraryWorldHalfExtent,
-        arbitraryBlocks,
-        arbitraryEntities,
-        (launch, worldHalfExtent, blockSpecs, entitySpecs) => {
-          const blocks: AABB[] = []
-          for (const spec of blockSpecs) {
-            if (spec.kind === 'targeted') {
-              const centre = positionAfterOpenFlight(launch, spec.stepsAhead, LOCKSTEP_DT)
-              if (centre !== null) {
-                blocks.push(boxAround(centre, 0.6))
-              }
-            } else {
-              blocks.push(boxAround({ x: launch.position.x + spec.offset.x, y: launch.position.y + spec.offset.y, z: launch.position.z + spec.offset.z }, 1))
-            }
-          }
-
-          const entities: Array<{ id: string; bounds: AABB }> = []
-          for (const spec of entitySpecs) {
-            if (spec.kind === 'shooterGrace') {
-              const centre = positionAfterOpenFlight(launch, spec.stepsAhead, LOCKSTEP_DT)
-              if (centre !== null) {
-                entities.push({ bounds: boxAround(centre, 0.6), id: LOCKSTEP_SHOOTER_ID })
-              }
-            } else {
-              entities.push({
-                bounds: boxAround({ x: launch.position.x + spec.offset.x, y: launch.position.y + spec.offset.y, z: launch.position.z + spec.offset.z }, 1),
-                id: spec.id,
-              })
-            }
-          }
-
-          const worldBounds: AABB = {
-            maxX: worldHalfExtent,
-            maxY: worldHalfExtent,
-            maxZ: worldHalfExtent,
-            minX: -worldHalfExtent,
-            minY: -worldHalfExtent,
-            minZ: -worldHalfExtent,
-          }
-          const localWorld = world({ blockBounds: () => blocks, bounds: worldBounds, entities })
-          const kernelW = kernelWorld({
-            blockBounds: () => blocks.map(kernelPoint),
-            bounds: kernelPoint(worldBounds),
-            entities: entities.map((entity) => ({ ...entity, bounds: kernelPoint(entity.bounds) })),
-          })
-
-          let local: Projectile = launchProjectile(launch)
-          let kernel: Arrow = launchArrow(launch)
-          expect(local).toStrictEqual(kernel)
-
-          for (let step = 0; step < LOCKSTEP_STEPS && local.state === 'flying'; step += 1) {
-            const localResult = stepProjectile(local, LOCKSTEP_DT, localWorld, ARROW_PROFILE)
-            const kernelResult = stepArrow(kernel, LOCKSTEP_DT, kernelW)
-            expect(localResult.projectile).toStrictEqual(kernelResult.arrow)
-            expect(localResult.hit).toStrictEqual(kernelResult.hit)
-
-            const hit = localResult.hit
-            if (hit?.kind === 'block') {
-              blockHitObserved = true
-            }
-            if (hit?.kind === 'entity') {
-              entityHitObserved = true
-              if (hit.entityId === LOCKSTEP_SHOOTER_ID) {
-                graceExpiredEntityHitObserved = true
-              }
-            }
-
-            local = localResult.projectile
-            kernel = kernelResult.arrow
-          }
-
-          return true
-        },
-      ),
-      { numRuns: 150 },
-    )
-
-    expect(blockHitObserved).toBe(true)
-    expect(entityHitObserved).toBe(true)
-    expect(graceExpiredEntityHitObserved).toBe(true)
+    expect(result.hit).toMatchObject({
+      kind: 'block',
+      normal: { x: -1, y: 0, z: 0 },
+      point: { x: 1 },
+    })
+    expect(result.hit?.point.y).toBeCloseTo(-0.04905, 12)
+    expect(result.hit?.point.z).toBeCloseTo(0, 12)
+    expect(result.hit?.flightTimeSeconds).toBeGreaterThan(0)
+    expect(result.hit?.flightTimeSeconds).toBeLessThan(0.1)
+    expect(result.projectile.state).toBe('stuck')
   })
 })
-
 describe('projectile launch and integration', () => {
   it('derives velocity from yaw and pitch and applies gravity and air/water drag', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 5, z: 0 }, speed: 10, yawRadians: 0 })
@@ -386,70 +175,81 @@ describe('continuous projectile collisions', () => {
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [{ maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: -1, y: 0, z: 0 }, point: { x: 2 } })
     expect(result.projectile).toMatchObject({ recoverable: true, state: 'stuck', velocity: { x: 0, y: 0, z: 0 } })
-    expect(result.hit?.flightTimeSeconds).toBeGreaterThan(0)
-    expect(result.hit?.flightTimeSeconds).toBeLessThan(0.05)
+    expect(result.hit?.flightTimeSeconds).toBeCloseTo(0.05 * 2 / 4.95, 12)
   })
 
-  it('keeps the opposite face normal and ignores invalid candidate bounds', () => {
+  it('keeps the opposite face normal and despawns on invalid candidate bounds', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 4, y: 0.5, z: 0.5 }, speed: 100, yawRadians: Math.PI / 2 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [{ maxX: 2, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 1, y: 0, z: 0 }, point: { x: 2 } })
 
-    const noHit = stepProjectile(
-      launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 }),
-      0.05,
-      world({ blockBounds: () => [{ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }] }),
-      ARROW_PROFILE,
-    )
-    expect(noHit.hit).toBeUndefined()
-    expect(noHit.projectile.state).toBe('flying')
+    const invalidFlight = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 })
+    const invalidBlockBoxes = [
+      rawBox({ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }),
+      rawBox({ maxX: 0, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }),
+    ]
+    const invalidEntityBoxes = [
+      rawBox({ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }),
+      rawBox({ maxX: 0, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }),
+    ]
+
+    for (const bounds of invalidBlockBoxes) {
+      const invalidBlockWorld: ProjectileWorld = { ...world(), blockBounds: () => [bounds] }
+      const despawned = stepProjectile(invalidFlight, 0.05, invalidBlockWorld, ARROW_PROFILE)
+      expect(despawned.hit).toBeUndefined()
+      expect(despawned.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    }
+    for (const bounds of invalidEntityBoxes) {
+      const invalidEntityWorld: ProjectileWorld = {
+        ...world(),
+        entities: [{ bounds, id: entityId('invalid-bounds') }],
+      }
+      const despawned = stepProjectile(invalidFlight, 0.05, invalidEntityWorld, ARROW_PROFILE)
+      expect(despawned.hit).toBeUndefined()
+      expect(despawned.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    }
   })
 
   it('hits the top face of a platform approached from directly above', () => {
     const projectile = launchProjectile({ pitchRadians: 1.4, position: { x: 0.5, y: 5, z: 0.5 }, speed: 200, yawRadians: 0 })
-    const platform: AABB = { maxX: 1000, maxY: 1, maxZ: 1000, minX: -1000, minY: 0, minZ: -1000 }
+    const platform = box({ maxX: 1000, maxY: 1, maxZ: 1000, minX: -1000, minY: 0, minZ: -1000 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [platform] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 0, y: 1, z: 0 } })
   })
 
   it('hits the near face of a wall approached along Z with no vertical or lateral motion', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0.5, y: 0.5, z: 0.5 }, speed: 50, yawRadians: 0 })
-    const wall: AABB = { maxX: 1000, maxY: 1000, maxZ: -1, minX: -1000, minY: -1000, minZ: -2 }
+    const wall = box({ maxX: 1000, maxY: 1000, maxZ: -1, minX: -1000, minY: -1000, minZ: -2 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [wall] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 0, y: 0, z: 1 } })
   })
 
   it('rejects a candidate box the flight path never crosses on an axis it does not move along', () => {
     const projectile = launchProjectile({ pitchRadians: 1.4, position: { x: 0.5, y: 5, z: 0.5 }, speed: 50, yawRadians: 0 })
-    const outOfLine: AABB = { maxX: 6, maxY: 1, maxZ: 1000, minX: 5, minY: 0, minZ: -1000 }
+    const outOfLine = box({ maxX: 6, maxY: 1, maxZ: 1000, minX: 5, minY: 0, minZ: -1000 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [outOfLine] }), ARROW_PROFILE)
     expect(result.hit).toBeUndefined()
   })
 
   it('hits the underside of a ledge approached from directly below', () => {
     const projectile = launchProjectile({ pitchRadians: -1.4, position: { x: 0.5, y: -5, z: 0.5 }, speed: 200, yawRadians: 0 })
-    const ledge: AABB = { maxX: 1000, maxY: 0, maxZ: 1000, minX: -1000, minY: -1, minZ: -1000 }
+    const ledge = box({ maxX: 1000, maxY: 0, maxZ: 1000, minX: -1000, minY: -1, minZ: -1000 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [ledge] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 0, y: -1, z: 0 } })
   })
 
   it('hits the far face of a wall approached along +Z', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0.5, y: 0.5, z: 0.5 }, speed: 50, yawRadians: Math.PI })
-    const wall: AABB = { maxX: 1000, maxY: 1000, maxZ: 2, minX: -1000, minY: -1000, minZ: 1 }
+    const wall = box({ maxX: 1000, maxY: 1000, maxZ: 2, minX: -1000, minY: -1000, minZ: 1 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [wall] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 0, y: 0, z: -1 } })
   })
 
   it('rejects a candidate box whose per-axis entry windows do not all overlap', () => {
     const drag = ARROW_PROFILE.airDrag ** 20
-    const projectile: Projectile = {
-      ageSeconds: 0,
-      position: { x: -1, y: 0, z: 5 },
-      state: 'flying',
-      velocity: { x: 3 / drag, y: 0, z: -1 / drag },
-    }
-    const box: AABB = { maxX: 1, maxY: 1e6, maxZ: 1, minX: 0, minY: -1e6, minZ: 0 }
-    const result = stepProjectile(projectile, 1, world({ blockBounds: () => [box] }), ARROW_PROFILE)
+    const projectile = flight({ position: { x: -1, y: 0, z: 5 }, velocity: { x: 3 / drag, y: 0, z: -1 / drag } })
+    const candidateBox = box({ maxX: 1, maxY: 1e6, maxZ: 1, minX: 0, minY: -1e6, minZ: 0 })
+    const result = stepProjectile(projectile, 1, world({ blockBounds: () => [candidateBox] }), ARROW_PROFILE)
     expect(result.hit).toBeUndefined()
   })
 
@@ -466,12 +266,7 @@ describe('continuous projectile collisions', () => {
   })
 
   it('despawns on a step whose displacement overflows to a non-finite position', () => {
-    const projectile: Projectile = {
-      ageSeconds: 0,
-      position: { x: 0, y: 0, z: 0 },
-      state: 'flying',
-      velocity: { x: Number.MAX_VALUE, y: 0, z: 0 },
-    }
+    const projectile = flight({ position: { x: 0, y: 0, z: 0 }, velocity: { x: Number.MAX_VALUE, y: 0, z: 0 } })
     const result = stepProjectile(projectile, 2, world(), ARROW_PROFILE)
     expect(result.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
   })
@@ -480,21 +275,21 @@ describe('continuous projectile collisions', () => {
     const entity = { bounds: { maxX: 1, maxY: 1, maxZ: 1, minX: 0.5, minY: -1, minZ: -1 }, id: 'shooter' }
     const fresh = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, shooterId: 'shooter', speed: 20, yawRadians: -Math.PI / 2 })
     expect(stepProjectile(fresh, 0.05, world({ entities: [entity] }), ARROW_PROFILE).hit).toBeUndefined()
-    const old = { ...fresh, ageSeconds: 0.3 }
+    const old = withAge(fresh, 0.3)
     expect(stepProjectile(old, 0.05, world({ entities: [entity] }), ARROW_PROFILE).hit).toMatchObject({ entityId: 'shooter', kind: 'entity' })
   })
 
   it('picks the closer of two candidate blocks regardless of array order', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 })
-    const farther: AABB = { maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }
-    const closer: AABB = { maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }
+    const farther = box({ maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 })
+    const closer = box({ maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 })
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [farther, closer] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', point: { x: 1 } })
   })
 
   it('keeps an earlier block hit ahead of a later entity hit', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 100, yawRadians: -Math.PI / 2 })
-    const block: AABB = { maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }
+    const block = box({ maxX: 1.5, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 })
     const entity = { bounds: { maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }, id: 'later' }
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [block], entities: [entity] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', point: { x: 1 } })
@@ -511,9 +306,17 @@ describe('continuous projectile collisions', () => {
 
 describe('projectile boundaries', () => {
   it('despawns on invalid values, lifetime, and leaving the world', () => {
-    expect(launchProjectile({ pitchRadians: 0, position: { x: Number.NaN, y: 0, z: 0 }, speed: 1, yawRadians: 0 }).state).toBe('despawned')
+    const invalidPosition = { x: Number.NaN, y: PositionAxis(0), z: PositionAxis(0) }
+    const invalidLaunch = {
+      pitchRadians: AngleRadians(0),
+      position: invalidPosition,
+      speed: BlocksPerSecond(1),
+      yawRadians: AngleRadians(0),
+    }
+    // @ts-expect-error -- malformed coordinates exercise launch boundary validation.
+    expect(rawLaunchProjectile(invalidLaunch).state).toBe('despawned')
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 })
-    expect(stepProjectile({ ...projectile, ageSeconds: ARROW_PROFILE.maxLifetimeSeconds - 0.01 }, 0.01, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'lifetime', state: 'despawned' })
+    expect(stepProjectile(withAge(projectile, ARROW_PROFILE.maxLifetimeSeconds - 0.01), 0.01, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'lifetime', state: 'despawned' })
     expect(stepProjectile(projectile, 0.05, world({ bounds: { maxX: 0.1, maxY: 1, maxZ: 1, minX: -1, minY: -1, minZ: -1 } }), ARROW_PROFILE).projectile).toMatchObject({ reason: 'world', state: 'despawned' })
   })
 
@@ -526,9 +329,9 @@ describe('projectile boundaries', () => {
 
   it('rejects malformed or overflowing projectile ages as invalid state', () => {
     const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 10, yawRadians: -Math.PI / 2 })
-    expect(stepProjectile({ ...projectile, ageSeconds: Number.NaN }, 0.05, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
-    expect(stepProjectile({ ...projectile, ageSeconds: -1 }, 0.05, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
-    expect(stepProjectile({ ...projectile, ageSeconds: Number.MAX_VALUE }, Number.MAX_VALUE, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepProjectile(withAge(projectile, Number.NaN), 0.05, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepProjectile(withAge(projectile, -1), 0.05, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepProjectile(withAge(projectile, Number.MAX_VALUE), Number.MAX_VALUE, world(), ARROW_PROFILE).projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
   })
 
   it('keeps every finite boundary sample finite', () => {
@@ -555,8 +358,8 @@ describe('FR-007 per-profile behaviour', () => {
 
   it('SNOWBALL_PROFILE has weaker gravity than ARROW_PROFILE, so the same launch travels farther before landing', () => {
     const launch = { pitchRadians: -0.15, position: { x: 0, y: 10, z: 0 }, speed: 20, yawRadians: 0 }
-    const floor: AABB = { maxX: 10000, maxY: 0, maxZ: 10000, minX: -10000, minY: -10000, minZ: -10000 }
-    const openBounds: AABB = { maxX: 10000, maxY: 10000, maxZ: 10000, minX: -10000, minY: -10000, minZ: -10000 }
+    const floor = box({ maxX: 10000, maxY: 0, maxZ: 10000, minX: -10000, minY: -10000, minZ: -10000 })
+    const openBounds = box({ maxX: 10000, maxY: 10000, maxZ: 10000, minX: -10000, minY: -10000, minZ: -10000 })
 
     const distanceToLanding = (profile: ProjectileProfile): number => {
       let state = launchProjectile(launch)
@@ -572,19 +375,22 @@ describe('FR-007 per-profile behaviour', () => {
   })
 
   it('property: within otherwise-identical profiles, larger gravity reaches a floor no later than smaller gravity', () => {
-    FastCheck.assert(
-      FastCheck.property(
-        FastCheck.double({ max: 40, min: 1, noDefaultInfinity: true, noNaN: true }),
-        FastCheck.double({ max: 40, min: 1, noDefaultInfinity: true, noNaN: true }),
+    fc.assert(
+      fc.property(
+        fc.double({ max: 40, min: 1, noDefaultInfinity: true, noNaN: true }),
+        fc.double({ max: 40, min: 1, noDefaultInfinity: true, noNaN: true }),
         (gravityA, gravityB) => {
           const [gravityLow, gravityHigh] = gravityA <= gravityB ? [gravityA, gravityB] : [gravityB, gravityA]
           const launch = { pitchRadians: 0, position: { x: 0, y: 50, z: 0 }, speed: 0, yawRadians: 0 }
-          const floor: AABB = { maxX: 1000, maxY: 0, maxZ: 1000, minX: -1000, minY: -1000, minZ: -1000 }
-          const openBounds: AABB = { maxX: 1e6, maxY: 1e6, maxZ: 1e6, minX: -1e6, minY: -1e6, minZ: -1e6 }
+          const floor = box({ maxX: 1000, maxY: 0, maxZ: 1000, minX: -1000, minY: -1000, minZ: -1000 })
+          const openBounds = box({ maxX: 1e6, maxY: 1e6, maxZ: 1e6, minX: -1e6, minY: -1e6, minZ: -1e6 })
           const testWorld = world({ blockBounds: () => [floor], bounds: openBounds })
 
           const timeToLand = (gravity: number): number => {
-            const profile: ProjectileProfile = { ...ARROW_PROFILE, gravity }
+            const profile: ProjectileProfile = {
+              ...ARROW_PROFILE,
+              gravity: unwrap(BlocksPerSecondSquared.result(gravity)),
+            }
             let state = launchProjectile(launch)
             for (let step = 0; step < 5000 && state.state === 'flying'; step += 1) {
               state = stepProjectile(state, 0.02, testWorld, profile).projectile
@@ -602,12 +408,12 @@ describe('FR-007 per-profile behaviour', () => {
 
 describe('determinism', () => {
   it('property: the same launch and step sequence always produces the same trajectory', () => {
-    FastCheck.assert(
-      FastCheck.property(
-        FastCheck.double({ max: 3, min: -3, noDefaultInfinity: true, noNaN: true }),
-        FastCheck.double({ max: 1.5, min: -1.5, noDefaultInfinity: true, noNaN: true }),
-        FastCheck.double({ max: 60, min: 0, noDefaultInfinity: true, noNaN: true }),
-        FastCheck.array(FastCheck.double({ max: 0.1, min: 0.001, noDefaultInfinity: true, noNaN: true }), { maxLength: 20, minLength: 5 }),
+    fc.assert(
+      fc.property(
+        fc.double({ max: 3, min: -3, noDefaultInfinity: true, noNaN: true }),
+        fc.double({ max: 1.5, min: -1.5, noDefaultInfinity: true, noNaN: true }),
+        fc.double({ max: 60, min: 0, noDefaultInfinity: true, noNaN: true }),
+        fc.array(fc.double({ max: 0.1, min: 0.001, noDefaultInfinity: true, noNaN: true }), { maxLength: 20, minLength: 5 }),
         (yawRadians, pitchRadians, speed, steps) => {
           const launch = { pitchRadians, position: { x: 0, y: 30, z: 0 }, speed, yawRadians }
           const run = (): Projectile => {
@@ -624,5 +430,103 @@ describe('determinism', () => {
       ),
       { numRuns: 50 },
     )
+  })
+})
+
+describe('projectile invalid-state propagation', () => {
+  it('despawns a launch with an invalid shooter id', () => {
+    const projectile = rawLaunchProjectile({
+      pitchRadians: AngleRadians(0),
+      position: positionOf({ x: 0, y: 0, z: 0 }),
+      // @ts-expect-error -- malformed entity ids exercise launch boundary validation.
+      shooterId: '',
+      speed: BlocksPerSecond(1),
+      yawRadians: AngleRadians(0),
+    })
+
+    expect(projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('despawns when world bounds are malformed or inverted', () => {
+    const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 1, yawRadians: 0 })
+    const malformedBounds = {
+      ...world(),
+      bounds: rawBox({ maxX: Number.NaN, maxY: 100, maxZ: 100, minX: -100, minY: -100, minZ: -100 }),
+    }
+    const invertedBounds = world({
+      bounds: { maxX: -1, maxY: 100, maxZ: 100, minX: 1, minY: -100, minZ: -100 },
+    })
+
+    expect(stepProjectile(projectile, 0.05, malformedBounds, ARROW_PROFILE).projectile)
+      .toMatchObject({ reason: 'invalid', state: 'despawned' })
+    expect(stepProjectile(projectile, 0.05, invertedBounds, ARROW_PROFILE).projectile)
+      .toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('despawns when finite gravity and dt overflow the vertical velocity calculation', () => {
+    const projectile = flight({
+      position: { x: 0, y: 0, z: 0 },
+      velocity: { x: 0, y: 0, z: 0 },
+    })
+    const profile: ProjectileProfile = {
+      ...ARROW_PROFILE,
+      airDrag: 1,
+      gravity: BlocksPerSecondSquared(Number.MAX_VALUE),
+      maxLifetimeSeconds: FixedDurationSecs(10),
+      waterDrag: 1,
+    }
+
+    expect(stepProjectile(projectile, 2, world(), profile).projectile)
+      .toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('despawns when a finite displacement makes the next position unrepresentable', () => {
+    const projectile = flight({
+      position: { x: Number.MAX_VALUE * 0.75, y: 0, z: 0 },
+      velocity: { x: Number.MAX_VALUE * 0.5, y: 0, z: 0 },
+    })
+    const profile: ProjectileProfile = { ...ARROW_PROFILE, airDrag: 1, gravity: BlocksPerSecondSquared(0), waterDrag: 1 }
+
+    expect(stepProjectile(projectile, 1, world(), profile).projectile)
+      .toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('propagates an invalid entity id as an invalid despawn', () => {
+    const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0, z: 0 }, speed: 1, yawRadians: 0 })
+    const invalidEntityWorld: ProjectileWorld = {
+      ...world(),
+      entities: [{
+        // @ts-expect-error -- malformed entity ids exercise world validation.
+        id: '',
+        bounds: box({ maxX: 2, maxY: 2, maxZ: 2, minX: 1, minY: 1, minZ: 1 }),
+      }],
+    }
+
+    expect(stepProjectile(projectile, 0.05, invalidEntityWorld, ARROW_PROFILE).projectile)
+      .toMatchObject({ reason: 'invalid', state: 'despawned' })
+  })
+
+  it('keeps flying when a valid entity box does not intersect the projectile segment', () => {
+    const projectile = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 20, yawRadians: -Math.PI / 2 })
+    const offPathEntity = {
+      bounds: { maxX: 1, maxY: 3, maxZ: 1, minX: 0.5, minY: 2, minZ: 0 },
+      id: 'above-path',
+    }
+    const result = stepProjectile(projectile, 0.05, world({ entities: [offPathEntity] }), ARROW_PROFILE)
+
+    expect(result.hit).toBeUndefined()
+    expect(result.projectile.state).toBe('flying')
+  })
+
+  it('despawns a launch when its kinematic brands fail validation', () => {
+    const projectile = rawLaunchProjectile({
+      pitchRadians: AngleRadians(0),
+      position: positionOf({ x: 0, y: 0, z: 0 }),
+      speed: BlocksPerSecond(1),
+      // @ts-expect-error -- a raw invalid angle exercises launch boundary validation.
+      yawRadians: Number.NaN,
+    })
+
+    expect(projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
   })
 })

@@ -1,12 +1,17 @@
+import { Option, Result } from 'effect'
 import {
   AIR_BLOCK_ID,
+  BlockAxis,
+  BlockId,
+  PositionAxis,
   blockIdOf,
   isKnownBlockId,
   resolvedBlockOfId,
 } from '@nerima-games/mc-kernel'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   FULL_BLOCK_SHAPE,
+  BlockLength,
   HalfHeight,
   blockAtFromKernel,
   blockEnvironmentFromKernel,
@@ -16,10 +21,27 @@ import {
   type BlockIdAt,
 } from '../src/index'
 
-const stoneId = blockIdOf('stone')
-const unknownId = 255
+vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@nerima-games/mc-kernel')>()
+  return { ...actual, resolvedBlockOfId: vi.fn(actual.resolvedBlockOfId) }
+})
 
-if (isKnownBlockId(unknownId)) {
+const unwrapOption = <A>(option: Option.Option<A>): A => {
+  if (Option.isSome(option)) return option.value
+  throw new Error('Expected Option.Some')
+}
+
+const unwrapResult = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isSuccess(result)) return result.success
+  throw new Error('Expected Result.Success')
+}
+
+const stoneId = unwrapOption(blockIdOf('stone'))
+const unknownId = BlockId(255)
+const cell = (value: number): BlockAxis => BlockAxis(value)
+
+const unknownIdKnown = isKnownBlockId(unknownId)
+if (Result.isFailure(unknownIdKnown) || unknownIdKnown.success) {
   throw new Error('The kernel-world test requires an unregistered block id')
 }
 
@@ -37,58 +59,76 @@ const idAt: BlockIdAt = (bx, by, bz) => {
 }
 
 describe('kernel-backed world queries', () => {
-  it('resolves registered block ids and treats air, unknown, and missing cells as empty', () => {
-    const resolved = resolvedBlockOfId(stoneId)
+  it('resolves registered ids and treats air, unknown, and missing cells as empty', () => {
+    const resolved = unwrapResult(resolvedBlockOfId(stoneId))
     expect(resolved).toBeDefined()
-    expect(blockAtFromKernel(idAt)(0, 0, 0)).toBe(resolved)
-    expect(blockAtFromKernel(idAt)(1, 0, 0)).toBeNull()
-    expect(blockAtFromKernel(idAt)(2, 0, 0)).toBeNull()
-    expect(blockAtFromKernel(idAt)(3, 0, 0)).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(0), cell(0), cell(0)))).toBe(resolved)
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(1), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(2), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(3), cell(0), cell(0)))).toBeNull()
 
-    expect(blockPropertiesAtFromKernel(idAt)(0, 0, 0)).toBe(resolved?.properties)
-    expect(blockPropertiesAtFromKernel(idAt)(1, 0, 0)).toBeNull()
-    expect(blockPropertiesAtFromKernel(idAt)(2, 0, 0)).toBeNull()
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(0), cell(0), cell(0)))).toBe(resolved?.properties)
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(1), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(2), cell(0), cell(0)))).toBeNull()
+  })
+
+  it('propagates invalid block ids and kernel registry failures', () => {
+    const invalidId = BlockId.result(Number.NaN)
+    if (Result.isSuccess(invalidId)) throw new Error('Expected an invalid block id')
+    expect(Result.isFailure(blockAtFromKernel(() => Number.NaN)(cell(0), cell(0), cell(0)))).toBe(true)
+
+    const registryFailure = () => Result.fail(invalidId.failure)
+    vi.mocked(resolvedBlockOfId).mockReturnValueOnce(registryFailure()).mockReturnValueOnce(registryFailure())
+
+    expect(Result.isFailure(blockAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0)))).toBe(true)
+    expect(Result.isFailure(blockPropertiesAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0)))).toBe(true)
   })
 
   it('builds environment queries with optional authoritative geometry', () => {
-    const shape: AABB = { ...FULL_BLOCK_SHAPE, minY: 0.25 }
+    const shape: AABB = { ...FULL_BLOCK_SHAPE, minY: PositionAxis(0.25) }
     const plain = blockEnvironmentFromKernel(idAt)
-    expect(plain.blockAt(0, 0, 0)?.properties).toBe(resolvedBlockOfId(stoneId)?.properties)
+    expect(unwrapResult(plain.blockAt(cell(0), cell(0), cell(0)))?.properties)
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
     expect(plain.blockShapeAt).toBeUndefined()
 
     const shaped = blockEnvironmentFromKernel(idAt, () => shape)
-    expect(shaped.blockShapeAt?.(0, 0, 0)).toBe(shape)
+    expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
   })
 
   it('builds resolver options while preserving only supplied optional values', () => {
     const base = {
       blockIdAt: idAt,
-      halfWidth: 0.3,
+      halfWidth: BlockLength(0.3),
       halfHeight: HalfHeight(0.9),
     } as const
     const plain = resolveOptionsFromKernel(base)
     expect(plain).toEqual({
-      halfWidth: 0.3,
+      halfWidth: BlockLength(0.3),
       halfHeight: HalfHeight(0.9),
       blockPropertiesAt: expect.any(Function),
+      environment: expect.objectContaining({ blockAt: expect.any(Function) }),
     })
-    expect(plain.blockPropertiesAt(0, 0, 0)).toBe(resolvedBlockOfId(stoneId)?.properties)
+    expect(unwrapResult(plain.blockPropertiesAt(cell(0), cell(0), cell(0))))
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
+    expect(unwrapResult(plain.environment.blockAt(cell(0), cell(0), cell(0))))
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId)))
 
-    const shape: AABB = { ...FULL_BLOCK_SHAPE, maxY: 0.5 }
+    const shape: AABB = { ...FULL_BLOCK_SHAPE, maxY: PositionAxis(0.5) }
     const shaped = resolveOptionsFromKernel({ ...base, blockShapeAt: () => shape })
-    expect(shaped.blockShapeAt?.(0, 0, 0)).toBe(shape)
+    expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
+    expect(shaped.environment.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shaped.stepHeight).toBeUndefined()
 
-    const stepped = resolveOptionsFromKernel({ ...base, stepHeight: 0.6 })
+    const stepped = resolveOptionsFromKernel({ ...base, stepHeight: BlockLength(0.6) })
     expect(stepped.blockShapeAt).toBeUndefined()
-    expect(stepped.stepHeight).toBe(0.6)
+    expect(stepped.stepHeight).toBe(BlockLength(0.6))
 
     const shapedAndStepped = resolveOptionsFromKernel({
       ...base,
       blockShapeAt: () => shape,
-      stepHeight: 0.6,
+      stepHeight: BlockLength(0.6),
     })
-    expect(shapedAndStepped.blockShapeAt?.(0, 0, 0)).toBe(shape)
-    expect(shapedAndStepped.stepHeight).toBe(0.6)
+    expect(shapedAndStepped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
+    expect(shapedAndStepped.stepHeight).toBe(BlockLength(0.6))
   })
 })

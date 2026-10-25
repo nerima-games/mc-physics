@@ -1,6 +1,8 @@
+import { BlocksPerSecond, BlocksPerSecondSquared, PerSecond } from './physical-units.js'
+import { Brand, Result } from 'effect'
 import type { FluidEffects, FluidMotionCoefficients } from './environment-types.js'
 import type { Body } from './integrate.js'
-import type { DeltaTimeSecs } from '@nerima-games/mc-kernel'
+import { DeltaTimeSecs } from '@nerima-games/mc-kernel'
 
 const nonNegativeFinite = (value: number): number => {
   if (Number.isFinite(value)) {
@@ -23,32 +25,67 @@ export const applyFluidMotion = (
   deltaTime: DeltaTimeSecs,
   effects: FluidEffects,
   coefficients: FluidMotionCoefficients,
-): Body => {
+): Result.Result<Body, Brand.BrandError> => {
   if (body.kind !== 'dynamic') {
-    return body
+    return Result.succeed(body)
   }
 
-  const seconds = nonNegativeFinite(deltaTime)
-  const waterVolume = volume(effects.waterVolume)
-  const lavaVolume = volume(effects.lavaVolume)
-  const dragPerSecond = waterVolume * nonNegativeFinite(coefficients.water.dragPerSecond) +
-    lavaVolume * nonNegativeFinite(coefficients.lava.dragPerSecond)
-  const dragPerSecondY = waterVolume * nonNegativeFinite(coefficients.water.dragPerSecondY ?? coefficients.water.dragPerSecond) +
-    lavaVolume * nonNegativeFinite(coefficients.lava.dragPerSecondY ?? coefficients.lava.dragPerSecond)
-  const buoyancyAcceleration = waterVolume * nonNegativeFinite(coefficients.water.buoyancyAcceleration) +
-    lavaVolume * nonNegativeFinite(coefficients.lava.buoyancyAcceleration)
-  const flowAcceleration = waterVolume * nonNegativeFinite(coefficients.water.flowAcceleration) +
-    lavaVolume * nonNegativeFinite(coefficients.lava.flowAcceleration)
-  const dragMultiplier = Math.exp(-dragPerSecond * seconds)
-  const dragMultiplierY = Math.exp(-dragPerSecondY * seconds)
-  const flowX = finiteOrZero(effects.flow.x)
-  const flowY = finiteOrZero(effects.flow.y)
-  const flowZ = finiteOrZero(effects.flow.z)
-
-  return {
-    ...body,
-    vx: body.vx * dragMultiplier + flowX * flowAcceleration * seconds,
-    vy: body.vy * dragMultiplierY + buoyancyAcceleration * seconds + flowY * flowAcceleration * seconds,
-    vz: body.vz * dragMultiplier + flowZ * flowAcceleration * seconds,
+  const deltaSnapshot = deltaTime
+  const bodyVxSnapshot = body.vx
+  const bodyVySnapshot = body.vy
+  const bodyVzSnapshot = body.vz
+  const waterDragSnapshot = coefficients.water.dragPerSecond
+  const waterDragYOptionSnapshot = coefficients.water.dragPerSecondY
+  let waterDragYSnapshot = waterDragSnapshot
+  if (typeof waterDragYOptionSnapshot !== 'undefined') {
+    waterDragYSnapshot = waterDragYOptionSnapshot
   }
+  const waterBuoyancySnapshot = coefficients.water.buoyancyAcceleration
+  const waterFlowAccelerationSnapshot = coefficients.water.flowAcceleration
+  const lavaDragSnapshot = coefficients.lava.dragPerSecond
+  const lavaDragYOptionSnapshot = coefficients.lava.dragPerSecondY
+  let lavaDragYSnapshot = lavaDragSnapshot
+  if (typeof lavaDragYOptionSnapshot !== 'undefined') {
+    lavaDragYSnapshot = lavaDragYOptionSnapshot
+  }
+  const lavaBuoyancySnapshot = coefficients.lava.buoyancyAcceleration
+  const lavaFlowAccelerationSnapshot = coefficients.lava.flowAcceleration
+  const inputs = Result.all([
+    DeltaTimeSecs.result(deltaSnapshot),
+    BlocksPerSecond.result(bodyVxSnapshot),
+    BlocksPerSecond.result(bodyVySnapshot),
+    BlocksPerSecond.result(bodyVzSnapshot),
+    PerSecond.result(waterDragSnapshot),
+    PerSecond.result(waterDragYSnapshot),
+    BlocksPerSecondSquared.result(waterBuoyancySnapshot),
+    BlocksPerSecondSquared.result(waterFlowAccelerationSnapshot),
+    PerSecond.result(lavaDragSnapshot),
+    PerSecond.result(lavaDragYSnapshot),
+    BlocksPerSecondSquared.result(lavaBuoyancySnapshot),
+    BlocksPerSecondSquared.result(lavaFlowAccelerationSnapshot),
+  ])
+
+  return Result.flatMap(inputs, ([secondsValue, vx, vy, vz, waterDrag, waterDragY, waterBuoyancy, waterFlowAcceleration, lavaDrag, lavaDragY, lavaBuoyancy, lavaFlowAcceleration]) => {
+    const seconds = nonNegativeFinite(secondsValue)
+    const waterVolume = volume(effects.waterVolume)
+    const lavaVolume = volume(effects.lavaVolume)
+    const dragPerSecond = waterVolume * nonNegativeFinite(waterDrag) + lavaVolume * nonNegativeFinite(lavaDrag)
+    const dragPerSecondY = waterVolume * nonNegativeFinite(waterDragY) + lavaVolume * nonNegativeFinite(lavaDragY)
+    const buoyancyAcceleration = waterVolume * nonNegativeFinite(waterBuoyancy) + lavaVolume * nonNegativeFinite(lavaBuoyancy)
+    const flowAcceleration = waterVolume * nonNegativeFinite(waterFlowAcceleration) + lavaVolume * nonNegativeFinite(lavaFlowAcceleration)
+    const dragMultiplier = Math.exp(-dragPerSecond * seconds)
+    const dragMultiplierY = Math.exp(-dragPerSecondY * seconds)
+    const flowX = finiteOrZero(effects.flow.x)
+    const flowY = finiteOrZero(effects.flow.y)
+    const flowZ = finiteOrZero(effects.flow.z)
+
+    return Result.map(
+      Result.all([
+        BlocksPerSecond.result(vx * dragMultiplier + flowX * flowAcceleration * seconds),
+        BlocksPerSecond.result(vy * dragMultiplierY + buoyancyAcceleration * seconds + flowY * flowAcceleration * seconds),
+        BlocksPerSecond.result(vz * dragMultiplier + flowZ * flowAcceleration * seconds),
+      ]),
+      ([nextVx, nextVy, nextVz]): Body => ({ ...body, vx: nextVx, vy: nextVy, vz: nextVz }),
+    )
+  })
 }

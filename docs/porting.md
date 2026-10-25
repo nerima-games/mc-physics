@@ -1,5 +1,7 @@
 # 移植元と実測 LOC
 
+> Historical record: API names and ownership described here capture earlier package states. For 0.4.0, use [public-api.md](./public-api.md) and [migration-0.4.0.md](./migration-0.4.0.md); `clampFrameDelta` replaces the local `clampDeltaTime`, and mc-sim owns explosion and primed TNT execution.
+
 - 参照実装ルート: `<reference-impl>`（以下パスはこれ相対）
 - 計測日: 2026-07-26
 - 計測方法: `wc -l`（コメント・空行を含む物理行数）
@@ -181,6 +183,8 @@ plan.md §3.4 の「プロパティテスト（エネルギー非増加、めり
 これらの不変条件のほうが捕まえている（`testing.md` §7）。
 
 ## 7. 逆方向の移植: mc-kernel への委譲（重複実装の発見と等価性検証）
+
+> Historical record: this section describes the pre-0.4.0 package surface. Version 0.4.0 removes explosion and primed TNT execution exports from mc-physics; `mc-sim` owns those operations, while mc-physics keeps the shared explosion data types and `DEFAULT_EXPLOSION_LIMITS`.
 
 これまでの節は「参照実装からこのリポジトリへ何を持ってくるか」を扱ってきた。この節は逆方向、
 「このリポジトリが独自に実装していたものを、どこで mc-kernel の実装に差し替えたか」を記録する。
