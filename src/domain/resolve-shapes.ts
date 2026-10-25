@@ -33,15 +33,16 @@ export const blockShapesAtAxes = (
     )))
   }
 
-  const properties = options.blockPropertiesAt(blockX, blockY, blockZ)
-  if (properties === null) {
-    return Result.succeed(EMPTY_SHAPES)
-  }
-  const shape = aabbOfCollisionShape(properties.collisionShape)
-  if (shape === null) {
-    return Result.succeed(EMPTY_SHAPES)
-  }
-  return Result.map(blockAABB(blockX, blockY, blockZ, shape), (block) => [block])
+  return Result.flatMap(options.blockPropertiesAt(blockX, blockY, blockZ), (properties) => {
+    if (properties === null) {
+      return Result.succeed(EMPTY_SHAPES)
+    }
+    const shape = aabbOfCollisionShape(properties.collisionShape)
+    if (shape === null) {
+      return Result.succeed(EMPTY_SHAPES)
+    }
+    return Result.map(blockAABB(blockX, blockY, blockZ, shape), (block) => [block])
+  })
 }
 
 export const blockShapesAt = (

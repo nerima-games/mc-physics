@@ -81,10 +81,11 @@ type IntegrationInput = Omit<Partial<IntegrationOptions>, 'gravityY' | 'terminal
   readonly terminalVelocityY?: number
 }
 
-type ResolveOptionsInput = Omit<Partial<ResolveOptions>, 'halfWidth' | 'halfHeight' | 'stepHeight'> & {
+type ResolveOptionsInput = Omit<Partial<ResolveOptions>, 'halfWidth' | 'halfHeight' | 'stepHeight' | 'blockPropertiesAt'> & {
   readonly halfWidth?: number
   readonly halfHeight?: number
   readonly stepHeight?: number
+  readonly blockPropertiesAt?: (bx: number, by: number, bz: number) => BlockProperties | null
 }
 
 const unwrap = <A, E>(result: Result.Result<A, E>): A => {
@@ -183,20 +184,22 @@ const groundUpTo =
     by <= topCell
 
 const FULL_BLOCK_PROPERTIES = unwrap(resolveBlockProperties({ collisionShape: 'full' }))
-const EMPTY_ENVIRONMENT: BlockEnvironment = { blockAt: () => null }
+const EMPTY_ENVIRONMENT: BlockEnvironment = { blockAt: () => Result.succeed(null) }
 const propertiesFor = (collisionShape: CollisionShape): BlockProperties =>
   unwrap(resolveBlockProperties({ collisionShape }))
 
-const propertiesAt = (isSolid: SolidPredicate) => (bx: number, by: number, bz: number): BlockProperties | null =>
-  isSolid(bx, by, bz) ? FULL_BLOCK_PROPERTIES : null
+const propertiesAt = (isSolid: SolidPredicate): ResolveOptions['blockPropertiesAt'] => (bx, by, bz) =>
+  Result.succeed(isSolid(bx, by, bz) ? FULL_BLOCK_PROPERTIES : null)
 
 const withWorld = (isSolid: SolidPredicate, extra: ResolveOptionsInput = {}): ResolveOptions => {
-  const { halfWidth = Number(HALF_W), halfHeight = Number(HALF_H), stepHeight, environment = EMPTY_ENVIRONMENT, ...options } = extra
+  const { halfWidth = Number(HALF_W), halfHeight = Number(HALF_H), stepHeight, environment = EMPTY_ENVIRONMENT, blockPropertiesAt, ...options } = extra
   return {
     halfWidth: BlockLength(halfWidth),
     halfHeight: HalfHeight(halfHeight),
     environment,
-    blockPropertiesAt: propertiesAt(isSolid),
+    blockPropertiesAt: blockPropertiesAt === undefined
+      ? propertiesAt(isSolid)
+      : (bx, by, bz) => Result.succeed(blockPropertiesAt(bx, by, bz)),
     ...options,
     ...(stepHeight === undefined ? {} : { stepHeight: BlockLength(stepHeight) }),
   }
@@ -1595,6 +1598,22 @@ describe('invalid result propagation', () => {
     expect(Result.isFailure(stepWorldResult([body], DT, options))).toBe(true)
   })
 
+  it('propagates block-property lookup failures through collision resolution', () => {
+    const invalidCoordinate = BlockAxis.result(Number.NaN)
+    if (Result.isSuccess(invalidCoordinate)) throw new Error('Expected an invalid block coordinate')
+    const failure = invalidCoordinate.failure
+    const options: ResolveOptions = {
+      halfWidth: BlockLength(Number(HALF_W)),
+      halfHeight: HalfHeight(Number(HALF_H)),
+      environment: EMPTY_ENVIRONMENT,
+      blockPropertiesAt: () => Result.fail(failure),
+    }
+    const result = resolveBodyResult(bodyAt(0.5, 10, 0.5, 0, -1), DT, options)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBe(failure)
+  })
+
   it('rejects non-positive half-width and negative step-height at the resolver boundary', () => {
     const body = bodyAt(0.5, 10, 0.5)
     const nonPositiveWidth = withWorld(() => false, { halfWidth: 0 })
@@ -2141,7 +2160,7 @@ describe('resolver Result boundary coverage', () => {
     const hazardousOptions = withWorld(() => false, {
       environment: {
         // @ts-expect-error -- malformed hazard data exercises environment validation.
-        blockAt: () => hazardousSample,
+        blockAt: () => Result.succeed(hazardousSample),
       },
     })
     const staticBody: Body = { ...bodyAt(0.5, 0.5, 0.5), kind: 'static' }

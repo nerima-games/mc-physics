@@ -93,8 +93,8 @@ describe('creative flight', () => {
     const options: ResolveOptions = {
       halfWidth: BlockLength(0.3),
       halfHeight: PLAYER_HALF_HEIGHT,
-      environment: { blockAt: () => null },
-      blockPropertiesAt: (_bx, by, _bz) => by === BlockAxis(0) ? floor : null,
+      environment: { blockAt: () => Result.succeed(null) },
+      blockPropertiesAt: (_bx, by, _bz) => Result.succeed(by === BlockAxis(0) ? floor : null),
     }
     const descending = unwrap(applyCreativeFlightInput(
       bodyOf(),

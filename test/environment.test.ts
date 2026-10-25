@@ -64,7 +64,7 @@ const environmentOf = (
 ): BlockEnvironment => ({
   blockAt: (bx, by, bz) => {
     const type = blocks[keyOf(bx, by, bz)]
-    return type === undefined ? null : sampleOf(type)
+    return Result.succeed(type === undefined ? null : sampleOf(type))
   },
   ...(blockShapeAt ? { blockShapeAt } : {}),
 })
@@ -283,6 +283,32 @@ describe('environment hazards', () => {
     })
   })
 
+  it('propagates block lookup failures through environment sampling', () => {
+    const invalidCoordinate = BlockAxis.result(Number.NaN)
+    if (Result.isSuccess(invalidCoordinate)) throw new Error('Expected an invalid block coordinate')
+    const failure = invalidCoordinate.failure
+    const failedEnvironment: BlockEnvironment = { blockAt: () => Result.fail(failure) }
+    const box = bodyBox(1.5)
+
+    const expectLookupFailure = <A, E>(result: Result.Result<A, E>) => {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) expect(result.failure).toBe(failure)
+    }
+
+    expectLookupFailure(sampleSurfaceEffectsResult(box, failedEnvironment))
+    expectLookupFailure(sampleBlockHazardsResult(box, failedEnvironment))
+    expectLookupFailure(sampleFluidEffectsResult(box, failedEnvironment, () => null))
+
+    let calls = 0
+    const dragFailureEnvironment: BlockEnvironment = {
+      blockAt: () => {
+        calls += 1
+        return calls <= 8 ? Result.succeed(null) : Result.fail(failure)
+      },
+    }
+    expectLookupFailure(sampleSurfaceEffectsResult(box, dragFailureEnvironment))
+  })
+
   it('returns a Result failure when a sampled contact-damage brand is invalid', () => {
     const cactus = sampleOf('cactus')
     const invalidDamageSample: typeof cactus = {
@@ -293,7 +319,7 @@ describe('environment hazards', () => {
         contactDamage: Number.NaN,
       },
     }
-    const environment: BlockEnvironment = { blockAt: () => invalidDamageSample }
+    const environment: BlockEnvironment = { blockAt: () => Result.succeed(invalidDamageSample) }
 
     expect(Result.isFailure(sampleBlockHazardsResult(bodyBox(1.5), environment))).toBe(true)
   })
@@ -304,7 +330,7 @@ describe('environment hazards', () => {
     const environment: BlockEnvironment = {
       blockAt: (bx, by, bz) => {
         cells.push([bx, by, bz])
-        return bx === 1 && by === 1 && bz === 0 ? cactus : null
+        return Result.succeed(bx === 1 && by === 1 && bz === 0 ? cactus : null)
       },
     }
     const stone = sampleOf('stone')
@@ -312,7 +338,7 @@ describe('environment hazards', () => {
       halfWidth: BlockLength(0.25),
       halfHeight: HalfHeight(0.1),
       environment,
-      blockPropertiesAt: (bx, by, bz) => bx === 1 && by === 1 && bz === 0 ? stone.properties : null,
+      blockPropertiesAt: (bx, by, bz) => Result.succeed(bx === 1 && by === 1 && bz === 0 ? stone.properties : null),
     }
     const body: Body = {
       ...bodyOf(),
@@ -347,7 +373,7 @@ describe('environment hazards', () => {
     const environment: BlockEnvironment = {
       blockAt: (bx, by, bz) => {
         cells.push([bx, by, bz])
-        return cactus
+        return Result.succeed(cactus)
       },
       blockShapeAt: () => invalidShape,
     }
@@ -355,7 +381,7 @@ describe('environment hazards', () => {
       halfWidth: BlockLength(0.1),
       halfHeight: HalfHeight(0.1),
       environment,
-      blockPropertiesAt: () => null,
+      blockPropertiesAt: () => Result.succeed(null),
     }
     const stationary = {
       ...bodyOf(),

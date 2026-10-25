@@ -13,6 +13,7 @@ import type {
   BlockEnvironment,
   BlockHazards,
   BlockSample,
+  EnvironmentError,
   FluidEffects,
   FluidFlow,
   FluidStateAt,
@@ -48,8 +49,8 @@ const forEachCoordinateRange = (
   maxY: number,
   minZ: number,
   maxZ: number,
-  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, Brand.BrandError | RangeError>,
-): Result.Result<void, Brand.BrandError | RangeError> => {
+  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, EnvironmentError>,
+): Result.Result<void, EnvironmentError> => {
   const bounds = Result.all([
     BlockAxis.result(minX),
     BlockAxis.result(maxX),
@@ -78,8 +79,8 @@ const forEachCoordinateRange = (
 
 const forEachCell = (
   box: AABB,
-  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, Brand.BrandError | RangeError>,
-): Result.Result<void, Brand.BrandError | RangeError> => {
+  visit: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<void, EnvironmentError>,
+): Result.Result<void, EnvironmentError> => {
   const bounds = cellBounds(box)
   return forEachCoordinateRange(
     bounds.minX,
@@ -135,7 +136,7 @@ const touchesCell = (box: AABB, cell: AABB): boolean =>
 export const sampleSurfaceEffects = (
   box: AABB,
   environment: BlockEnvironment,
-): Result.Result<SurfaceEffects, Brand.BrandError | RangeError> => {
+): Result.Result<SurfaceEffects, EnvironmentError> => {
   const feetCell = Math.floor(box.minY)
   const minX = Math.floor(box.minX)
   const maxX = Math.floor(box.maxX)
@@ -143,39 +144,41 @@ export const sampleSurfaceEffects = (
   const maxZ = Math.floor(box.maxZ)
   let { friction, movementDrag } = DEFAULT_SURFACE_EFFECTS
 
-  const supportScan = forEachCoordinateRange(minX, maxX, feetCell - 1, feetCell, minZ, maxZ, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null) {
-      return Result.succeed(globalThis.undefined)
-    }
+  const supportScan = forEachCoordinateRange(minX, maxX, feetCell - 1, feetCell, minZ, maxZ, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
+      }
 
-    for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
-      const worldShape = blockAABB(bx, by, bz, shape)
-      if (Result.isFailure(worldShape)) {
-        return Result.fail(worldShape.failure)
+      for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
+        const worldShape = blockAABB(bx, by, bz, shape)
+        if (Result.isFailure(worldShape)) {
+          return Result.fail(worldShape.failure)
+        }
+        if (isRestingOn(box, worldShape.success)) {
+          friction = Math.min(friction, clampedUnit(sample.properties.friction))
+          break
+        }
       }
-      if (isRestingOn(box, worldShape.success)) {
-        friction = Math.min(friction, clampedUnit(sample.properties.friction))
-        break
-      }
-    }
-    return Result.succeed(globalThis.undefined)
-  })
+      return Result.succeed(globalThis.undefined)
+    }),
+  )
   if (Result.isFailure(supportScan)) {
     return Result.fail(supportScan.failure)
   }
 
-  const dragScan = forEachCell(box, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null) {
-      return Result.succeed(globalThis.undefined)
-    }
-    return Result.map(blockAABB(bx, by, bz), (cell) => {
-      if (intersects(box, cell)) {
-        movementDrag = Math.max(movementDrag, clampedUnit(sample.properties.movementDrag))
+  const dragScan = forEachCell(box, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
       }
-    })
-  })
+      return Result.map(blockAABB(bx, by, bz), (cell) => {
+        if (intersects(box, cell)) {
+          movementDrag = Math.max(movementDrag, clampedUnit(sample.properties.movementDrag))
+        }
+      })
+    }),
+  )
   if (Result.isFailure(dragScan)) {
     return Result.fail(dragScan.failure)
   }
@@ -216,43 +219,44 @@ export const applySurfaceMotion = (
 export const sampleBlockHazards = (
   box: AABB,
   environment: BlockEnvironment,
-): Result.Result<BlockHazards, Brand.BrandError | RangeError> => {
+): Result.Result<BlockHazards, EnvironmentError> => {
   let contactDamage = BlockContactDamage(0)
   let suffocating = false
   let climbable = false
 
-  const scan = forEachCell(box, (bx, by, bz) => {
-    const sample = environment.blockAt(bx, by, bz)
-    if (sample === null) {
-      return Result.succeed(globalThis.undefined)
-    }
-
-    return Result.flatMap(blockAABB(bx, by, bz), (cell) => {
-      const touches = touchesCell(box, cell)
-      const damageSnapshot = sample.properties.contactDamage
-      const damage = BlockContactDamage.result(damageSnapshot)
-      if (Result.isFailure(damage)) {
-        return Result.fail(damage.failure)
-      }
-      if (touches && sample.capabilities.climbable) {
-        climbable = true
-      }
-      if (touches && damage.success > contactDamage) {
-        contactDamage = damage.success
+  const scan = forEachCell(box, (bx, by, bz) =>
+    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+      if (sample === null) {
+        return Result.succeed(globalThis.undefined)
       }
 
-      for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
-        const collisionBox = blockAABB(bx, by, bz, shape)
-        if (Result.isFailure(collisionBox)) {
-          return Result.fail(collisionBox.failure)
+      return Result.flatMap(blockAABB(bx, by, bz), (cell) => {
+        const touches = touchesCell(box, cell)
+        const damageSnapshot = sample.properties.contactDamage
+        const damage = BlockContactDamage.result(damageSnapshot)
+        if (Result.isFailure(damage)) {
+          return Result.fail(damage.failure)
         }
-        if (collidesWith(box, collisionBox.success) && sample.capabilities.suffocates) {
-          suffocating = true
+        if (touches && sample.capabilities.climbable) {
+          climbable = true
         }
-      }
-      return Result.succeed(globalThis.undefined)
-    })
-  })
+        if (touches && damage.success > contactDamage) {
+          contactDamage = damage.success
+        }
+
+        for (const shape of localShapeAt(environment, bx, by, bz, sample)) {
+          const collisionBox = blockAABB(bx, by, bz, shape)
+          if (Result.isFailure(collisionBox)) {
+            return Result.fail(collisionBox.failure)
+          }
+          if (collidesWith(box, collisionBox.success) && sample.capabilities.suffocates) {
+            suffocating = true
+          }
+        }
+        return Result.succeed(globalThis.undefined)
+      })
+    }),
+  )
   if (Result.isFailure(scan)) {
     return Result.fail(scan.failure)
   }
@@ -273,7 +277,7 @@ export const sampleFluidEffects = (
   box: AABB,
   environment: BlockEnvironment,
   fluidStateAt: FluidStateAt,
-): Result.Result<FluidEffects, Brand.BrandError | RangeError> => {
+): Result.Result<FluidEffects, EnvironmentError> => {
   const widthResults = Result.all([
     BlockLength.result(box.maxX - box.minX),
     BlockLength.result(box.maxY - box.minY),
@@ -291,54 +295,55 @@ export const sampleFluidEffects = (
     let flowY = 0
     let flowZ = 0
 
-    const scan = forEachCell(box, (bx, by, bz) => {
-      const sample = environment.blockAt(bx, by, bz)
-      if (sample === null) {
-        return Result.succeed(globalThis.undefined)
-      }
-      const kind = sample.properties.fluid
-      if (kind === 'none') {
-        return Result.succeed(globalThis.undefined)
-      }
+    const scan = forEachCell(box, (bx, by, bz) =>
+      Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+        if (sample === null) {
+          return Result.succeed(globalThis.undefined)
+        }
+        const kind = sample.properties.fluid
+        if (kind === 'none') {
+          return Result.succeed(globalThis.undefined)
+        }
 
-      const state = fluidStateAt(bx, by, bz, kind)
-      if (state === null) {
-        return Result.succeed(globalThis.undefined)
-      }
-      const levelSnapshot = state.level
-      const level = clampedUnit(levelSnapshot)
-      if (level === 0) {
-        return Result.succeed(globalThis.undefined)
-      }
+        const state = fluidStateAt(bx, by, bz, kind)
+        if (state === null) {
+          return Result.succeed(globalThis.undefined)
+        }
+        const levelSnapshot = state.level
+        const level = clampedUnit(levelSnapshot)
+        if (level === 0) {
+          return Result.succeed(globalThis.undefined)
+        }
 
-      return Result.flatMap(PositionAxis.result(level), (maxY) =>
-        Result.flatMap(
-          blockAABB(bx, by, bz, { ...FULL_BLOCK_SHAPE, maxY }),
-          (fluidBox) => {
-            const volumeX = overlapLength(box.minX, box.maxX, fluidBox.minX, fluidBox.maxX) / widthX
-            const volumeY = overlapLength(box.minY, box.maxY, fluidBox.minY, fluidBox.maxY) / widthY
-            const volumeZ = overlapLength(box.minZ, box.maxZ, fluidBox.minZ, fluidBox.maxZ) / widthZ
-            const contribution = volumeX * volumeY * volumeZ
-            if (contribution === 0) {
+        return Result.flatMap(PositionAxis.result(level), (maxY) =>
+          Result.flatMap(
+            blockAABB(bx, by, bz, { ...FULL_BLOCK_SHAPE, maxY }),
+            (fluidBox) => {
+              const volumeX = overlapLength(box.minX, box.maxX, fluidBox.minX, fluidBox.maxX) / widthX
+              const volumeY = overlapLength(box.minY, box.maxY, fluidBox.minY, fluidBox.maxY) / widthY
+              const volumeZ = overlapLength(box.minZ, box.maxZ, fluidBox.minZ, fluidBox.maxZ) / widthZ
+              const contribution = volumeX * volumeY * volumeZ
+              if (contribution === 0) {
+                return Result.succeed(globalThis.undefined)
+              }
+
+              if (kind === 'water') {
+                waterVolume += contribution
+              } else {
+                lavaVolume += contribution
+              }
+              totalVolume += contribution
+              const flowSnapshot = state.flow
+              const flow = validFlow(flowSnapshot)
+              flowX += flow.x * contribution
+              flowY += flow.y * contribution
+              flowZ += flow.z * contribution
               return Result.succeed(globalThis.undefined)
-            }
-
-            if (kind === 'water') {
-              waterVolume += contribution
-            } else {
-              lavaVolume += contribution
-            }
-            totalVolume += contribution
-            const flowSnapshot = state.flow
-            const flow = validFlow(flowSnapshot)
-            flowX += flow.x * contribution
-            flowY += flow.y * contribution
-            flowZ += flow.z * contribution
-            return Result.succeed(globalThis.undefined)
-          },
-        ),
-      )
-    })
+            },
+          ),
+        )
+      }),
+    )
     if (Result.isFailure(scan)) {
       return Result.fail(scan.failure)
     }

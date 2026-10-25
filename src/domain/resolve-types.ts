@@ -1,13 +1,13 @@
 import type { BlockAxis, BlockProperties, PositionAxis } from '@nerima-games/mc-kernel'
-import type { BlockEnvironment, BlockHazards } from './environment-types.js'
+import type { BlockEnvironment, BlockHazards, BlockLookupError, EnvironmentError } from './environment-types.js'
 import type { BlockShape, HalfHeight } from './coordinates.js'
 import type { BlockLength } from './physical-units.js'
 import type { Body } from './integrate.js'
-import type { Brand } from 'effect'
+import type { Result } from 'effect'
 
-export type ResolveError = Brand.BrandError | RangeError
+export type ResolveError = EnvironmentError
 
-export type BlockPropertiesAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => BlockProperties | null
+export type BlockPropertiesAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockProperties | null, BlockLookupError>
 
 export type BlockShapeAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => BlockShape | null
 

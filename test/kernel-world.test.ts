@@ -59,33 +59,36 @@ const idAt: BlockIdAt = (bx, by, bz) => {
 }
 
 describe('kernel-backed world queries', () => {
-  it('resolves registered block ids and treats air, unknown, and missing cells as empty', () => {
+  it('resolves registered ids and treats air, unknown, and missing cells as empty', () => {
     const resolved = unwrapResult(resolvedBlockOfId(stoneId))
     expect(resolved).toBeDefined()
-    expect(blockAtFromKernel(idAt)(cell(0), cell(0), cell(0))).toBe(resolved)
-    expect(blockAtFromKernel(idAt)(cell(1), cell(0), cell(0))).toBeNull()
-    expect(blockAtFromKernel(idAt)(cell(2), cell(0), cell(0))).toBeNull()
-    expect(blockAtFromKernel(idAt)(cell(3), cell(0), cell(0))).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(0), cell(0), cell(0)))).toBe(resolved)
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(1), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(2), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockAtFromKernel(idAt)(cell(3), cell(0), cell(0)))).toBeNull()
 
-    expect(blockPropertiesAtFromKernel(idAt)(cell(0), cell(0), cell(0))).toBe(resolved?.properties)
-    expect(blockPropertiesAtFromKernel(idAt)(cell(1), cell(0), cell(0))).toBeNull()
-    expect(blockPropertiesAtFromKernel(idAt)(cell(2), cell(0), cell(0))).toBeNull()
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(0), cell(0), cell(0)))).toBe(resolved?.properties)
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(1), cell(0), cell(0)))).toBeNull()
+    expect(unwrapResult(blockPropertiesAtFromKernel(idAt)(cell(2), cell(0), cell(0)))).toBeNull()
   })
 
-  it('treats a kernel registry Result failure as an empty cell', () => {
+  it('propagates invalid block ids and kernel registry failures', () => {
     const invalidId = BlockId.result(Number.NaN)
     if (Result.isSuccess(invalidId)) throw new Error('Expected an invalid block id')
+    expect(Result.isFailure(blockAtFromKernel(() => Number.NaN)(cell(0), cell(0), cell(0)))).toBe(true)
+
     const registryFailure = () => Result.fail(invalidId.failure)
     vi.mocked(resolvedBlockOfId).mockReturnValueOnce(registryFailure()).mockReturnValueOnce(registryFailure())
 
-    expect(blockAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0))).toBeNull()
-    expect(blockPropertiesAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0))).toBeNull()
+    expect(Result.isFailure(blockAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0)))).toBe(true)
+    expect(Result.isFailure(blockPropertiesAtFromKernel(() => stoneId)(cell(0), cell(0), cell(0)))).toBe(true)
   })
 
   it('builds environment queries with optional authoritative geometry', () => {
     const shape: AABB = { ...FULL_BLOCK_SHAPE, minY: PositionAxis(0.25) }
     const plain = blockEnvironmentFromKernel(idAt)
-    expect(plain.blockAt(cell(0), cell(0), cell(0))?.properties).toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
+    expect(unwrapResult(plain.blockAt(cell(0), cell(0), cell(0)))?.properties)
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
     expect(plain.blockShapeAt).toBeUndefined()
 
     const shaped = blockEnvironmentFromKernel(idAt, () => shape)
@@ -105,8 +108,10 @@ describe('kernel-backed world queries', () => {
       blockPropertiesAt: expect.any(Function),
       environment: expect.objectContaining({ blockAt: expect.any(Function) }),
     })
-    expect(plain.blockPropertiesAt(cell(0), cell(0), cell(0))).toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
-    expect(plain.environment.blockAt(cell(0), cell(0), cell(0))).toBe(unwrapResult(resolvedBlockOfId(stoneId)))
+    expect(unwrapResult(plain.blockPropertiesAt(cell(0), cell(0), cell(0))))
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId))?.properties)
+    expect(unwrapResult(plain.environment.blockAt(cell(0), cell(0), cell(0))))
+      .toBe(unwrapResult(resolvedBlockOfId(stoneId)))
 
     const shape: AABB = { ...FULL_BLOCK_SHAPE, maxY: PositionAxis(0.5) }
     const shaped = resolveOptionsFromKernel({ ...base, blockShapeAt: () => shape })

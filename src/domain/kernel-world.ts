@@ -24,17 +24,14 @@ const resolvedBlockAt = (
 ) => {
   const rawBlockId = blockIdAt(bx, by, bz)
   if (rawBlockId === null) {
-    return null
+    return Result.succeed(null)
   }
-  const blockId = BlockId.result(rawBlockId)
-  if (Result.isFailure(blockId) || isEmpty(blockId.success)) {
-    return null
-  }
-  const resolved = resolvedBlockOfId(blockId.success)
-  if (Result.isFailure(resolved)) {
-    return null
-  }
-  return resolved.success ?? null
+  return Result.flatMap(BlockId.result(rawBlockId), (blockId) => {
+    if (isEmpty(blockId)) {
+      return Result.succeed(null)
+    }
+    return Result.map(resolvedBlockOfId(blockId), (resolved) => resolved ?? null)
+  })
 }
 
 /** Adapts a kernel-backed block-id lookup to the environment sample contract. */
@@ -43,7 +40,7 @@ export const blockAtFromKernel = (blockIdAt: BlockIdAt): BlockAt => (bx, by, bz)
 
 /** Adapts a kernel-backed block-id lookup to the resolver's property contract. */
 export const blockPropertiesAtFromKernel = (blockIdAt: BlockIdAt): BlockPropertiesAt => (bx, by, bz) =>
-  resolvedBlockAt(blockIdAt, bx, by, bz)?.properties ?? null
+  Result.map(resolvedBlockAt(blockIdAt, bx, by, bz), (resolved) => resolved?.properties ?? null)
 
 /** Builds an environment that uses kernel block properties and capabilities directly. */
 export const blockEnvironmentFromKernel = (
