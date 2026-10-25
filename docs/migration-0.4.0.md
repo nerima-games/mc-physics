@@ -4,9 +4,9 @@ mc-physics 0.4.0 targets Effect 4 and `@nerima-games/mc-kernel` 0.9.0. It adds b
 
 ## Creating branded inputs and handling results
 
-Create each branded number or string with the matching constructor’s `.result(value)` method. The comparison table names the constructor and whether it comes from mc-physics or mc-kernel. The method validates the raw value and returns a `Result`; inspect the failure before using the success value. For `BlockVector` and `VelocityVector`, use `blockVectorResult(x, y, z)` and `velocityVectorResult(x, y, z)`. `DamageAmount` is a schema-branded kernel type and is validated through `DamageAmountSchema` rather than a brand constructor.
+Create each branded number or string with the matching constructor’s `.result(value)` method. The tables name each constructor and its owning package. The method validates the raw value and returns a `Result`; inspect the failure before using the success value. For `BlockVector` and `VelocityVector`, use `blockVectorResult(x, y, z)` and `velocityVectorResult(x, y, z)`. `DamageAmount` is a schema-branded kernel type and is validated through `DamageAmountSchema` rather than a brand constructor.
 
-In the field tables, `∅` means that field was absent in that release.
+In the field-change table, `∅` means that field was absent in that release.
 
 ```ts
 const speed = BlocksPerSecond.result(rawSpeed)
@@ -156,7 +156,7 @@ The removed explosion and primed-TNT execution exports are now owned by [mc-sim]
 
 ### Frame delta boundary
 
-Use the re-exported kernel `clampFrameDelta` for raw frame deltas. `deltaTimeBetween` accepts monotonic timestamp readings and returns a `Result`; it validates both readings and delegates the interval to kernel `frameDeltaBetween`. `integrateBody` consumes a branded `DeltaTimeSecs` for one fixed step and does not apply a frame clamp internally.
+The removed `clampDeltaTime` accepted a raw number. Its replacement, the re-exported kernel `clampFrameDelta`, accepts a `DeltaTimeSecs` brand. For a raw delta, create it with `DeltaTimeSecs.result(rawDeltaSecs)`, handle a failure, then pass `.success` to `clampFrameDelta`. For timestamp readings, `deltaTimeBetween(previousSecs, currentSecs)` validates both readings, computes the interval through kernel `frameDeltaBetween`, applies the frame clamp, and returns a `Result`. `integrateBody` consumes a branded `DeltaTimeSecs` for one fixed step and does not apply a frame clamp internally.
 
 ### Environment callbacks and collision shapes
 
