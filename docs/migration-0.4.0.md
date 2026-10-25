@@ -12,6 +12,8 @@ Move explosion and primed TNT execution into the simulation layer. Do not replac
 
 Public quantities and identifiers now use the corresponding mc-kernel brands where one exists, including `PositionAxis`, `BlockAxis`, `BlockId`, `EntityId`, `AngleRadians`, `DeltaTimeSecs`, `MonotonicTimeSecs`, `FixedDurationSecs`, and `BlockContactDamage`. Physics-specific units without a shared kernel brand retain their mc-physics semantic types. Dimensionless coefficients and movement input axes remain plain numbers.
 
+Some returned values now expose physics brands: `createFallTrackingState` and `resetFallTrackingState` return a `FallTrackingState` whose `accumulatedFallDistance` is `BlockLength`, and `normalizedOptions` returns entity-collision options whose `cellSize` is `BlockLength`. Construct boundary values with the exported brand constructor's `.option(value)` or `.result(value)` method as appropriate.
+
 Effect 4 brand constructors validate values. At an untrusted boundary, use `.option(value)` when invalid values should be treated as absent, or `.result(value)` when the caller must handle the validation failure. Direct constructor calls are for values already known to be valid; invalid direct calls throw `BrandError`.
 
 `FootY`, `CentreY`, `HalfHeight`, and `DeltaTimeSecs` are exported brand constructor functions, now typed as Effect 4 `Brand.Constructor`. Call them directly only for values already known to be valid; use `.option(value)` or `.result(value)` to validate values at a boundary.
@@ -34,6 +36,8 @@ These public operations now return Effect `Result` values:
 - Time, integration, movement, and resolution: `deltaTimeBetween`, `integrateBody`, `integrate` (the body-array form), `maxFallPerStep`, `advanceFallTracking`, `applyMovementInput`, `applyKnockback`, `pistonExtrusion`, `glideStep`, `fallingBlockCandidateAt`, `resolveBody`, `resolveWorld`, `stepBody`, `stepWorld`, and `maxSpeedWithoutTunnelling`.
 
 `glideStep` now returns `Result<VelocityVector, BrandError>`; its previous return type was `Position`. Check each result before reading `.success`, and handle or propagate `.failure` instead of replacing it with `null`, `undefined`, or a default value.
+
+Other callable return types also changed: `createFallTrackingState` and `resetFallTrackingState` now return a `FallTrackingState` whose `accumulatedFallDistance` is `BlockLength`; `normalizedOptions` returns entity-collision options whose `cellSize` is `BlockLength`; `ExplosionBlockReader` returns `resistance` as `BlockBlastResistance`; and `FluidStateAt` returns a `flow` value of type `FluidFlow` instead of kernel `Position`. Construct `BlockLength` and `BlockBlastResistance` values with their brand constructors' `.option(value)` or `.result(value)` methods when validity is not already established. Adapt `FluidStateAt` callbacks to return the `FluidFlow` object shape.
 
 ```ts
 const result = resolveBody(body, deltaTime, options)
