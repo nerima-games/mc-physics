@@ -182,4 +182,4 @@ out.push("  return Result.succeed(decoded.success)");
 out.push("}");
 out.push(fence);
 out.push("");
-process.stdout.write(out.join("\n"));
+process.stdout.write(`${out.join("\n")}\n`);

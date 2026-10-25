@@ -229,6 +229,7 @@ const decodeDamage = (rawDamage: unknown) => {
   return Result.succeed(decoded.success)
 }
 ```
+
 ## Migration notes
 
 ### Explosion and primed TNT execution
