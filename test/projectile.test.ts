@@ -175,8 +175,7 @@ describe('continuous projectile collisions', () => {
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [{ maxX: 3, maxY: 1, maxZ: 1, minX: 2, minY: 0, minZ: 0 }] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: -1, y: 0, z: 0 }, point: { x: 2 } })
     expect(result.projectile).toMatchObject({ recoverable: true, state: 'stuck', velocity: { x: 0, y: 0, z: 0 } })
-    expect(result.hit?.flightTimeSeconds).toBeGreaterThan(0)
-    expect(result.hit?.flightTimeSeconds).toBeLessThan(0.05)
+    expect(result.hit?.flightTimeSeconds).toBeCloseTo(0.05 * 2 / 4.95, 12)
   })
 
   it('keeps the opposite face normal and despawns on invalid candidate bounds', () => {
