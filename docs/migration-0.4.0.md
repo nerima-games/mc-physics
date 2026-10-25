@@ -14,7 +14,9 @@ Public quantities and identifiers now use the corresponding mc-kernel brands whe
 
 Effect 4 brand constructors validate values. At an untrusted boundary, use `.option(value)` when invalid values should be treated as absent, or `.result(value)` when the caller must handle the validation failure. Direct constructor calls are for values already known to be valid; invalid direct calls throw `BrandError`.
 
-Registry consumers must handle the new result containers: `blockIdOf` returns an Effect `Option`, while `resolvedBlockOfId`, `isKnownBlockId`, `capabilityOfBlockId`, and `resolveBlockProperties` return Effect `Result` values. Import `Option` and `Result` from Effect 4. Check `Option.isNone` before using an option value; check `Result.isFailure` and handle or propagate `.failure` before reading `.success`.
+`FootY`, `CentreY`, `HalfHeight`, and `DeltaTimeSecs` are exported brand constructor functions, now typed as Effect 4 `Brand.Constructor`. Call them directly only for values already known to be valid; use `.option(value)` or `.result(value)` to validate values at a boundary.
+
+Registry consumers must handle the new result containers: `blockIdOf` returns an Effect `Option`, while `resolvedBlockOfId`, `isKnownBlockId`, `capabilityOfBlockId`, and `resolveBlockProperties` return Effect `Result` values. Import `Option` and `Result` from Effect 4. Check an option with `Option.isSome` before reading its `.value`; check `Result.isFailure` and handle or propagate `.failure` before reading `.success`.
 
 `CollisionShape` is available through the public kernel root or the `@nerima-games/mc-kernel/domain/block-properties` subpath. Deep imports into kernel implementation files are not package exports.
 
@@ -24,7 +26,14 @@ Use mc-kernel's `clampFrameDelta` for raw frame deltas. `deltaTimeBetween` accep
 
 ## Result-returning physics operations
 
-In addition to `deltaTimeBetween`, `integrateBody`, `resolveBody`, `resolveWorld`, `stepBody`, `stepWorld`, and `applyMovementInput` return Effect `Result` values. Check the result before reading `.success`; handle or propagate `.failure` instead of replacing it with `null`, `undefined`, or a default value.
+These public operations now return Effect `Result` values:
+
+- Coordinates and geometry: `centreOfFoot`, `footOfCentre`, `standingPlaneAbove`, `entityAABB`, `blockAABB`, `penetrationY`, and `voxelRaycast`.
+- Entity collision: `inverseMassOf`, `collisionOf`, `potentialPairs`, `detectEntityCollisions`, and `resolveEntityCollisions`.
+- Environment sampling and motion: `sampleSurfaceEffects`, `sampleBlockHazards`, `sampleFluidEffects`, `applySurfaceMotion`, and `applyFluidMotion`.
+- Time, integration, movement, and resolution: `deltaTimeBetween`, `integrateBody`, `integrate` (the body-array form), `maxFallPerStep`, `advanceFallTracking`, `applyMovementInput`, `applyKnockback`, `pistonExtrusion`, `glideStep`, `fallingBlockCandidateAt`, `resolveBody`, `resolveWorld`, `stepBody`, `stepWorld`, and `maxSpeedWithoutTunnelling`.
+
+`glideStep` now returns `Result<VelocityVector, BrandError>`; its previous return type was `Position`. Check each result before reading `.success`, and handle or propagate `.failure` instead of replacing it with `null`, `undefined`, or a default value.
 
 ```ts
 const result = resolveBody(body, deltaTime, options)
@@ -34,7 +43,7 @@ if (Result.isFailure(result)) {
 return consume(result.success)
 ```
 
-`BlockAt` and `BlockPropertiesAt` callbacks used by the environment and resolver also return `Result`. A `null` ID from the callback, an ID that mc-kernel recognizes as empty, and a successful registry lookup that returns `undefined` mean no block. A `BlockId` validation or registry-resolution failure must remain a failure so collision and hazard sampling can stop safely.
+The `BlockAt` and `BlockPropertiesAt` callback types used by the environment and resolver also return `Result`. A callback may return `Result.succeed(null)` for a missing ID or an ID that mc-kernel recognizes as empty; a successful registry lookup that returns `undefined` also means no block. A `BlockId` validation or registry-resolution failure must remain a failure so collision and hazard sampling can stop safely.
 
 ## Hazards and movement
 

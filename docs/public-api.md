@@ -26,11 +26,11 @@ Physics-specific brands are exported for `BlockLength`, `BlocksPerSecond`, `Bloc
 
 `ResolveOptions` supplies body dimensions, a required `BlockEnvironment`, and a block-properties lookup, with optional block geometry, step height, and bounce coefficient lookup. `resolveBody`, `resolveWorld`, `stepBody`, and `stepWorld` return `Result` values. `stepBody` and `stepWorld` integrate before resolving collision.
 
-`Resolution` contains the resolved `body`, `isGrounded`, and `hazards`. `hazards` contains `contactDamage`, `suffocating`, and `climbable`. The resolver calls `sampleBlockHazards` once for the final post-collision AABB, including when the resolved body is not dynamic. The caller decides how to apply contact damage, suffocation, or climbing effects.
+`Resolution` contains the resolved `body`, `isGrounded`, and `hazards`. `hazards` contains `contactDamage`, `suffocating`, and `climbable`. The resolver calls `sampleBlockHazards` once for the final post-collision AABB, including when the resolved body is not dynamic. `sampleBlockHazards` returns `Result<BlockHazards, EnvironmentError>`. The caller decides how to apply contact damage, suffocation, or climbing effects.
 
 `BlockEnvironment` injects a block sample query and may supply state-specific geometry. `BlockAt` and `BlockPropertiesAt` return Effect `Result` values so ID validation and registry-resolution failures reach the caller. `blockAtFromKernel`, `blockPropertiesAtFromKernel`, `blockEnvironmentFromKernel`, and `resolveOptionsFromKernel` adapt a numeric block-ID query to the package contracts. A missing or empty ID, or a successful registry lookup that returns `undefined`, becomes `Result.succeed(null)`; validation and registry failures remain `Result` failures.
 
-Environment exports include `sampleSurfaceEffects` and `applySurfaceMotion`, `sampleBlockHazards`, and `sampleFluidEffects`. `applySurfaceMotion` and `applyFluidMotion` return `Result<Body, BrandError>`. Fluid state and motion configuration are injected. `FlowingFluidKind` and the other shared block contracts come from mc-kernel.
+`sampleSurfaceEffects` returns `Result<SurfaceEffects, EnvironmentError>`, and `sampleFluidEffects` returns `Result<FluidEffects, EnvironmentError>`. `applySurfaceMotion` and `applyFluidMotion` return `Result<Body, BrandError>`. Fluid state and motion configuration are injected. `FlowingFluidKind` and the other shared block contracts come from mc-kernel.
 
 ## Movement and creative flight
 
