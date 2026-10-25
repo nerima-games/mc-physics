@@ -207,10 +207,13 @@ const segmentAABB = (
   start: Position,
   end: Position,
   box: AABB,
-): Result.Result<SegmentHit | null, Brand.BrandError> => {
+): Result.Result<SegmentHit | null, Brand.BrandError | RangeError> => {
   const checkedBox = aabbResult(box)
-  if (Result.isFailure(checkedBox) || !validBox(checkedBox.success)) {
-    return Result.succeed(null)
+  if (Result.isFailure(checkedBox)) {
+    return Result.fail(checkedBox.failure)
+  }
+  if (!validBox(checkedBox.success)) {
+    return Result.fail(new RangeError('Projectile collision box bounds are inverted'))
   }
   return Result.flatMap(positionResult(end.x - start.x, end.y - start.y, end.z - start.z), (delta) => {
     let far = 1
@@ -344,8 +347,8 @@ const firstBlockHit = (
   start: Position,
   end: Position,
   world: ProjectileWorld,
-): Result.Result<CandidateHit | null, Brand.BrandError> =>
-  world.blockBounds(start, end).reduce<Result.Result<CandidateHit | null, Brand.BrandError>>(
+): Result.Result<CandidateHit | null, Brand.BrandError | RangeError> =>
+  world.blockBounds(start, end).reduce<Result.Result<CandidateHit | null, Brand.BrandError | RangeError>>(
     (previous, box) => Result.flatMap(previous, (previousHit) =>
       Result.map(segmentAABB(start, end, box), (hit) => (hit && earlierHit(previousHit, { ...hit, kind: 'block' })) ?? previousHit),
     ),
@@ -359,8 +362,8 @@ const firstEntityHit = (
   shooterId: EntityIdValue | undefined,
   ageSeconds: FixedDurationSecs,
   shooterGraceSeconds: FixedDurationSecs,
-): Result.Result<CandidateHit | null, Brand.BrandError> => {
-  let first: Result.Result<CandidateHit | null, Brand.BrandError> = Result.succeed(null)
+): Result.Result<CandidateHit | null, Brand.BrandError | RangeError> => {
+  let first: Result.Result<CandidateHit | null, Brand.BrandError | RangeError> = Result.succeed(null)
   for (const entity of world.entities) {
     first = Result.flatMap(first, (priorHit) =>
       Result.flatMap(EntityId.result(entity.id), (entityId) => {
@@ -386,24 +389,24 @@ const firstHit = (
   end: Position,
   world: ProjectileWorld,
   shooterGraceSeconds: FixedDurationSecs,
-): Result.Result<CandidateHit | null, Brand.BrandError> => Result.flatMap(firstBlockHit(state.position, end, world), (blockHit) =>
-    Result.map(firstEntityHit(
-      state.position,
-      end,
-      world,
-      state.shooterId,
-      state.ageSeconds,
-      shooterGraceSeconds,
-    ), (entityHit) => {
-      if (blockHit === null) {
-        return entityHit
-      }
-      if (entityHit === null) {
-        return blockHit
-      }
-      return earlierHit(blockHit, entityHit)
-    }),
-  )
+): Result.Result<CandidateHit | null, Brand.BrandError | RangeError> => Result.flatMap(firstBlockHit(state.position, end, world), (blockHit) =>
+  Result.map(firstEntityHit(
+    state.position,
+    end,
+    world,
+    state.shooterId,
+    state.ageSeconds,
+    shooterGraceSeconds,
+  ), (entityHit) => {
+    if (blockHit === null) {
+      return entityHit
+    }
+    if (entityHit === null) {
+      return blockHit
+    }
+    return earlierHit(blockHit, entityHit)
+  }),
+)
 
 const buildHitResult = (
   state: Extract<Projectile, { state: 'flying' }>,
