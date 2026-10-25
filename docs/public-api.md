@@ -20,7 +20,7 @@ Physics-specific brands are exported for `BlockLength`, `BlocksPerSecond`, `Bloc
 
 `DeltaTimeSecs`, `MonotonicTimeSecs`, `MIN_DELTA_SECS`, `MAX_DELTA_SECS`, `FIRST_FRAME_DELTA_SECS`, and `clampFrameDelta` come from mc-kernel. The exported `clampFrameDelta` is the frame-boundary clamp. `deltaTimeBetween(previousSecs, currentSecs)` validates monotonic readings and returns a `Result<DeltaTimeSecs, BrandError>`; `undefined` for the previous reading selects the first-frame delta. `isClampedDelta` checks whether a kernel delta is within the safe frame range.
 
-`integrateBody` advances one `Body` using semi-implicit Euler and returns `Result<Body, BrandError>`. `integrate` applies that operation to a body array and returns `Result<ReadonlyArray<Body>, BrandError>`. `IntegrationOptions` can override gravity, per-second drag, and terminal downward speed. The integrator does not clamp the delta; frame loops clamp once at their boundary, while fixed-step callers pass their validated step directly. `GRAVITY_Y`, `TERMINAL_VELOCITY_Y`, and `maxFallPerStep` are also exported.
+`integrateBody` advances one `Body` using semi-implicit Euler and returns `Result<Body, BrandError | RangeError>`. `integrate` applies that operation to a body array and returns `Result<ReadonlyArray<Body>, BrandError | RangeError>`. `IntegrationOptions` can override gravity, per-second drag, and terminal downward speed. For dynamic bodies, omitted options use their defaults; supplied invalid values fail (`dragPerSecond` must be in `[0, 1]`, and `terminalVelocityY` must be finite and negative). The integrator does not clamp the delta; frame loops clamp once at their boundary, while fixed-step callers pass their validated step directly. `GRAVITY_Y`, `TERMINAL_VELOCITY_Y`, and `maxFallPerStep` are also exported.
 
 ## Collision resolution and environment
 
@@ -30,7 +30,7 @@ Physics-specific brands are exported for `BlockLength`, `BlocksPerSecond`, `Bloc
 
 `BlockEnvironment` injects a block sample query and may supply state-specific geometry. `BlockAt` and `BlockPropertiesAt` return Effect `Result` values so ID validation and registry-resolution failures reach the caller. `blockAtFromKernel`, `blockPropertiesAtFromKernel`, `blockEnvironmentFromKernel`, and `resolveOptionsFromKernel` adapt a numeric block-ID query to the package contracts. A missing or empty ID, or a successful registry lookup that returns `undefined`, becomes `Result.succeed(null)`; validation and registry failures remain `Result` failures.
 
-`sampleSurfaceEffects` returns `Result<SurfaceEffects, EnvironmentError>`, and `sampleFluidEffects` returns `Result<FluidEffects, EnvironmentError>`. `applySurfaceMotion` and `applyFluidMotion` return `Result<Body, BrandError>`. Fluid state and motion configuration are injected. `FlowingFluidKind` and the other shared block contracts come from mc-kernel.
+`sampleSurfaceEffects` returns `Result<SurfaceEffects, EnvironmentError>`, and `sampleFluidEffects` returns `Result<FluidEffects, EnvironmentError>`. `applySurfaceMotion` returns `Result<Body, BrandError | RangeError>`; `applyFluidMotion` returns `Result<Body, BrandError>`. For dynamic bodies, an omitted `movementDragY` leaves vertical velocity unchanged, while non-finite supplied surface coefficients fail. Fluid state and motion configuration are injected. `FlowingFluidKind` and the other shared block contracts come from mc-kernel.
 
 ## Movement and creative flight
 

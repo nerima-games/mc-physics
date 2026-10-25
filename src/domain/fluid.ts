@@ -35,11 +35,17 @@ export const applyFluidMotion = (
   const bodyVySnapshot = body.vy
   const bodyVzSnapshot = body.vz
   const waterDragSnapshot = coefficients.water.dragPerSecond
-  const waterDragYSnapshot = coefficients.water.dragPerSecondY ?? waterDragSnapshot
+  let waterDragYSnapshot = waterDragSnapshot
+  if (typeof coefficients.water.dragPerSecondY !== 'undefined') {
+    waterDragYSnapshot = coefficients.water.dragPerSecondY
+  }
   const waterBuoyancySnapshot = coefficients.water.buoyancyAcceleration
   const waterFlowAccelerationSnapshot = coefficients.water.flowAcceleration
   const lavaDragSnapshot = coefficients.lava.dragPerSecond
-  const lavaDragYSnapshot = coefficients.lava.dragPerSecondY ?? lavaDragSnapshot
+  let lavaDragYSnapshot = lavaDragSnapshot
+  if (typeof coefficients.lava.dragPerSecondY !== 'undefined') {
+    lavaDragYSnapshot = coefficients.lava.dragPerSecondY
+  }
   const lavaBuoyancySnapshot = coefficients.lava.buoyancyAcceleration
   const lavaFlowAccelerationSnapshot = coefficients.lava.flowAcceleration
   const inputs = Result.all([

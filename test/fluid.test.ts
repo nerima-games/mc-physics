@@ -98,6 +98,20 @@ describe('vertical fluid drag (FR-006: anisotropic lava/water drag)', () => {
     expect(actual.vy).toBeCloseTo(-1 * multiplier + buoyancy * seconds + 7 * flowAcceleration * seconds)
   })
 
+  it('returns a failure for explicit null or invalid vertical drag instead of using isotropic drag', () => {
+    for (const invalid of [null, Number.NaN]) {
+      const invalidCoefficients: FluidMotionCoefficients = {
+        ...coefficients,
+        water: {
+          ...coefficients.water,
+          // @ts-expect-error Exercise runtime rejection of explicit null or NaN.
+          dragPerSecondY: invalid,
+        },
+      }
+      expect(Result.isFailure(applyFluidMotionResult(bodyOf(), DeltaTimeSecs(0.5), effects, invalidCoefficients))).toBe(true)
+    }
+  })
+
   it('applies a distinct vertical drag when dragPerSecondY is specified per fluid, independent of horizontal drag', () => {
     const anisotropic: FluidMotionCoefficients = {
       water: { dragPerSecond: PerSecond(2), dragPerSecondY: PerSecond(6), buoyancyAcceleration: BlocksPerSecondSquared(0), flowAcceleration: BlocksPerSecondSquared(0) },

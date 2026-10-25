@@ -93,32 +93,16 @@ export type Body = {
  *
  * `terminalVelocityY` (default `TERMINAL_VELOCITY_Y`) overrides the downward
  * speed cap. Only a finite, negative value is a meaningful cap on falling;
- * anything else falls back to the module default.
+ * invalid supplied values fail.
  */
-/** Only a finite, negative value is a valid downward-speed cap; anything else falls back to the default. */
-const normalizeTerminalVelocityY = (value: BlocksPerSecond): BlocksPerSecond => {
-  if (Number.isFinite(value) && value < 0) {
-    return value
-  }
-  return TERMINAL_VELOCITY_Y
-}
-
 /**
  * Only a finite value in [0, 1] is a meaningful per-second drag multiplier.
  * A negative base raised to a non-integer exponent (deltaTime is a fractional
  * seconds value) is NaN in IEEE 754, and NaN then multiplies into every field
  * of the body — position included — via `draggedVx/Vy/Vz`. Above 1 is
  * rejected too: that is not "more resistance", it is velocity growing every
- * step, i.e. energy injected from nowhere. Anything invalid falls back to 1
- * (no drag).
+ * step, i.e. energy injected from nowhere. Invalid supplied values fail.
  */
-const normalizeDragPerSecond = (value: number): number => {
-  if (Number.isFinite(value) && value >= 0 && value <= 1) {
-    return value
-  }
-  return 1
-}
-
 export type IntegrationOptions = Readonly<{
   gravityY?: BlocksPerSecondSquared
   dragPerSecond?: number
@@ -129,7 +113,7 @@ export const integrateBody = (
   body: Body,
   deltaTime: DeltaTimeSecs,
   options: IntegrationOptions = {},
-): Result.Result<Body, Brand.BrandError> => {
+): Result.Result<Body, Brand.BrandError | RangeError> => {
   const xSnapshot = body.x
   const ySnapshot = body.y
   const zSnapshot = body.z
@@ -155,20 +139,38 @@ export const integrateBody = (
     return Result.succeed(body)
   }
 
-  const gravitySnapshot = options.gravityY ?? GRAVITY_Y
+  let gravitySnapshot = GRAVITY_Y
+  if (typeof options.gravityY !== 'undefined') {
+    gravitySnapshot = options.gravityY
+  }
   const checkedGravity = BlocksPerSecondSquared.result(gravitySnapshot)
   if (Result.isFailure(checkedGravity)) {
     return Result.fail(checkedGravity.failure)
   }
-  const drag = normalizeDragPerSecond(options.dragPerSecond ?? 1) ** validDeltaTime
+  let dragSnapshot = 1
+  if (typeof options.dragPerSecond !== 'undefined') {
+    dragSnapshot = options.dragPerSecond
+  }
+  if (!Number.isFinite(dragSnapshot) || dragSnapshot < 0 || dragSnapshot > 1) {
+    return Result.fail(new RangeError('dragPerSecond must be finite and between 0 and 1'))
+  }
+  const drag = dragSnapshot ** validDeltaTime
   const draggedVx = vx * drag
   const draggedVy = vy * drag
   const draggedVz = vz * drag
 
   // Velocity first, position from the NEW velocity. See the file header.
   const acceleratedY = draggedVy + checkedGravity.success * validDeltaTime
-  const terminalSnapshot = options.terminalVelocityY ?? TERMINAL_VELOCITY_Y
-  const checkedTerminal = BlocksPerSecond.result(normalizeTerminalVelocityY(terminalSnapshot))
+  let terminalSnapshot = TERMINAL_VELOCITY_Y
+  if (typeof options.terminalVelocityY !== 'undefined') {
+    terminalSnapshot = options.terminalVelocityY
+  }
+  const checkedTerminal = Result.flatMap(BlocksPerSecond.result(terminalSnapshot), (value) => {
+    if (value < 0) {
+      return Result.succeed(value)
+    }
+    return Result.fail(new RangeError('terminalVelocityY must be negative'))
+  })
   return Result.flatMap(checkedTerminal, (safeTerminalVelocityY) => {
     let clampedY = acceleratedY
     if (acceleratedY < safeTerminalVelocityY) {
@@ -202,7 +204,7 @@ export const integrate = (
   bodies: ReadonlyArray<Body>,
   deltaTime: DeltaTimeSecs,
   options: IntegrationOptions = {},
-): Result.Result<ReadonlyArray<Body>, Brand.BrandError> =>
+): Result.Result<ReadonlyArray<Body>, Brand.BrandError | RangeError> =>
   Result.all(bodies.map((body) => integrateBody(body, deltaTime, options)))
 
 /**

@@ -216,21 +216,21 @@ describe('air drag (FR-004)', () => {
       expect(stepped.vz).toBeCloseTo(-4 * expectedFactor, 12)
   })
 
-  it('REGRESSION: an invalid dragPerSecond (negative, NaN, infinite, or >1) falls back to no drag (1) instead of poisoning the body with NaN', () => {
+  it('returns a failure for invalid dragPerSecond values instead of substituting the no-drag default', () => {
       // A negative base raised to a non-integer exponent (a fractional
       // deltaTime, the normal case) is NaN in IEEE 754, and NaN multiplies
       // into every field of the body. >1 is rejected too: that is not "more
       // resistance", it is velocity growing every step — energy from nowhere.
       const delta = DeltaTimeSecs(MAX_DELTA_SECS)
       const body = dynamicBody({ vx: 3, vy: -1, vz: -2 })
-      const withNoDrag = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: 1, terminalVelocityY: TERMINAL_VELOCITY_Y })
       for (const invalid of [-1, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, 2]) {
-        const stepped = integrateBody(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: invalid, terminalVelocityY: TERMINAL_VELOCITY_Y })
-        expect(stepped).toStrictEqual(withNoDrag)
-        for (const field of [stepped.vx, stepped.vy, stepped.vz, stepped.x, stepped.y, stepped.z] as const) {
-          expect(Number.isNaN(field)).toBe(false)
-        }
+        expect(Result.isFailure(integrateBodyResult(body, delta, { gravityY: GRAVITY_Y, dragPerSecond: invalid, terminalVelocityY: TERMINAL_VELOCITY_Y }))).toBe(true)
       }
+      expect(Result.isFailure(integrateBodyResult(body, delta, {
+        gravityY: GRAVITY_Y,
+        // @ts-expect-error Exercise runtime rejection of explicit null.
+        dragPerSecond: null,
+      }))).toBe(true)
   })
 })
 
@@ -249,25 +249,20 @@ describe('injected terminal velocity (FR-005)', () => {
       expect(body.vy).toBe(shallow)
   })
 
-  it('REGRESSION: a non-negative or non-finite terminalVelocityY falls back to the module default', () => {
+  it('returns a failure for non-negative or non-finite terminalVelocityY values instead of substituting the default', () => {
       const delta = DeltaTimeSecs(MAX_DELTA_SECS)
-      const fallToTerminal = (invalid: number): number => {
-        let body = dynamicBody()
-        // |TERMINAL_VELOCITY_Y| / |GRAVITY_Y| ≈ 3.26s to reach the asymptote;
-        // 200 steps at this delta is ~10s, comfortably past it.
-        for (let step = 0; step < 200; step += 1) {
-          body = integrateBody(body, delta, {
-            gravityY: GRAVITY_Y,
-            dragPerSecond: 1,
-            // @ts-expect-error Exercise runtime fallback for malformed terminal velocity.
-            terminalVelocityY: invalid,
-          })
-        }
-        return body.vy
-      }
       for (const invalid of [0, 5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-        expect(fallToTerminal(invalid)).toBe(TERMINAL_VELOCITY_Y)
+        expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, {
+          gravityY: GRAVITY_Y,
+          dragPerSecond: 1,
+          // @ts-expect-error Exercise runtime rejection of malformed branded values.
+          terminalVelocityY: invalid,
+        }))).toBe(true)
       }
+      expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, {
+        // @ts-expect-error Exercise runtime rejection of explicit null.
+        terminalVelocityY: null,
+      }))).toBe(true)
   })
 
   it('returns failures when computed integration scalars cannot be branded', () => {
@@ -292,21 +287,12 @@ describe('injected terminal velocity (FR-005)', () => {
       // @ts-expect-error Exercise runtime rejection of a malformed branded value.
       gravityY: Number.NaN,
     }))).toBe(true)
+    expect(Result.isFailure(integrateBodyResult(dynamicBody(), delta, {
+      // @ts-expect-error Exercise runtime rejection of explicit null.
+      gravityY: null,
+    }))).toBe(true)
     // @ts-expect-error Exercise runtime rejection of a malformed branded value.
     expect(Result.isFailure(maxFallPerStepResult(Number.NaN))).toBe(true)
   })
 
-  it('uses the valid default terminal velocity when its option is invalid', () => {
-    const result = integrateBodyResult(
-      dynamicBody({ vy: TERMINAL_VELOCITY_Y - 1 }),
-      DeltaTimeSecs(MAX_DELTA_SECS),
-      {
-        // @ts-expect-error Exercise runtime fallback for malformed terminal velocity.
-        terminalVelocityY: Number.NaN,
-      },
-    )
-
-    expect(Result.isSuccess(result)).toBe(true)
-    if (Result.isSuccess(result)) expect(result.success.vy).toBe(TERMINAL_VELOCITY_Y)
-  })
 })

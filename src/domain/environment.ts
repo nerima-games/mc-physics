@@ -125,6 +125,13 @@ const finiteOr = (value: number, fallback: number): number => {
 
 const clampedUnit = (value: number): number => Math.min(1, Math.max(0, finiteOr(value, 0)))
 
+const finiteSurfaceEffect = (value: number, name: string): Result.Result<number, RangeError> => {
+  if (!Number.isFinite(value)) {
+    return Result.fail(new RangeError(`${name} must be finite`))
+  }
+  return Result.succeed(value)
+}
+
 const touchesCell = (box: AABB, cell: AABB): boolean =>
   box.minX <= cell.maxX &&
   box.maxX >= cell.minX &&
@@ -189,9 +196,22 @@ export const sampleSurfaceEffects = (
 export const applySurfaceMotion = (
   body: Body,
   effects: SurfaceEffects,
-): Result.Result<Body, Brand.BrandError> => {
+): Result.Result<Body, Brand.BrandError | RangeError> => {
   if (body.kind !== 'dynamic') {
     return Result.succeed(body)
+  }
+
+  let movementDragYSnapshot = 0
+  if (typeof effects.movementDragY !== 'undefined') {
+    movementDragYSnapshot = effects.movementDragY
+  }
+  const checkedEffects = Result.all([
+    finiteSurfaceEffect(effects.friction, 'friction'),
+    finiteSurfaceEffect(effects.movementDrag, 'movementDrag'),
+    finiteSurfaceEffect(movementDragYSnapshot, 'movementDragY'),
+  ])
+  if (Result.isFailure(checkedEffects)) {
+    return Result.fail(checkedEffects.failure)
   }
 
   const vxSnapshot = body.vx
@@ -203,8 +223,9 @@ export const applySurfaceMotion = (
     BlocksPerSecond.result(vzSnapshot),
   ])
   return Result.flatMap(inputs, ([vx, vy, vz]) => {
-    const multiplier = clampedUnit(effects.friction) * (1 - clampedUnit(effects.movementDrag))
-    const verticalMultiplier = 1 - clampedUnit(effects.movementDragY ?? 0)
+    const [friction, movementDrag, movementDragY] = checkedEffects.success
+    const multiplier = clampedUnit(friction) * (1 - clampedUnit(movementDrag))
+    const verticalMultiplier = 1 - clampedUnit(movementDragY)
     return Result.map(
       Result.all([
         BlocksPerSecond.result(vx * multiplier),

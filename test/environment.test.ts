@@ -157,7 +157,7 @@ describe('environment material sampling', () => {
     expect(effects.movementDrag).toBe(0)
   })
 
-  it('applies only dynamic surface motion and sanitizes external coefficients', () => {
+  it('applies only dynamic surface motion and rejects non-finite external coefficients', () => {
     const effects = { friction: 0.5, movementDrag: 0.8 }
     const dynamic = applySurfaceMotion(bodyOf(), effects)
     expect(dynamic.vx).toBeCloseTo(0.2)
@@ -166,11 +166,7 @@ describe('environment material sampling', () => {
     const kinematicBody = bodyOf('kinematic')
     expect(applySurfaceMotion(staticBody, effects)).toBe(staticBody)
     expect(applySurfaceMotion(kinematicBody, effects)).toBe(kinematicBody)
-    expect(applySurfaceMotion(bodyOf(), { friction: Number.NaN, movementDrag: Number.POSITIVE_INFINITY })).toEqual({
-      ...bodyOf(),
-      vx: 0,
-      vz: -0,
-    })
+    expect(Result.isFailure(applySurfaceMotionResult(bodyOf(), { friction: Number.NaN, movementDrag: Number.POSITIVE_INFINITY }))).toBe(true)
     const invalidBody: Body = {
       ...bodyOf(),
       // @ts-expect-error Exercise runtime rejection of a malformed branded value.
@@ -195,13 +191,15 @@ describe('vertical surface drag (FR-006: cobwebs, powder snow)', () => {
     expect(actual.vz).toBeCloseTo(-0.4)
   })
 
-  it('sanitizes a non-finite movementDragY to zero drag, the same fallback clampedUnit uses for movementDrag/friction', () => {
-    const actual = applySurfaceMotion(bodyOf(), {
-      friction: 1,
-      movementDrag: 0,
-      movementDragY: Number.POSITIVE_INFINITY,
-    })
-    expect(actual.vy).toBe(bodyOf().vy)
+  it('returns a failure for null or non-finite movementDragY instead of using zero drag', () => {
+    for (const movementDragY of [null, Number.POSITIVE_INFINITY]) {
+      expect(Result.isFailure(applySurfaceMotionResult(bodyOf(), {
+        friction: 1,
+        movementDrag: 0,
+        // @ts-expect-error Exercise runtime rejection of explicit null or infinity.
+        movementDragY,
+      }))).toBe(true)
+    }
   })
 
   it('property: movementDragY in (0, 1] never increases |vy|, and omitting it leaves vy exactly unchanged', () => {
