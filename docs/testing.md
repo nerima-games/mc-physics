@@ -9,7 +9,7 @@ corepack pnpm verify
 corepack pnpm test:coverage
 corepack pnpm package:verify
 corepack pnpm audit
-nix run nixpkgs#actionlint -- .github/workflows
+nix run nixpkgs#actionlint -- .github/workflows/*.yaml
 ```
 
 `verify` runs the build and test TypeScript checks, lint, and Vitest. `test:coverage` runs the Vitest suite with V8 coverage. `package:verify` builds the package, checks runtime and declaration exports, packs it, and verifies the archive. CI uses Node.js 26 and the pnpm version pinned in `package.json`; Node.js 24 remains the package engine minimum.

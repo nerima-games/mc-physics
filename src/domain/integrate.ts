@@ -139,17 +139,19 @@ export const integrateBody = (
     return Result.succeed(body)
   }
 
+  const gravityOptionSnapshot = options.gravityY
   let gravitySnapshot = GRAVITY_Y
-  if (typeof options.gravityY !== 'undefined') {
-    gravitySnapshot = options.gravityY
+  if (typeof gravityOptionSnapshot !== 'undefined') {
+    gravitySnapshot = gravityOptionSnapshot
   }
   const checkedGravity = BlocksPerSecondSquared.result(gravitySnapshot)
   if (Result.isFailure(checkedGravity)) {
     return Result.fail(checkedGravity.failure)
   }
+  const dragOptionSnapshot = options.dragPerSecond
   let dragSnapshot = 1
-  if (typeof options.dragPerSecond !== 'undefined') {
-    dragSnapshot = options.dragPerSecond
+  if (typeof dragOptionSnapshot !== 'undefined') {
+    dragSnapshot = dragOptionSnapshot
   }
   if (!Number.isFinite(dragSnapshot) || dragSnapshot < 0 || dragSnapshot > 1) {
     return Result.fail(new RangeError('dragPerSecond must be finite and between 0 and 1'))
@@ -161,9 +163,10 @@ export const integrateBody = (
 
   // Velocity first, position from the NEW velocity. See the file header.
   const acceleratedY = draggedVy + checkedGravity.success * validDeltaTime
+  const terminalVelocityOptionSnapshot = options.terminalVelocityY
   let terminalSnapshot = TERMINAL_VELOCITY_Y
-  if (typeof options.terminalVelocityY !== 'undefined') {
-    terminalSnapshot = options.terminalVelocityY
+  if (typeof terminalVelocityOptionSnapshot !== 'undefined') {
+    terminalSnapshot = terminalVelocityOptionSnapshot
   }
   const checkedTerminal = Result.flatMap(BlocksPerSecond.result(terminalSnapshot), (value) => {
     if (value < 0) {

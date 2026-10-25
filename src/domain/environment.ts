@@ -201,9 +201,10 @@ export const applySurfaceMotion = (
     return Result.succeed(body)
   }
 
+  const movementDragYOptionSnapshot = effects.movementDragY
   let movementDragYSnapshot = 0
-  if (typeof effects.movementDragY !== 'undefined') {
-    movementDragYSnapshot = effects.movementDragY
+  if (typeof movementDragYOptionSnapshot !== 'undefined') {
+    movementDragYSnapshot = movementDragYOptionSnapshot
   }
   const checkedEffects = Result.all([
     finiteSurfaceEffect(effects.friction, 'friction'),
