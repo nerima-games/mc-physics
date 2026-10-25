@@ -184,7 +184,7 @@ describe('continuous projectile collisions', () => {
     const result = stepProjectile(projectile, 0.05, world({ blockBounds: () => [{ maxX: 2, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }] }), ARROW_PROFILE)
     expect(result.hit).toMatchObject({ kind: 'block', normal: { x: 1, y: 0, z: 0 }, point: { x: 2 } })
 
-    const flight = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 })
+    const invalidFlight = launchProjectile({ pitchRadians: 0, position: { x: 0, y: 0.5, z: 0.5 }, speed: 10, yawRadians: -Math.PI / 2 })
     const invalidBlockBoxes = [
       rawBox({ maxX: Number.NaN, maxY: 1, maxZ: 1, minX: 0, minY: 0, minZ: 0 }),
       rawBox({ maxX: 0, maxY: 1, maxZ: 1, minX: 1, minY: 0, minZ: 0 }),
@@ -195,13 +195,13 @@ describe('continuous projectile collisions', () => {
     ]
 
     for (const bounds of invalidBlockBoxes) {
-      const despawned = stepProjectile(flight, 0.05, world({ blockBounds: () => [bounds] }), ARROW_PROFILE)
+      const despawned = stepProjectile(invalidFlight, 0.05, world({ blockBounds: () => [bounds] }), ARROW_PROFILE)
       expect(despawned.hit).toBeUndefined()
       expect(despawned.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
     }
     for (const bounds of invalidEntityBoxes) {
       const invalidEntityWorld = world({ entities: [{ bounds, id: 'invalid-bounds' }] })
-      const despawned = stepProjectile(flight, 0.05, invalidEntityWorld, ARROW_PROFILE)
+      const despawned = stepProjectile(invalidFlight, 0.05, invalidEntityWorld, ARROW_PROFILE)
       expect(despawned.hit).toBeUndefined()
       expect(despawned.projectile).toMatchObject({ reason: 'invalid', state: 'despawned' })
     }
