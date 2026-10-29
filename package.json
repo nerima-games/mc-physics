@@ -59,7 +59,7 @@
     "verify": "corepack pnpm run typecheck && corepack pnpm run lint && corepack pnpm run test"
   },
   "dependencies": {
-    "@nerima-games/mc-kernel": "0.9.0",
+    "@nerima-games/mc-kernel": "0.14.0",
     "effect": "4.0.5"
   },
   "devDependencies": {
