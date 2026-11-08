@@ -73,6 +73,9 @@ const contextOf = (overrides: Partial<MovementContext> = {}): MovementContext =>
   ...overrides,
 })
 
+const EXPECTED_ORDINARY_WALK_STEADY_SPEED = 4.317180616740088
+const EXPECTED_COBWEB_STEADY_SPEED = 1.079295154185022
+
 const step = (
   body: Body,
   input: MovementInput,
@@ -323,9 +326,10 @@ describe('surface movement profiles', () => {
     const ordinarySpeed = speedAfterTicks(inputOf(), contextOf())
     const cobwebSpeed = speedAfterTicks(inputOf(), cobweb)
 
-    expect(ordinarySpeed).toBeCloseTo(ordinaryWalkSteadySpeed, 8)
-    expect(cobwebSpeed).toBeCloseTo(ordinaryWalkSteadySpeed * 0.25, 8)
-    expect(cobwebSpeed / ordinarySpeed).toBeCloseTo(0.25, 8)
+    expect(ordinaryWalkSteadySpeed).toBeCloseTo(EXPECTED_ORDINARY_WALK_STEADY_SPEED, 8)
+    expect(ordinaryWalkSteadySpeed * 0.25).toBeCloseTo(EXPECTED_COBWEB_STEADY_SPEED, 8)
+    expect(ordinarySpeed).toBeCloseTo(EXPECTED_ORDINARY_WALK_STEADY_SPEED, 8)
+    expect(cobwebSpeed).toBeCloseTo(EXPECTED_COBWEB_STEADY_SPEED, 8)
   })
 
   it('applies cobweb horizontal and vertical momentum multipliers to contacting entities', () => {
