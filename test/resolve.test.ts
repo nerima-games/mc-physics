@@ -529,8 +529,16 @@ describe('sneak edge prevention', () => {
     const positionZ = PositionAxis(0.5)
     const feetY = PositionAxis(1)
 
-    expect(Result.isFailure(hasGroundSupportWithinStepResult(options, positionX, positionZ, feetY, Number.NaN))).toBe(true)
-    expect(Result.isFailure(hasGroundSupportWithinStepResult(options, positionX, positionZ, feetY, -0.1))).toBe(true)
+    expect(Result.isFailure(Reflect.apply(
+      hasGroundSupportWithinStepResult,
+      undefined,
+      [options, positionX, positionZ, feetY, Number.NaN],
+    ))).toBe(true)
+    expect(Result.isFailure(Reflect.apply(
+      hasGroundSupportWithinStepResult,
+      undefined,
+      [options, positionX, positionZ, feetY, -0.1],
+    ))).toBe(true)
   })
 })
 

@@ -47,5 +47,5 @@ export type HorizontalPosition = {
 export type HasGroundSupport = (
   positionX: PositionAxis,
   positionZ: PositionAxis,
-  maxStepDown: number,
+  maxStepDown: BlockLength,
 ) => Result.Result<boolean, ResolveError>

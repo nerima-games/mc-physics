@@ -86,7 +86,7 @@ export const hasGroundSupportWithinStep = (
   positionX: PositionAxis,
   positionZ: PositionAxis,
   feetY: PositionAxis,
-  maxStepDown: number,
+  maxStepDown: BlockLength,
 ): Result.Result<boolean, ResolveError> => {
   const checkedStepDown = BlockLength.result(maxStepDown)
   if (Result.isFailure(checkedStepDown)) {
