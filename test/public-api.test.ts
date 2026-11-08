@@ -60,6 +60,7 @@ describe('public API surface', () => {
         'stepWorld',
         'maxSpeedWithoutTunnelling',
         'clampSneakEdge',
+        'SNEAK_EDGE_STEP_HEIGHT',
         // dda
         'voxelRaycast',
         // projectile (profile-generalized; arrow behaviour lives in ARROW_PROFILE)
@@ -75,8 +76,13 @@ describe('public API surface', () => {
         // piston
         'pistonExtrusion',
         // movement
+        'DEFAULT_MOVEMENT_CONFIG',
+        'MovementFactor',
         'applyMovementInput',
+        'applyMovementFriction',
         'applyKnockback',
+        'movementCoefficientsForBlockId',
+        'blockShapeForState',
         // creative flight
         'createCreativeFlightState',
         'toggleCreativeFlight',

@@ -1,15 +1,16 @@
 import type { BlockAxis, BlockProperties, PositionAxis } from '@nerima-games/mc-kernel'
 import type { BlockEnvironment, BlockHazards, BlockLookupError, EnvironmentError } from './environment-types.js'
-import type { BlockShape, HalfHeight } from './coordinates.js'
+import type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
 import type { BlockLength } from './physical-units.js'
 import type { Body } from './integrate.js'
+import type { HalfHeight } from './coordinates.js'
 import type { Result } from 'effect'
+
+export type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
 
 export type ResolveError = EnvironmentError
 
 export type BlockPropertiesAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockProperties | null, BlockLookupError>
-
-export type BlockShapeAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => BlockShape | null
 
 export type ResolveOptions = {
   readonly halfWidth: BlockLength
@@ -18,7 +19,11 @@ export type ResolveOptions = {
   readonly blockPropertiesAt: BlockPropertiesAt
   /** Optional state-specific or compound geometry. When supplied, it is authoritative. */
   readonly blockShapeAt?: BlockShapeAt
+  /** Local state input for built-in state-sensitive collision geometry. */
+  readonly blockShapeStateAt?: BlockShapeStateAt
   readonly stepHeight?: BlockLength
+  /** Prevent moving more than 0.6 blocks down while crouching. */
+  readonly sneaking?: boolean
   /**
    * Slime-block/bed style bounce. Sampled at the block cell contacted by a
    * genuine downward floor impact only — resting contact and ceiling/wall
@@ -39,4 +44,8 @@ export type HorizontalPosition = {
   readonly z: PositionAxis
 }
 
-export type HasGroundSupport = (positionX: PositionAxis, positionZ: PositionAxis) => boolean
+export type HasGroundSupport = (
+  positionX: PositionAxis,
+  positionZ: PositionAxis,
+  maxStepDown: number,
+) => Result.Result<boolean, ResolveError>

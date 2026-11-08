@@ -61,12 +61,14 @@ const aabb = (minX: number, minY: number, minZ: number, maxX: number, maxY: numb
 const environmentOf = (
   blocks: Readonly<Record<string, BlockType>>,
   blockShapeAt?: BlockEnvironment['blockShapeAt'],
+  blockShapeStateAt?: BlockEnvironment['blockShapeStateAt'],
 ): BlockEnvironment => ({
   blockAt: (bx, by, bz) => {
     const type = blocks[keyOf(bx, by, bz)]
     return Result.succeed(type === undefined ? null : sampleOf(type))
   },
   ...(blockShapeAt ? { blockShapeAt } : {}),
+  ...(blockShapeStateAt ? { blockShapeStateAt } : {}),
 })
 
 const bodyBox = (
@@ -120,6 +122,19 @@ describe('environment material sampling', () => {
       friction: 1,
       movementDrag: cobweb.properties.movementDrag,
     })
+  })
+
+  it('uses state geometry for support friction at the exact surface and just outside it', () => {
+    const stone = sampleOf('stone')
+    const blocks = { [keyOf(0, 1, 0)]: 'stone' as const }
+    const carpetState = environmentOf(blocks, undefined, (bx, by, bz) =>
+      bx === 0 && by === 1 && bz === 0 ? { kind: 'carpet' } : null,
+    )
+    const onCarpet = bodyBox(1.5625, 0.25, 0.5)
+    const aboveCarpet = bodyBox(1.562501, 0.25, 0.5)
+
+    expect(sampleSurfaceEffects(onCarpet, carpetState).friction).toBe(stone.properties.friction)
+    expect(sampleSurfaceEffects(aboveCarpet, carpetState).friction).toBe(1)
   })
 
   it('returns a failure for non-finite AABB coordinates', () => {
@@ -220,6 +235,22 @@ describe('vertical surface drag (FR-006: cobwebs, powder snow)', () => {
 })
 
 describe('environment hazards', () => {
+  it('uses state-specific collision geometry for suffocation and propagates shape failures', () => {
+    const stone = sampleOf('stone')
+    const box = bodyBox(1.5, 0.1, 0.1)
+    const blocks = { [keyOf(0, 1, 0)]: 'stone' as const }
+    const carpet = environmentOf(blocks, undefined, (bx, by, bz) =>
+      bx === 0 && by === 1 && bz === 0 ? { kind: 'carpet' } : null,
+    )
+    const invalidShape = environmentOf(blocks, () => Result.fail(new RangeError('invalid block shape')))
+
+    expect(sampleBlockHazards(box, environmentOf(blocks)).suffocating).toBe(stone.capabilities.suffocates)
+    expect(sampleBlockHazards(box, carpet).suffocating).toBe(false)
+    const failure = sampleBlockHazardsResult(box, invalidShape)
+    expect(Result.isFailure(failure)).toBe(true)
+    if (Result.isFailure(failure)) expect(failure.failure).toBeInstanceOf(RangeError)
+  })
+
   it('uses kernel contact damage, suffocation, and climbable capabilities', () => {
     const cactus = sampleOf('cactus')
     expect(sampleBlockHazards(bodyBox(1.5), environmentOf({ [keyOf(0, 1, 0)]: 'cactus' }))).toEqual({
@@ -493,11 +524,11 @@ describe('kernel collision-shape projection', () => {
       minY: 0,
       minZ: 0.0625,
       maxX: 0.9375,
-      maxY: 1,
+      maxY: 0.9375,
       maxZ: 0.9375,
     })
     expect(cactus.properties.collisionShape).toBe('cactus')
-    expect(sampleSurfaceEffects(bodyBox(1.5), environment)).toEqual({
+    expect(sampleSurfaceEffects(bodyBox(1.4375), environment)).toEqual({
       friction: cactus.properties.friction,
       movementDrag: cactus.properties.movementDrag,
     })

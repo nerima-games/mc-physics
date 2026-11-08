@@ -18,6 +18,7 @@ import {
   blockPropertiesAtFromKernel,
   resolveOptionsFromKernel,
   type AABB,
+  type BlockShapeStateInput,
   type BlockIdAt,
 } from '../src/index'
 
@@ -93,6 +94,14 @@ describe('kernel-backed world queries', () => {
 
     const shaped = blockEnvironmentFromKernel(idAt, () => shape)
     expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
+
+    const state: BlockShapeStateInput = { kind: 'slab', half: 'top' }
+    const stateful = blockEnvironmentFromKernel(idAt, undefined, () => state)
+    expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+
+    const combined = blockEnvironmentFromKernel(idAt, () => shape, () => state)
+    expect(combined.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
+    expect(combined.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
   })
 
   it('builds resolver options while preserving only supplied optional values', () => {
@@ -118,6 +127,18 @@ describe('kernel-backed world queries', () => {
     expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shaped.environment.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shaped.stepHeight).toBeUndefined()
+
+    const state: BlockShapeStateInput = { kind: 'slab', half: 'top' }
+    const stateful = resolveOptionsFromKernel({ ...base, blockShapeStateAt: () => state })
+    expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+
+    const combined = resolveOptionsFromKernel({
+      ...base,
+      blockShapeAt: () => shape,
+      blockShapeStateAt: () => state,
+    })
+    expect(combined.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
+    expect(combined.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
 
     const stepped = resolveOptionsFromKernel({ ...base, stepHeight: BlockLength(0.6) })
     expect(stepped.blockShapeAt).toBeUndefined()

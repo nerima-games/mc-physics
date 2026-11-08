@@ -51,8 +51,9 @@ const highestStepSupport = (
   horizontalBox: AABB,
   feetY: PositionAxis,
   stepHeight: BlockLength,
+  stepDown: BlockLength = BlockLength(0),
 ): Result.Result<PositionAxis | null, ResolveError> => {
-  const minimumTop = PositionAxis.result(feetY - CONTACT_EPSILON)
+  const minimumTop = PositionAxis.result(feetY - stepDown - CONTACT_EPSILON)
   const maximumTop = PositionAxis.result(feetY + stepHeight + CONTACT_EPSILON)
   const probeY = Result.all([minimumTop, maximumTop])
   return Result.flatMap(probeY, ([minY, maxY]) => {
@@ -78,6 +79,30 @@ const highestStepSupport = (
     }
     return Result.succeed(top)
   })
+}
+
+export const hasGroundSupportWithinStep = (
+  options: ResolveOptions,
+  positionX: PositionAxis,
+  positionZ: PositionAxis,
+  feetY: PositionAxis,
+  maxStepDown: number,
+): Result.Result<boolean, ResolveError> => {
+  const checkedStepDown = BlockLength.result(maxStepDown)
+  if (Result.isFailure(checkedStepDown)) {
+    return Result.fail(checkedStepDown.failure)
+  }
+  if (checkedStepDown.success < 0) {
+    return Result.fail(new RangeError('maxStepDown must be non-negative'))
+  }
+  return Result.flatMap(CentreY.result(feetY + options.halfHeight), (centreY) =>
+    Result.flatMap(boxAt(options, positionX, centreY, positionZ), (horizontalBox) =>
+      Result.map(
+        highestStepSupport(options, horizontalBox, horizontalBox.minY, BlockLength(0), checkedStepDown.success),
+        (supportTop) => supportTop !== null,
+      ),
+    ),
+  )
 }
 
 export const tryStepUp = (
