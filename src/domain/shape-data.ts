@@ -3,17 +3,28 @@ import {
   type BlockFacing,
   type BlockHalf,
   type BlockShapeLookup,
-  type BlockShapeStateInput,
   type BlockStateConnectionValue,
   type BlockStateConnections,
-  type DoorHalf,
-  SNOW_LAYER_COUNTS,
-  type SnowLayerCount,
+  type BlockStateLookupFailure,
+  type CustomBlockShapeStateInput,
   type StairShape,
   type WallConnection,
 } from './block-shape-state.js'
-import { type CollisionShape, PositionAxis } from '@nerima-games/mc-kernel'
-import { Result } from 'effect'
+import {
+  BlockId,
+  type BlockStateCodecFailure,
+  type BlockType,
+  type CollisionShape,
+  type EffectiveBlockStateValues,
+  type EncodedBlockState,
+  PositionAxis,
+  blockStateDefinitionOf,
+  defaultBlockState,
+  effectiveBlockStateOf,
+  encodeBlockState,
+  isEmpty,
+} from '@nerima-games/mc-kernel'
+import { Brand, Result } from 'effect'
 
 const HALF_BLOCK = 0.5
 const ONE_SIXTEENTH = 0.0625
@@ -120,24 +131,24 @@ const intersectHorizontal = (a: AABB, b: AABB, minY: number, maxY: number): AABB
   Math.min(a.maxZ, b.maxZ),
 )
 
-const stairShapes = (state: Extract<BlockShapeStateInput, { kind: 'stairs' }>): ReadonlyArray<AABB> => {
-  const [baseMinY, baseMaxY] = yRangeForHalf(state.half)
+const stairShapes = (facing: BlockFacing, half: BlockHalf, shape: StairShape): ReadonlyArray<AABB> => {
+  const [baseMinY, baseMaxY] = yRangeForHalf(half)
   const oppositeHalf: Readonly<Record<BlockHalf, BlockHalf>> = { bottom: 'top', top: 'bottom' }
-  const [stepMinY, stepMaxY] = yRangeForHalf(oppositeHalf[state.half])
+  const [stepMinY, stepMaxY] = yRangeForHalf(oppositeHalf[half])
   const base = fullHorizontalBox(baseMinY, baseMaxY)
-  const facing = directionalHalf(state.facing)
-  const facingBox = localBox(facing.minX, stepMinY, facing.minZ, facing.maxX, stepMaxY, facing.maxZ)
-  if (state.shape === 'straight') {
+  const facingShape = directionalHalf(facing)
+  const facingBox = localBox(facingShape.minX, stepMinY, facingShape.minZ, facingShape.maxX, stepMaxY, facingShape.maxZ)
+  if (shape === 'straight') {
     return [base, facingBox]
   }
   let side: AABB
-  if (state.shape === 'inner_left' || state.shape === 'outer_left') {
-    side = sideHalf(state.facing, 'left')
+  if (shape === 'inner_left' || shape === 'outer_left') {
+    side = sideHalf(facing, 'left')
   } else {
-    side = sideHalf(state.facing, 'right')
+    side = sideHalf(facing, 'right')
   }
-  if (state.shape === 'outer_left' || state.shape === 'outer_right') {
-    return [base, intersectHorizontal(facing, side, stepMinY, stepMaxY)]
+  if (shape === 'outer_left' || shape === 'outer_right') {
+    return [base, intersectHorizontal(facingShape, side, stepMinY, stepMaxY)]
   }
   const sideBox = localBox(side.minX, stepMinY, side.minZ, side.maxX, stepMaxY, side.maxZ)
   return [base, facingBox, sideBox]
@@ -146,25 +157,25 @@ const stairShapes = (state: Extract<BlockShapeStateInput, { kind: 'stairs' }>): 
 const wallConnectionIsPresent = (connection: BlockStateConnectionValue | undefined): boolean =>
   typeof connection !== 'undefined' && connection !== false && connection !== 'none'
 
-const fenceShapes = (state: Extract<BlockShapeStateInput, { kind: 'fence' }>): ReadonlyArray<AABB> => {
+const fenceShapes = (connections: BlockStateConnections | undefined): ReadonlyArray<AABB> => {
   const post = localBox(SIX_SIXTEENTHS, 0, SIX_SIXTEENTHS, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS)
   const shapes: Array<AABB> = [post]
-  if (wallConnectionIsPresent(state.connections?.north)) {
+  if (wallConnectionIsPresent(connections?.north)) {
     shapes.push(localBox(SIX_SIXTEENTHS, 0, 0, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, HALF_BLOCK))
   }
-  if (wallConnectionIsPresent(state.connections?.south)) {
+  if (wallConnectionIsPresent(connections?.south)) {
     shapes.push(localBox(SIX_SIXTEENTHS, 0, HALF_BLOCK, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, 1))
   }
-  if (wallConnectionIsPresent(state.connections?.east)) {
+  if (wallConnectionIsPresent(connections?.east)) {
     shapes.push(localBox(HALF_BLOCK, 0, SIX_SIXTEENTHS, 1, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS))
   }
-  if (wallConnectionIsPresent(state.connections?.west)) {
+  if (wallConnectionIsPresent(connections?.west)) {
     shapes.push(localBox(0, 0, SIX_SIXTEENTHS, HALF_BLOCK, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS))
   }
   return shapes
 }
 
-const wallShapes = (state: Extract<BlockShapeStateInput, { kind: 'wall' }>): ReadonlyArray<AABB> => {
+const wallShapes = (connections: BlockStateConnections | undefined): ReadonlyArray<AABB> => {
   const shapes: Array<AABB> = []
   const FOUR_PIXELS = 4
   const TWELVE_PIXELS = 12
@@ -173,19 +184,19 @@ const wallShapes = (state: Extract<BlockShapeStateInput, { kind: 'wall' }>): Rea
   const armMin = HALF_BLOCK - WALL_ARM_HALF_WIDTH
   const armMax = HALF_BLOCK + WALL_ARM_HALF_WIDTH
   const armHeight = TWENTY_FOUR_SIXTEENTHS
-  if (wallConnectionIsPresent(state.connections?.up)) {
+  if (wallConnectionIsPresent(connections?.up)) {
     shapes.push(localBox(centerMin, 0, centerMin, centerMax, TWENTY_FOUR_SIXTEENTHS, centerMax))
   }
-  if (wallConnectionIsPresent(state.connections?.north)) {
+  if (wallConnectionIsPresent(connections?.north)) {
     shapes.push(localBox(armMin, 0, 0, armMax, armHeight, armMax))
   }
-  if (wallConnectionIsPresent(state.connections?.south)) {
+  if (wallConnectionIsPresent(connections?.south)) {
     shapes.push(localBox(armMin, 0, armMin, armMax, armHeight, 1))
   }
-  if (wallConnectionIsPresent(state.connections?.east)) {
+  if (wallConnectionIsPresent(connections?.east)) {
     shapes.push(localBox(armMin, 0, armMin, 1, armHeight, armMax))
   }
-  if (wallConnectionIsPresent(state.connections?.west)) {
+  if (wallConnectionIsPresent(connections?.west)) {
     shapes.push(localBox(0, 0, armMin, armMax, armHeight, armMax))
   }
   return shapes
@@ -287,9 +298,6 @@ const isBlockFacing = (value: unknown): value is BlockFacing =>
 const isBlockHalf = (value: unknown): value is BlockHalf =>
   value === 'bottom' || value === 'top'
 
-const isStairShape = (value: unknown): value is StairShape =>
-  value === 'straight' || value === 'inner_left' || value === 'inner_right' || value === 'outer_left' || value === 'outer_right'
-
 const isWallConnection = (value: unknown): value is WallConnection =>
   typeof value === 'boolean' || value === 'none' || value === 'side' || value === 'up'
 
@@ -311,121 +319,166 @@ const isBlockStateConnections = (value: unknown): value is BlockStateConnections
 const isOptionalBlockStateConnections = (value: unknown): value is BlockStateConnections | undefined =>
   typeof value === 'undefined' || isBlockStateConnections(value)
 
-const isSnowLayerCount = (value: unknown): value is SnowLayerCount =>
-  SNOW_LAYER_COUNTS.some((layer) => layer === value)
-
-const isSlabInput = (state: Record<string, unknown>): boolean =>
-  state['type'] === 'bottom' || state['type'] === 'top' || state['type'] === 'double'
-
-const isStairsInput = (state: Record<string, unknown>): boolean =>
-  isBlockFacing(state['facing']) && isBlockHalf(state['half']) && isStairShape(state['shape'])
-
-const isFenceInput = (state: Record<string, unknown>): boolean =>
-  isOptionalBlockStateConnections(state['connections'])
-
-const isWallInput = (state: Record<string, unknown>): boolean =>
-  isOptionalBlockStateConnections(state['connections'])
-
-const isDoorHalf = (value: unknown): value is DoorHalf =>
-  value === 'lower' || value === 'upper'
-
-const isDoorInput = (state: Record<string, unknown>): boolean =>
-  isBlockFacing(state['facing']) && isDoorHalf(state['half']) &&
-  (state['hinge'] === 'left' || state['hinge'] === 'right') && typeof state['open'] === 'boolean'
-
 const isTrapdoorInput = (state: Record<string, unknown>): boolean =>
   isBlockFacing(state['facing']) && isBlockHalf(state['half']) && typeof state['open'] === 'boolean'
 
-const isBedInput = (state: Record<string, unknown>): boolean =>
-  isBlockFacing(state['facing']) && (state['part'] === 'head' || state['part'] === 'foot')
-
-const isBlockShapeStateInput = (value: unknown): value is BlockShapeStateInput => {
+const isCustomBlockShapeStateInput = (value: unknown): value is CustomBlockShapeStateInput => {
   if (!isRecord(value)) {
     return false
   }
   switch (value['kind']) {
-    case 'slab':
-      return isSlabInput(value)
-    case 'stairs':
-      return isStairsInput(value)
     case 'fence':
-      return isFenceInput(value)
     case 'wall':
-      return isWallInput(value)
-    case 'door':
-      return isDoorInput(value)
+      return isOptionalBlockStateConnections(value['connections'])
     case 'trapdoor':
       return isTrapdoorInput(value)
-    case 'bed':
-      return isBedInput(value)
-    case 'snow':
-      return isSnowLayerCount(value['layers'])
     case 'carpet':
     case 'soulSand':
-    case 'cactus':
       return true
-    case 'pressurePlate':
-      return typeof value['powered'] === 'boolean'
     default:
       return false
   }
 }
 
-/** Resolve a local state input to the block-local collision boxes. */
-export const blockShapeForState = (input: unknown): Result.Result<BlockShape | null, RangeError> => {
-  if (!isBlockShapeStateInput(input)) {
-    return Result.fail(new RangeError('block shape state is invalid'))
+export type KernelBlockState = Readonly<{
+  readonly blockType: BlockType
+  readonly values: EffectiveBlockStateValues
+}>
+
+type KernelBlockStateFailure = BlockStateCodecFailure | Brand.BrandError | BlockStateLookupFailure
+
+/** Resolves state by block id so geometry cannot be selected by a caller-supplied kind. */
+export const kernelBlockStateForCell = (
+  rawBlockId: number | null | undefined,
+  encodedState: EncodedBlockState | undefined,
+): Result.Result<KernelBlockState | null, KernelBlockStateFailure> => {
+  if (typeof rawBlockId === 'undefined') {
+    return Result.fail({ _tag: 'BlockStateLookupFailure', reason: 'missing-block-id' })
   }
-  const state = input
-  if (state.kind === 'slab') {
-    if (state.type === 'double') {
-      return Result.succeed(FULL_BLOCK_SHAPE)
+  if (rawBlockId === null) {
+    if (typeof encodedState !== 'undefined') {
+      return Result.fail({ _tag: 'BlockStateLookupFailure', reason: 'missing-block-id' })
     }
-    if (state.type === 'bottom') {
-      return Result.succeed(SLAB_SHAPE)
-    }
-    return Result.succeed({ ...FULL_BLOCK_SHAPE, minY: PositionAxis(HALF_BLOCK) })
+    return Result.succeed(null)
   }
-  if (state.kind === 'stairs') {
-    return Result.succeed(stairShapes(state))
-  }
-  if (state.kind === 'fence') {
-    return Result.succeed(fenceShapes(state))
-  }
-  if (state.kind === 'wall') {
-    return Result.succeed(wallShapes(state))
-  }
-  if (state.kind === 'door') {
-    if (state.open) {
-      return Result.succeed(openedDoor(state.facing, state.hinge))
-    }
-    return Result.succeed(closedDoor(state.facing))
-  }
-  if (state.kind === 'trapdoor') {
-    return Result.succeed(trapdoorShape(state.facing, state.half, state.open))
-  }
-  if (state.kind === 'bed') {
-    return Result.succeed(bedShapes(state.facing, state.part))
-  }
-  if (state.kind === 'carpet') {
-    return Result.succeed(fullHorizontalBox(0, ONE_SIXTEENTH))
-  }
-  if (state.kind === 'snow') {
-    if (state.layers === SNOW_LAYER_COUNTS[0]) {
+  return Result.flatMap(BlockId.result(rawBlockId), (blockId): Result.Result<KernelBlockState | null, KernelBlockStateFailure> => {
+    if (isEmpty(blockId)) {
+      if (typeof encodedState !== 'undefined') {
+        return Result.fail({ _tag: 'BlockStateLookupFailure', reason: 'missing-block-id' })
+      }
       return Result.succeed(null)
     }
-    return Result.succeed(fullHorizontalBox(
-      0,
-      ((state.layers - SNOW_LAYER_COUNTS[0]) * SNOW_LAYER_PIXELS) / PIXELS_PER_BLOCK,
-    ))
+    return Result.flatMap(blockStateDefinitionOf(blockId), (definition): Result.Result<KernelBlockState, KernelBlockStateFailure> => {
+      const encoded: Result.Result<EncodedBlockState, BlockStateCodecFailure> = (() => {
+        if (typeof encodedState === 'undefined') {
+          return Result.flatMap(defaultBlockState(blockId), (defaultState) => encodeBlockState(blockId, defaultState))
+        }
+        return Result.succeed(encodedState)
+      })()
+      return Result.map(Result.flatMap(encoded, (value) => effectiveBlockStateOf(blockId, value)), (values) => ({
+        blockType: definition.blockType,
+        values,
+      }))
+    })
+  })
+}
+
+const slabShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (state.type === 'double') {
+    return FULL_BLOCK_SHAPE
   }
-  if (state.kind === 'soulSand') {
-    return Result.succeed(fullHorizontalBox(0, FOURTEEN_SIXTEENTHS))
+  if (state.type === 'bottom') {
+    return SLAB_SHAPE
   }
-  if (state.kind === 'cactus') {
-    return Result.succeed(CACTUS_SHAPE)
+  if (state.type === 'top') {
+    return { ...FULL_BLOCK_SHAPE, minY: PositionAxis(HALF_BLOCK) }
   }
-  return Result.succeed(pressurePlateShape(state.powered))
+  return globalThis.undefined
+}
+
+const stairShapeForState = (state: EffectiveBlockStateValues): ReadonlyArray<AABB> | undefined => {
+  if (
+    state.facing && isBlockFacing(state.facing) && state.half && isBlockHalf(state.half) &&
+    state.shape && (state.shape === 'straight' || state.shape === 'inner_left' || state.shape === 'inner_right' || state.shape === 'outer_left' || state.shape === 'outer_right')
+  ) {
+    return stairShapes(state.facing, state.half, state.shape)
+  }
+  return globalThis.undefined
+}
+
+const doorShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (state.facing && isBlockFacing(state.facing) && state.hinge && (state.hinge === 'left' || state.hinge === 'right')) {
+    if (state.open === true) {
+      return openedDoor(state.facing, state.hinge)
+    }
+    return closedDoor(state.facing)
+  }
+  return globalThis.undefined
+}
+
+const bedShapeForState = (state: EffectiveBlockStateValues): ReadonlyArray<AABB> | undefined => {
+  if (state.facing && isBlockFacing(state.facing) && (state.part === 'head' || state.part === 'foot')) {
+    return bedShapes(state.facing, state.part)
+  }
+  return globalThis.undefined
+}
+
+const snowShapeForState = (state: EffectiveBlockStateValues): BlockShape | null | undefined => {
+  if (typeof state.layers === 'undefined') {
+    return globalThis.undefined
+  }
+  if (state.layers === 1) {
+    return null
+  }
+  return fullHorizontalBox(0, ((state.layers - 1) * SNOW_LAYER_PIXELS) / PIXELS_PER_BLOCK)
+}
+
+const pressurePlateShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (typeof state.powered === 'boolean') {
+    return pressurePlateShape(state.powered)
+  }
+  return globalThis.undefined
+}
+
+/** Selects state-dependent geometry from kernel-validated values; undefined uses the static collision shape. */
+export const blockShapeForKernelState = (
+  blockType: BlockType,
+  state: EffectiveBlockStateValues,
+): BlockShape | null | undefined => {
+  switch (blockType) {
+    case 'stone_slab':
+    case 'purpur_slab':
+      return slabShapeForState(state)
+    case 'oak_stairs':
+    case 'purpur_stairs':
+      return stairShapeForState(state)
+    case 'door':
+    case 'door_open':
+      return doorShapeForState(state)
+    case 'bed':
+      return bedShapeForState(state)
+    case 'snow':
+      return snowShapeForState(state)
+    case 'pressure_plate':
+      return pressurePlateShapeForState(state)
+    default:
+      return globalThis.undefined
+  }
+}
+
+/** Resolves the PH1 custom geometries that have no kernel block-state definition. */
+export const blockShapeForCustomState = (input: unknown): Result.Result<BlockShape | null, RangeError> => {
+  if (!isCustomBlockShapeStateInput(input)) {
+    return Result.fail(new RangeError('custom block shape state is invalid'))
+  }
+  switch (input.kind) {
+    case 'fence': return Result.succeed(fenceShapes(input.connections))
+    case 'wall': return Result.succeed(wallShapes(input.connections))
+    case 'trapdoor': return Result.succeed(trapdoorShape(input.facing, input.half, input.open))
+    case 'carpet': return Result.succeed(fullHorizontalBox(0, ONE_SIXTEENTH))
+    case 'soulSand': return Result.succeed(fullHorizontalBox(0, FOURTEEN_SIXTEENTHS))
+    default: return Result.fail(new RangeError('custom block shape state is invalid'))
+  }
 }
 
 /** Adapts either a raw custom shape or a typed shape failure to the Result channel. */

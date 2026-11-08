@@ -5,6 +5,7 @@ import {
   BlockId,
   PositionAxis,
   blockIdOf,
+  encodeBlockState,
   isKnownBlockId,
   resolvedBlockOfId,
 } from '@nerima-games/mc-kernel'
@@ -18,8 +19,9 @@ import {
   blockPropertiesAtFromKernel,
   resolveOptionsFromKernel,
   type AABB,
-  type BlockShapeStateInput,
+  type BlockStateAt,
   type BlockIdAt,
+  type CustomBlockShapeStateAt,
 } from '../src/index'
 
 vi.mock('@nerima-games/mc-kernel', async (importOriginal) => {
@@ -38,6 +40,8 @@ const unwrapResult = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const stoneId = unwrapOption(blockIdOf('stone'))
+const slabId = unwrapOption(blockIdOf('stone_slab'))
+const encodedTopSlab = unwrapResult(encodeBlockState(slabId, { type: 'top' }))
 const unknownId = BlockId(255)
 const cell = (value: number): BlockAxis => BlockAxis(value)
 
@@ -95,13 +99,20 @@ describe('kernel-backed world queries', () => {
     const shaped = blockEnvironmentFromKernel(idAt, () => shape)
     expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
 
-    const state: BlockShapeStateInput = { kind: 'slab', type: 'top' }
-    const stateful = blockEnvironmentFromKernel(idAt, undefined, () => state)
-    expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+    const stateAt: BlockStateAt = () => encodedTopSlab
+    const statefulIdAt: BlockIdAt = () => slabId
+    const stateful = blockEnvironmentFromKernel(statefulIdAt, undefined, stateAt)
+    expect(stateful.blockIdAt?.(cell(0), cell(0), cell(0))).toBe(slabId)
+    expect(stateful.blockStateAt?.(cell(0), cell(0), cell(0))).toBe(encodedTopSlab)
 
-    const combined = blockEnvironmentFromKernel(idAt, () => shape, () => state)
+    const combined = blockEnvironmentFromKernel(statefulIdAt, () => shape, stateAt)
     expect(combined.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
-    expect(combined.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+    expect(combined.blockIdAt?.(cell(0), cell(0), cell(0))).toBe(slabId)
+    expect(combined.blockStateAt?.(cell(0), cell(0), cell(0))).toBe(encodedTopSlab)
+
+    const customStateAt: CustomBlockShapeStateAt = () => ({ kind: 'carpet' })
+    const customStateful = blockEnvironmentFromKernel(statefulIdAt, undefined, undefined, customStateAt)
+    expect(customStateful.customBlockShapeStateAt?.(cell(0), cell(0), cell(0))).toEqual({ kind: 'carpet' })
   })
 
   it('builds resolver options while preserving only supplied optional values', () => {
@@ -128,17 +139,20 @@ describe('kernel-backed world queries', () => {
     expect(shaped.environment.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shaped.stepHeight).toBeUndefined()
 
-    const state: BlockShapeStateInput = { kind: 'slab', type: 'top' }
-    const stateful = resolveOptionsFromKernel({ ...base, blockShapeStateAt: () => state })
-    expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+    const stateAt: BlockStateAt = () => encodedTopSlab
+    const stateful = resolveOptionsFromKernel({ ...base, blockIdAt: () => slabId, blockStateAt: stateAt })
+    expect(stateful.blockIdAt?.(cell(0), cell(0), cell(0))).toBe(slabId)
+    expect(stateful.blockStateAt?.(cell(0), cell(0), cell(0))).toBe(encodedTopSlab)
 
     const combined = resolveOptionsFromKernel({
       ...base,
       blockShapeAt: () => shape,
-      blockShapeStateAt: () => state,
+      blockIdAt: () => slabId,
+      blockStateAt: stateAt,
     })
     expect(combined.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
-    expect(combined.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
+    expect(combined.blockIdAt?.(cell(0), cell(0), cell(0))).toBe(slabId)
+    expect(combined.blockStateAt?.(cell(0), cell(0), cell(0))).toBe(encodedTopSlab)
 
     const stepped = resolveOptionsFromKernel({ ...base, stepHeight: BlockLength(0.6) })
     expect(stepped.blockShapeAt).toBeUndefined()
@@ -151,5 +165,12 @@ describe('kernel-backed world queries', () => {
     })
     expect(shapedAndStepped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shapedAndStepped.stepHeight).toBe(BlockLength(0.6))
+
+    const customStateAt: CustomBlockShapeStateAt = () => ({ kind: 'wall', connections: { north: true } })
+    const customStateful = resolveOptionsFromKernel({ ...base, customBlockShapeStateAt: customStateAt })
+    expect(customStateful.customBlockShapeStateAt?.(cell(0), cell(0), cell(0)))
+      .toEqual({ kind: 'wall', connections: { north: true } })
+    expect(customStateful.environment.customBlockShapeStateAt?.(cell(0), cell(0), cell(0)))
+      .toEqual({ kind: 'wall', connections: { north: true } })
   })
 })

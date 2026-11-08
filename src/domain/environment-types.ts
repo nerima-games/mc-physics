@@ -3,9 +3,15 @@ import type {
   BlockCapabilities,
   BlockContactDamage,
   BlockProperties,
+  BlockStateCodecFailure,
   FlowingFluidKind,
 } from '@nerima-games/mc-kernel'
-import type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
+import type {
+  BlockShapeAt,
+  BlockStateAt,
+  BlockStateLookupFailure,
+  CustomBlockShapeStateAt,
+} from './block-shape-state.js'
 import type { BlocksPerSecondSquared, PerSecond } from './physical-units.js'
 import type { Brand, Result } from 'effect'
 import type { BlockRegistryResolutionFailure } from '@nerima-games/mc-kernel/domain/block-registry'
@@ -19,7 +25,7 @@ export type BlockSample = Readonly<{
 
 export type BlockLookupError = Brand.BrandError | BlockRegistryResolutionFailure
 
-export type EnvironmentError = BlockLookupError | RangeError
+export type EnvironmentError = BlockLookupError | BlockStateCodecFailure | BlockStateLookupFailure | RangeError
 
 export type BlockAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockSample | null, BlockLookupError>
 
@@ -28,7 +34,9 @@ export type EnvironmentBlockShapeAt = BlockShapeAt
 export type BlockEnvironment = Readonly<{
   readonly blockAt: BlockAt
   readonly blockShapeAt?: EnvironmentBlockShapeAt
-  readonly blockShapeStateAt?: BlockShapeStateAt
+  readonly blockIdAt?: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
+  readonly blockStateAt?: BlockStateAt
+  readonly customBlockShapeStateAt?: CustomBlockShapeStateAt
 }>
 
 export type SurfaceEffects = Readonly<{

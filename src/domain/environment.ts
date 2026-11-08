@@ -21,7 +21,14 @@ import type {
 } from './environment-types.js'
 import { BlockLength, BlocksPerSecond } from './physical-units.js'
 import { Brand, Result } from 'effect'
-import { FULL_BLOCK_SHAPE, blockShapeForState, blockShapeLookupResult } from './shape-data.js'
+import {
+  FULL_BLOCK_SHAPE,
+  type KernelBlockState,
+  blockShapeForCustomState,
+  blockShapeForKernelState,
+  blockShapeLookupResult,
+  kernelBlockStateForCell,
+} from './shape-data.js'
 import type { Body } from './integrate.js'
 
 const DEFAULT_SURFACE_EFFECTS: SurfaceEffects = { friction: 1, movementDrag: 0 }
@@ -93,12 +100,29 @@ const forEachCell = (
   )
 }
 
+const kernelStateAt = (
+  environment: BlockEnvironment,
+  bx: BlockAxis,
+  by: BlockAxis,
+  bz: BlockAxis,
+) => {
+  const { blockStateAt, blockIdAt } = environment
+  if (typeof blockStateAt !== 'function') {
+    return Result.succeed(globalThis.undefined)
+  }
+  return kernelBlockStateForCell(
+    blockIdAt?.(bx, by, bz),
+    blockStateAt(bx, by, bz),
+  )
+}
+
 const localShapeAt = (
   environment: BlockEnvironment,
   bx: BlockAxis,
   by: BlockAxis,
   bz: BlockAxis,
   knownSample: BlockSample,
+  context: KernelBlockState | null | undefined,
 ): Result.Result<ReadonlyArray<AABB>, EnvironmentError> => {
   const aabbsForShape = (shape: BlockShape | null): ReadonlyArray<AABB> => {
     if (shape === null) {
@@ -106,18 +130,23 @@ const localShapeAt = (
     }
     return aabbsOfBlockShape(shape)
   }
-  const state = environment.blockShapeStateAt?.(bx, by, bz) ?? null
   const customShapeAt = environment.blockShapeAt
   if (customShapeAt) {
     return Result.map(
-      blockShapeLookupResult(customShapeAt(bx, by, bz, state)),
+      blockShapeLookupResult(customShapeAt(bx, by, bz, context?.values ?? null, context?.blockType)),
       aabbsForShape,
     )
   }
-  if (state !== null) {
-    return Result.map(blockShapeForState(state), aabbsForShape)
+  if (context !== null && typeof context !== 'undefined') {
+    const stateShape = blockShapeForKernelState(context.blockType, context.values)
+    if (typeof stateShape !== 'undefined') {
+      return Result.succeed(aabbsForShape(stateShape))
+    }
   }
-
+  const customState = environment.customBlockShapeStateAt?.(bx, by, bz)
+  if (customState !== null && typeof customState !== 'undefined') {
+    return Result.map(blockShapeForCustomState(customState), aabbsForShape)
+  }
   const shape = aabbOfCollisionShape(knownSample.properties.collisionShape)
   if (shape === null) {
     return Result.succeed([])
@@ -161,25 +190,27 @@ export const sampleSurfaceEffects = (
   let { friction, movementDrag } = DEFAULT_SURFACE_EFFECTS
 
   const supportScan = forEachCoordinateRange(minX, maxX, feetCell - 1, feetCell, minZ, maxZ, (bx, by, bz) =>
-    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
-      if (sample === null) {
-        return Result.succeed(globalThis.undefined)
-      }
-
-      return Result.flatMap(localShapeAt(environment, bx, by, bz, sample), (shapes) => {
-        for (const shape of shapes) {
-          const worldShape = blockAABB(bx, by, bz, shape)
-          if (Result.isFailure(worldShape)) {
-            return Result.fail(worldShape.failure)
-          }
-          if (isRestingOn(box, worldShape.success)) {
-            friction = Math.min(friction, clampedUnit(sample.properties.friction))
-            break
-          }
+    Result.flatMap(kernelStateAt(environment, bx, by, bz), (context) =>
+      Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+        if (sample === null) {
+          return Result.succeed(globalThis.undefined)
         }
-        return Result.succeed(globalThis.undefined)
-      })
-    }),
+
+        return Result.flatMap(localShapeAt(environment, bx, by, bz, sample, context), (shapes) => {
+          for (const shape of shapes) {
+            const worldShape = blockAABB(bx, by, bz, shape)
+            if (Result.isFailure(worldShape)) {
+              return Result.fail(worldShape.failure)
+            }
+            if (isRestingOn(box, worldShape.success)) {
+              friction = Math.min(friction, clampedUnit(sample.properties.friction))
+              break
+            }
+          }
+          return Result.succeed(globalThis.undefined)
+        })
+      }),
+    ),
   )
   if (Result.isFailure(supportScan)) {
     return Result.fail(supportScan.failure)
@@ -258,39 +289,41 @@ export const sampleBlockHazards = (
   let climbable = false
 
   const scan = forEachCell(box, (bx, by, bz) =>
-    Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
-      if (sample === null) {
-        return Result.succeed(globalThis.undefined)
-      }
-
-      return Result.flatMap(blockAABB(bx, by, bz), (cell) => {
-        const touches = touchesCell(box, cell)
-        const damageSnapshot = sample.properties.contactDamage
-        const damage = BlockContactDamage.result(damageSnapshot)
-        if (Result.isFailure(damage)) {
-          return Result.fail(damage.failure)
-        }
-        if (touches && sample.capabilities.climbable) {
-          climbable = true
-        }
-        if (touches && damage.success > contactDamage) {
-          contactDamage = damage.success
-        }
-
-        return Result.flatMap(localShapeAt(environment, bx, by, bz, sample), (shapes) => {
-          for (const shape of shapes) {
-            const collisionBox = blockAABB(bx, by, bz, shape)
-            if (Result.isFailure(collisionBox)) {
-              return Result.fail(collisionBox.failure)
-            }
-            if (collidesWith(box, collisionBox.success) && sample.capabilities.suffocates) {
-              suffocating = true
-            }
-          }
+    Result.flatMap(kernelStateAt(environment, bx, by, bz), (context) =>
+      Result.flatMap(environment.blockAt(bx, by, bz), (sample) => {
+        if (sample === null) {
           return Result.succeed(globalThis.undefined)
+        }
+
+        return Result.flatMap(blockAABB(bx, by, bz), (cell) => {
+          const touches = touchesCell(box, cell)
+          const damageSnapshot = sample.properties.contactDamage
+          const damage = BlockContactDamage.result(damageSnapshot)
+          if (Result.isFailure(damage)) {
+            return Result.fail(damage.failure)
+          }
+          if (touches && sample.capabilities.climbable) {
+            climbable = true
+          }
+          if (touches && damage.success > contactDamage) {
+            contactDamage = damage.success
+          }
+
+          return Result.flatMap(localShapeAt(environment, bx, by, bz, sample, context), (shapes) => {
+            for (const shape of shapes) {
+              const collisionBox = blockAABB(bx, by, bz, shape)
+              if (Result.isFailure(collisionBox)) {
+                return Result.fail(collisionBox.failure)
+              }
+              if (collidesWith(box, collisionBox.success) && sample.capabilities.suffocates) {
+                suffocating = true
+              }
+            }
+            return Result.succeed(globalThis.undefined)
+          })
         })
-      })
-    }),
+      }),
+    ),
   )
   if (Result.isFailure(scan)) {
     return Result.fail(scan.failure)

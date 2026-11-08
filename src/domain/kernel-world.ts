@@ -9,8 +9,8 @@ import type {
   BlockShapeAt,
   ResolveOptions,
 } from './resolve-types.js'
+import type { BlockStateAt, CustomBlockShapeStateAt } from './block-shape-state.js'
 import type { BlockLength } from './physical-units.js'
-import type { BlockShapeStateAt } from './block-shape-state.js'
 import type { HalfHeight } from './coordinates.js'
 import { Result } from 'effect'
 
@@ -47,21 +47,18 @@ export const blockPropertiesAtFromKernel = (blockIdAt: BlockIdAt): BlockProperti
 export const blockEnvironmentFromKernel = (
   blockIdAt: BlockIdAt,
   blockShapeAt?: EnvironmentBlockShapeAt,
-  blockShapeStateAt?: BlockShapeStateAt,
+  blockStateAt?: BlockStateAt,
+  customBlockShapeStateAt?: CustomBlockShapeStateAt,
 ): BlockEnvironment => {
-  const environment: {
-    readonly blockAt: BlockAt
-    readonly blockShapeAt?: EnvironmentBlockShapeAt
-    readonly blockShapeStateAt?: BlockShapeStateAt
-  } = { blockAt: blockAtFromKernel(blockIdAt) }
+  let environment: BlockEnvironment = { blockAt: blockAtFromKernel(blockIdAt) }
   if (typeof blockShapeAt === 'function') {
-    if (typeof blockShapeStateAt === 'function') {
-      return { ...environment, blockShapeAt, blockShapeStateAt }
-    }
-    return { ...environment, blockShapeAt }
+    environment = { ...environment, blockShapeAt }
   }
-  if (typeof blockShapeStateAt === 'function') {
-    return { ...environment, blockShapeStateAt }
+  if (typeof blockStateAt === 'function') {
+    environment = { ...environment, blockIdAt, blockStateAt }
+  }
+  if (typeof customBlockShapeStateAt === 'function') {
+    environment = { ...environment, customBlockShapeStateAt }
   }
   return environment
 }
@@ -71,7 +68,8 @@ export type KernelResolveOptions = Readonly<{
   readonly halfWidth: BlockLength
   readonly halfHeight: HalfHeight
   readonly blockShapeAt?: BlockShapeAt
-  readonly blockShapeStateAt?: BlockShapeStateAt
+  readonly blockStateAt?: BlockStateAt
+  readonly customBlockShapeStateAt?: CustomBlockShapeStateAt
   readonly stepHeight?: BlockLength
 }>
 
@@ -81,28 +79,35 @@ export const resolveOptionsFromKernel = ({
   halfWidth,
   halfHeight,
   blockShapeAt,
-  blockShapeStateAt,
+  blockStateAt,
+  customBlockShapeStateAt,
   stepHeight,
 }: KernelResolveOptions): ResolveOptions => {
   const options: {
     blockPropertiesAt: BlockPropertiesAt
     blockShapeAt?: BlockShapeAt
-    blockShapeStateAt?: BlockShapeStateAt
+    blockIdAt?: BlockIdAt
+    blockStateAt?: BlockStateAt
+    customBlockShapeStateAt?: CustomBlockShapeStateAt
     environment: BlockEnvironment
     halfHeight: HalfHeight
     halfWidth: BlockLength
     stepHeight?: BlockLength
   } = {
     blockPropertiesAt: blockPropertiesAtFromKernel(blockIdAt),
-    environment: blockEnvironmentFromKernel(blockIdAt, blockShapeAt, blockShapeStateAt),
+    environment: blockEnvironmentFromKernel(blockIdAt, blockShapeAt, blockStateAt, customBlockShapeStateAt),
     halfHeight,
     halfWidth,
   }
   if (typeof blockShapeAt === 'function') {
     options.blockShapeAt = blockShapeAt
   }
-  if (typeof blockShapeStateAt === 'function') {
-    options.blockShapeStateAt = blockShapeStateAt
+  if (typeof blockStateAt === 'function') {
+    options.blockIdAt = blockIdAt
+    options.blockStateAt = blockStateAt
+  }
+  if (typeof customBlockShapeStateAt === 'function') {
+    options.customBlockShapeStateAt = customBlockShapeStateAt
   }
   if (typeof stepHeight === 'number') {
     options.stepHeight = stepHeight
