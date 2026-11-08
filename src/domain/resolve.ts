@@ -12,13 +12,15 @@ import {
   type ResolveOptions,
 } from './resolve-types.js'
 import { clampAxis, resolveVertical } from './resolve-axis.js'
-import { isSupported, tryStepUp } from './resolve-support.js'
+import { hasGroundSupportWithinStep, isSupported, tryStepUp } from './resolve-support.js'
+import type { BlockEnvironment } from './environment-types.js'
 import { boxAt } from './resolve-shapes.js'
 import { sampleBlockHazards } from './environment.js'
 
 export type {
   BlockPropertiesAt,
   BlockShapeAt,
+  BlockShapeStateAt,
   HasGroundSupport,
   HorizontalPosition,
   Resolution,
@@ -26,22 +28,48 @@ export type {
   ResolveOptions,
 } from './resolve-types.js'
 
+const MAX_SNEAK_STEP_DOWN = 0.6
+
+/** Java sneaking prevents stepping down more than 0.6 blocks. */
+export const SNEAK_EDGE_STEP_HEIGHT: BlockLength = BlockLength(MAX_SNEAK_STEP_DOWN)
+
 export const clampSneakEdge = (
   previous: HorizontalPosition,
   next: HorizontalPosition,
+  sneaking: boolean,
   hasGroundSupport: HasGroundSupport,
-): HorizontalPosition => {
-  let nextX = next.x
-  let nextZ = next.z
-
-  if (next.x !== previous.x && !hasGroundSupport(next.x, previous.z)) {
-    nextX = previous.x
+): Result.Result<HorizontalPosition, ResolveError> => {
+  if (!sneaking) {
+    return Result.succeed(next)
   }
-  if (next.z !== previous.z && !hasGroundSupport(previous.x, next.z)) {
-    nextZ = previous.z
-  }
-
-  return { x: nextX, z: nextZ }
+  return Result.flatMap(hasGroundSupport(next.x, next.z, SNEAK_EDGE_STEP_HEIGHT), (nextIsSupported) => {
+    if (nextIsSupported) {
+      return Result.succeed(next)
+    }
+    const candidates: ReadonlyArray<HorizontalPosition> = [
+      { x: next.x, z: previous.z },
+      { x: previous.x, z: next.z },
+    ]
+    return Result.map(
+      Result.all(candidates.map((candidate) => hasGroundSupport(candidate.x, candidate.z, SNEAK_EDGE_STEP_HEIGHT))),
+      (candidateSupport): HorizontalPosition => {
+        let best: HorizontalPosition = previous
+        let bestDistance = -1
+        candidates.forEach((candidate, index) => {
+          if (candidateSupport[index]) {
+            const dx = Number(candidate.x) - Number(previous.x)
+            const dz = Number(candidate.z) - Number(previous.z)
+            const distance = dx * dx + dz * dz
+            if (distance > bestDistance) {
+              best = candidate
+              bestDistance = distance
+            }
+          }
+        })
+        return best
+      },
+    )
+  })
 }
 
 const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveOptions, ResolveError> => {
@@ -49,8 +77,12 @@ const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveO
     halfWidth: halfWidthSnapshot,
     halfHeight: halfHeightSnapshot,
     stepHeight: stepHeightSnapshot,
+    sneaking: sneakingSnapshot,
     environment,
   } = options
+  if (typeof sneakingSnapshot !== 'undefined' && typeof sneakingSnapshot !== 'boolean') {
+    return Result.fail(new RangeError('sneaking must be a boolean'))
+  }
   let checkedStepHeight: Result.Result<BlockLength | undefined, Brand.BrandError>
   if (typeof stepHeightSnapshot === 'undefined') {
     checkedStepHeight = Result.succeed(globalThis.undefined)
@@ -73,7 +105,7 @@ const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveO
     return Result.fail(new RangeError('stepHeight must be non-negative'))
   }
 
-  const { blockPropertiesAt, blockShapeAt, bouncinessAt } = options
+  const { blockPropertiesAt, blockShapeAt, blockShapeStateAt, bouncinessAt } = options
   let checkedOptions: ResolveOptions = {
     blockPropertiesAt,
     environment,
@@ -86,8 +118,14 @@ const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveO
   if (typeof blockShapeAt !== 'undefined') {
     checkedOptions = { ...checkedOptions, blockShapeAt }
   }
+  if (typeof blockShapeStateAt !== 'undefined') {
+    checkedOptions = { ...checkedOptions, blockShapeStateAt }
+  }
   if (typeof stepHeight !== 'undefined') {
     checkedOptions = { ...checkedOptions, stepHeight }
+  }
+  if (typeof sneakingSnapshot !== 'undefined') {
+    checkedOptions = { ...checkedOptions, sneaking: sneakingSnapshot }
   }
   return Result.succeed(checkedOptions)
 }
@@ -96,9 +134,18 @@ const finishResolution = (
   body: Body,
   isGrounded: boolean,
   box: AABB,
-  environment: ResolveOptions['environment'],
-): Result.Result<Resolution, ResolveError> =>
-  Result.map(sampleBlockHazards(box, environment), (hazards): Resolution => ({ body, hazards, isGrounded }))
+  options: ResolveOptions,
+): Result.Result<Resolution, ResolveError> => {
+  const { environment, blockShapeAt, blockShapeStateAt } = options
+  let environmentWithShapes: BlockEnvironment = environment
+  if (typeof environment.blockShapeAt === 'undefined' && typeof blockShapeAt === 'function') {
+    environmentWithShapes = { ...environmentWithShapes, blockShapeAt }
+  }
+  if (typeof environment.blockShapeStateAt === 'undefined' && typeof blockShapeStateAt === 'function') {
+    environmentWithShapes = { ...environmentWithShapes, blockShapeStateAt }
+  }
+  return Result.map(sampleBlockHazards(box, environmentWithShapes), (hazards): Resolution => ({ body, hazards, isGrounded }))
+}
 
 const resolveBodyWithValidatedOptions = (
   body: Body,
@@ -112,7 +159,7 @@ const resolveBodyWithValidatedOptions = (
 
   if (body.kind !== 'dynamic') {
     return Result.flatMap(isSupported(validOptions, initialBox.success), (isGrounded) =>
-      finishResolution(body, isGrounded, initialBox.success, validOptions.environment),
+      finishResolution(body, isGrounded, initialBox.success, validOptions),
     )
   }
 
@@ -134,13 +181,13 @@ const resolveBodyWithValidatedOptions = (
       return Result.fail(verticalBox.failure)
     }
     if (vertical.success.bounced === true) {
-      return finishResolution(verticallyResolved, false, verticalBox.success, validOptions.environment)
+      return finishResolution(verticallyResolved, false, verticalBox.success, validOptions)
     }
     if (vertical.success.blocked && body.vy < 0) {
-      return finishResolution(verticallyResolved, true, verticalBox.success, validOptions.environment)
+      return finishResolution(verticallyResolved, true, verticalBox.success, validOptions)
     }
     return Result.flatMap(isSupported(validOptions, verticalBox.success), (isGrounded) =>
-      finishResolution(verticallyResolved, isGrounded, verticalBox.success, validOptions.environment),
+      finishResolution(verticallyResolved, isGrounded, verticalBox.success, validOptions),
     )
   }
 
@@ -199,7 +246,7 @@ const resolveBodyWithValidatedOptions = (
     const steppedBody = stepped.success
     return Result.flatMap(boxAt(validOptions, steppedBody.x, steppedBody.y, steppedBody.z), (steppedBox) =>
       Result.flatMap(isSupported(validOptions, steppedBox), (isGrounded) =>
-        finishResolution(steppedBody, isGrounded, steppedBox, validOptions.environment),
+        finishResolution(steppedBody, isGrounded, steppedBox, validOptions),
       ),
     )
   }
@@ -221,10 +268,10 @@ const resolveBodyWithValidatedOptions = (
    */
   return Result.flatMap(boxAt(validOptions, resolved.x, resolved.y, resolved.z), (resolvedBox) => {
     if (vertical.success.bounced === true) {
-      return finishResolution(resolved, false, resolvedBox, validOptions.environment)
+      return finishResolution(resolved, false, resolvedBox, validOptions)
     }
     return Result.flatMap(isSupported(validOptions, resolvedBox), (isGrounded) =>
-      finishResolution(resolved, isGrounded, resolvedBox, validOptions.environment),
+      finishResolution(resolved, isGrounded, resolvedBox, validOptions),
     )
   })
 }
@@ -263,6 +310,45 @@ export const resolveWorld = (
   ))
 }
 
+const clampSneakingMovement = (
+  previous: Body,
+  next: Body,
+  options: ResolveOptions,
+): Result.Result<Body, ResolveError> => {
+  if (previous.kind !== 'dynamic' || options.sneaking !== true) {
+    return Result.succeed(next)
+  }
+  return Result.flatMap(boxAt(options, previous.x, previous.y, previous.z), (previousBox) =>
+    Result.flatMap(isSupported(options, previousBox), (wasGrounded) => {
+      if (!wasGrounded) {
+        return Result.succeed(next)
+      }
+      return Result.map(
+        clampSneakEdge(
+          { x: previous.x, z: previous.z },
+          { x: next.x, z: next.z },
+          true,
+          (positionX, positionZ, maxStepDown) =>
+            hasGroundSupportWithinStep(options, positionX, positionZ, previousBox.minY, maxStepDown),
+        ),
+        (position): Body => {
+          const { x: resolvedX, z: resolvedZ } = position
+          const { vx: nextVx, vz: nextVz } = next
+          let vx = nextVx
+          let vz = nextVz
+          if (resolvedX !== next.x) {
+            vx = BlocksPerSecond(0)
+          }
+          if (resolvedZ !== next.z) {
+            vz = BlocksPerSecond(0)
+          }
+          return { ...next, vx, vz, x: resolvedX, z: resolvedZ }
+        },
+      )
+    }),
+  )
+}
+
 export const stepBody = (
   body: Body,
   deltaTime: DeltaTimeSecs,
@@ -283,11 +369,15 @@ export const stepBody = (
   if (Result.isFailure(integrated)) {
     return Result.fail(integrated.failure)
   }
+  const sneakClamped = clampSneakingMovement(body, integrated.success, validOptions)
+  if (Result.isFailure(sneakClamped)) {
+    return Result.fail(sneakClamped.failure)
+  }
   let collisionSafe: Result.Result<Body, ResolveError>
   if (body.kind === 'dynamic') {
-    collisionSafe = resolveSweptMotionFromValidated(body, integrated.success, validOptions)
+    collisionSafe = resolveSweptMotionFromValidated(body, sneakClamped.success, validOptions)
   } else {
-    collisionSafe = Result.succeed(integrated.success)
+    collisionSafe = Result.succeed(sneakClamped.success)
   }
   if (Result.isFailure(collisionSafe)) {
     return Result.fail(collisionSafe.failure)

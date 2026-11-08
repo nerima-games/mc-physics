@@ -9,6 +9,7 @@ import {
 } from './coordinates.js'
 import { BlockAxis, type PositionAxis } from '@nerima-games/mc-kernel'
 import type { ResolveError, ResolveOptions } from './resolve-types.js'
+import { blockShapeForState, blockShapeLookupResult } from './shape-data.js'
 import { Result } from 'effect'
 
 const EMPTY_SHAPES: ReadonlyArray<AABB> = []
@@ -19,18 +20,34 @@ export const blockShapesAtAxes = (
   blockY: ReturnType<typeof BlockAxis>,
   blockZ: ReturnType<typeof BlockAxis>,
 ): Result.Result<ReadonlyArray<AABB>, ResolveError> => {
+  const shapeState = options.blockShapeStateAt?.(blockX, blockY, blockZ) ?? null
   const customShapeAt = options.blockShapeAt
   if (customShapeAt) {
-    const shape = customShapeAt(blockX, blockY, blockZ)
-    if (shape === null) {
-      return Result.succeed(EMPTY_SHAPES)
-    }
-    return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
-      blockX,
-      blockY,
-      blockZ,
-      localShape,
-    )))
+    return Result.flatMap(blockShapeLookupResult(customShapeAt(blockX, blockY, blockZ, shapeState)), (shape) => {
+      if (shape === null) {
+        return Result.succeed(EMPTY_SHAPES)
+      }
+      return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
+        blockX,
+        blockY,
+        blockZ,
+        localShape,
+      )))
+    })
+  }
+
+  if (shapeState !== null) {
+    return Result.flatMap(blockShapeForState(shapeState), (shape) => {
+      if (shape === null) {
+        return Result.succeed(EMPTY_SHAPES)
+      }
+      return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
+        blockX,
+        blockY,
+        blockZ,
+        localShape,
+      )))
+    })
   }
 
   return Result.flatMap(options.blockPropertiesAt(blockX, blockY, blockZ), (properties) => {

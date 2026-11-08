@@ -60,7 +60,7 @@
     "text": "number"
   },
   {
-    "count": 4,
+    "count": 3,
     "file": "src/domain/movement.ts",
     "ruleId": "no-raw-exported-type-field",
     "text": "number"

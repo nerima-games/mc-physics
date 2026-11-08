@@ -270,18 +270,25 @@ describe('block occupancy', () => {
       expect(box.maxY).toBe(64.5)
   })
 
-  it('a pressure plate occupies exactly the bottom sixteenth of its cell', () => {
+  it('an unpressed pressure plate is inset one pixel and one pixel high', () => {
       const box = blockBox(-3, 64, 7, PRESSURE_PLATE_SHAPE)
-      expect(box).toStrictEqual({ minX: -3, minY: 64, minZ: 7, maxX: -2, maxY: 64 + 1 / 16, maxZ: 8 })
+      expect(box).toStrictEqual({
+        minX: -3 + 1 / 16,
+        minY: 64,
+        minZ: 7 + 1 / 16,
+        maxX: -3 + 15 / 16,
+        maxY: 64 + 1 / 16,
+        maxZ: 7 + 15 / 16,
+      })
   })
 
-  it('a cactus is inset one sixteenth on X and Z but remains full height', () => {
+  it('a cactus is inset horizontally and fifteen sixteenths tall', () => {
       expect(blockBox(-3, 64, 7, CACTUS_SHAPE)).toStrictEqual({
         minX: -3 + 1 / 16,
         minY: 64,
         minZ: 7 + 1 / 16,
         maxX: -3 + 15 / 16,
-        maxY: 65,
+        maxY: 64 + 15 / 16,
         maxZ: 7 + 15 / 16,
       })
   })

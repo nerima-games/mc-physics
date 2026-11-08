@@ -5,10 +5,10 @@ import type {
   BlockProperties,
   FlowingFluidKind,
 } from '@nerima-games/mc-kernel'
+import type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
 import type { BlocksPerSecondSquared, PerSecond } from './physical-units.js'
 import type { Brand, Result } from 'effect'
 import type { BlockRegistryResolutionFailure } from '@nerima-games/mc-kernel/domain/block-registry'
-import type { BlockShape } from './coordinates.js'
 
 export type FluidFlow = Readonly<{ readonly x: number; readonly y: number; readonly z: number }>
 
@@ -23,11 +23,12 @@ export type EnvironmentError = BlockLookupError | RangeError
 
 export type BlockAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockSample | null, BlockLookupError>
 
-export type EnvironmentBlockShapeAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => BlockShape | null
+export type EnvironmentBlockShapeAt = BlockShapeAt
 
 export type BlockEnvironment = Readonly<{
   readonly blockAt: BlockAt
   readonly blockShapeAt?: EnvironmentBlockShapeAt
+  readonly blockShapeStateAt?: BlockShapeStateAt
 }>
 
 export type SurfaceEffects = Readonly<{

@@ -17,6 +17,17 @@
  */
 
 export * from './domain/coordinates.js'
+export type {
+  BlockFacing,
+  BlockHalf,
+  BlockShapeAt,
+  BlockShapeLookup,
+  BlockShapeStateAt,
+  BlockShapeStateInput,
+  SnowLayerCount,
+  StairShape,
+  WallConnection,
+} from './domain/block-shape-state.js'
 export * from './domain/creative-flight.js'
 export * from './domain/dda.js'
 export * from './domain/delta-time.js'
@@ -37,12 +48,27 @@ export type { GlideConfig, GlideSight } from './domain/glide.js'
 export * from './domain/integrate.js'
 export * from './domain/kernel-world.js'
 export * from './domain/landing.js'
-export * from './domain/movement.js'
+export {
+  applyKnockback,
+  applyMovementFriction,
+  applyMovementInput,
+  DEFAULT_MOVEMENT_CONFIG,
+  MovementFactor,
+  movementCoefficientsForBlockId,
+} from './domain/movement.js'
+export type { MovementCoefficients, MovementConfig, MovementContext, MovementInput } from './domain/movement.js'
 export * from './domain/piston.js'
 export * from './domain/physical-units.js'
 export * from './domain/projectile.js'
 export * from './domain/resolve.js'
-export * from './domain/shape-data.js'
+export {
+  CACTUS_SHAPE,
+  COLLISION_SHAPE_AABBS,
+  FULL_BLOCK_SHAPE,
+  PRESSURE_PLATE_SHAPE,
+  SLAB_SHAPE,
+  blockShapeForState,
+} from './domain/shape-data.js'
 
 export { DEFAULT_EXPLOSION_LIMITS } from '@nerima-games/mc-kernel'
 export type {
