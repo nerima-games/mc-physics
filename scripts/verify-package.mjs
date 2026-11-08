@@ -76,7 +76,7 @@ const expectedExports = [
   'blockAtFromKernel',
   'blockEnvironmentFromKernel',
   'blockPropertiesAtFromKernel',
-  'blockShapeForState',
+  'blockShapeForCustomState',
   'blockVectorResult',
   'centreOfFoot',
   'clampFrameDelta',
