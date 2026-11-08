@@ -275,6 +275,59 @@ describe('surface movement profiles', () => {
     expect(speedAfterTicks(inputOf(), soulSand)).toBeCloseTo(2.508, 2)
   })
 
+  it('settles at 3 blocks per second on a ladder under the input and friction recurrence', () => {
+    const ladder = contextOf({
+      isGrounded: false,
+      movementBlockIds: [BlockId(18)],
+    })
+    const ladderFriction = 0.98 * 0.91
+
+    expect(speedAfterTicks(inputOf(), ladder)).toBeCloseTo(3, 8)
+
+    // A steady tick starts at the previous post-friction velocity, then moves at 3 blocks/second.
+    const afterPreviousFriction = bodyOf('dynamic', {
+      vz: BlocksPerSecond(-3 * ladderFriction),
+    })
+    const beforeMovement = applyMovementInput(afterPreviousFriction, inputOf(), ladder)
+    expect(Number(beforeMovement.vz)).toBeCloseTo(-3, 12)
+
+    const afterFriction = applyMovementFriction(beforeMovement, inputOf(), ladder)
+    expect(Number(afterFriction.vz)).toBeCloseTo(-3 * ladderFriction, 12)
+  })
+
+  it('property: ladder horizontal velocity follows the analytic fixed-tick recurrence', () => {
+    const tickCount = 12
+    const ladderFriction = 0.98 * 0.91
+    const ladder = contextOf({
+      isGrounded: false,
+      movementBlockIds: [BlockId(18)],
+    })
+    const forwardAxis = fc.integer({ min: -100, max: 100 }).map((value) => value / 100)
+
+    fc.assert(
+      fc.property(forwardAxis, (axis) => {
+        const actual = speedAfterTicks(inputOf({ forward: axis }), ladder, tickCount)
+        const expected = 3 * axis * (1 - ladderFriction ** tickCount)
+        return Math.abs(actual - expected) < 1e-10
+      }),
+      { numRuns: 250 },
+    )
+  })
+
+  it('sustains cobweb horizontal movement at one quarter of ordinary grounded walking speed', () => {
+    const ticksPerSecond = 20
+    const groundAccelerationPerTick = 39.2 / ticksPerSecond
+    const ordinaryGroundFriction = 0.546
+    const ordinaryWalkSteadySpeed = groundAccelerationPerTick / (1 - ordinaryGroundFriction)
+    const cobweb = contextOf({ movementBlockIds: [BlockId(19)] })
+    const ordinarySpeed = speedAfterTicks(inputOf(), contextOf())
+    const cobwebSpeed = speedAfterTicks(inputOf(), cobweb)
+
+    expect(ordinarySpeed).toBeCloseTo(ordinaryWalkSteadySpeed, 8)
+    expect(cobwebSpeed).toBeCloseTo(ordinaryWalkSteadySpeed * 0.25, 8)
+    expect(cobwebSpeed / ordinarySpeed).toBeCloseTo(0.25, 8)
+  })
+
   it('applies cobweb horizontal and vertical momentum multipliers to contacting entities', () => {
     const web = contextOf({
       isGrounded: false,
@@ -504,5 +557,74 @@ describe('knockback', () => {
     expect(Result.isFailure(velocityVectorResult(Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY))).toBe(true)
     const staticBody = bodyOf('static')
     expect(applyKnockback(staticBody, velocity(1, 2, 3))).toBe(staticBody)
+  })
+
+  it('rejects every invalid body component for dynamic, kinematic, and static bodies', () => {
+    const bodyKinds: ReadonlyArray<Body['kind']> = ['dynamic', 'kinematic', 'static']
+    const bodyComponents = ['x', 'y', 'z', 'vx', 'vy', 'vz'] as const
+    const invalidNumbers = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]
+
+    for (const kind of bodyKinds) {
+      for (const component of bodyComponents) {
+        for (const invalidNumber of invalidNumbers) {
+          const invalidBody = bodyOf(kind)
+          expect(Reflect.set(invalidBody, component, invalidNumber)).toBe(true)
+          expect(
+            Result.isFailure(applyKnockbackResult(invalidBody, velocity(1, 2, 3))),
+            `${kind} body with invalid ${component} should fail`,
+          ).toBe(true)
+        }
+      }
+    }
+
+    const invalidKindBody = bodyOf()
+    expect(Reflect.set(invalidKindBody, 'kind', 'unknown')).toBe(true)
+    expect(Result.isFailure(applyKnockbackResult(invalidKindBody, velocity(1, 2, 3)))).toBe(true)
+  })
+
+  it('rejects every invalid impulse component for dynamic, kinematic, and static bodies', () => {
+    const bodyKinds: ReadonlyArray<Body['kind']> = ['dynamic', 'kinematic', 'static']
+    const impulseComponents = ['x', 'y', 'z'] as const
+    const invalidNumbers = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]
+
+    for (const kind of bodyKinds) {
+      for (const component of impulseComponents) {
+        for (const invalidNumber of invalidNumbers) {
+          const invalidImpulse = velocity(1, 2, 3)
+          expect(Reflect.set(invalidImpulse, component, invalidNumber)).toBe(true)
+          expect(
+            Result.isFailure(applyKnockbackResult(bodyOf(kind), invalidImpulse)),
+            `${kind} body with invalid impulse ${component} should fail`,
+          ).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('accepts signed finite negative body velocities and impulses for every body kind', () => {
+    const negativeFinite = fc.integer({ min: -100000, max: -1 }).map((value) => value / 100)
+    fc.assert(
+      fc.property(
+        fc.constantFrom<Body['kind']>('dynamic', 'kinematic', 'static'),
+        fc.tuple(negativeFinite, negativeFinite, negativeFinite),
+        fc.tuple(negativeFinite, negativeFinite, negativeFinite),
+        (kind, bodyVelocities, impulseComponents) => {
+          const body = bodyOf(kind, {
+            vx: BlocksPerSecond(bodyVelocities[0]),
+            vy: BlocksPerSecond(bodyVelocities[1]),
+            vz: BlocksPerSecond(bodyVelocities[2]),
+          })
+          const impulse = velocity(impulseComponents[0], impulseComponents[1], impulseComponents[2])
+          const result = applyKnockbackResult(body, impulse)
+          if (Result.isFailure(result)) return false
+          if (kind !== 'dynamic') return result.success === body
+
+          return Number(result.success.vx) === bodyVelocities[0] + impulseComponents[0]
+            && Number(result.success.vy) === bodyVelocities[1] + impulseComponents[1]
+            && Number(result.success.vz) === bodyVelocities[2] + impulseComponents[2]
+        },
+      ),
+      { numRuns: 250 },
+    )
   })
 })

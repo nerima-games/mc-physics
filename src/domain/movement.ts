@@ -76,6 +76,7 @@ const BLOCK_ID_SOUL_SAND = BlockId(SOUL_SAND_BLOCK_ID_VALUE)
 const BLOCK_ID_ICE = BlockId(ICE_BLOCK_ID_VALUE)
 const COBWEB_HORIZONTAL_MOMENTUM = 0.25
 const COBWEB_VERTICAL_MOMENTUM = 0.05
+const COBWEB_STEADY_SPEED_RATIO = 0.25
 const SOUL_SAND_SPEED = 2.508
 const WALK_SPEED = 4.317
 const MAX_CLIMBABLE_HORIZONTAL_SPEED = 3
@@ -396,16 +397,20 @@ export const applyMovementInput = (
       acceleration *= (BASE_GROUND_FRICTION / friction) ** GROUND_FRICTION_EXPONENT
     }
     acceleration *= inputAccelerationMultiplier(coefficients)
-    if (isClimbable && friction < 1) {
-      const climbableSteadySpeed = acceleration * TICKS_PER_SECOND / (1 - friction)
-      if (climbableSteadySpeed > 0) {
-        acceleration *= MAX_CLIMBABLE_HORIZONTAL_SPEED / climbableSteadySpeed
-      }
+    const horizontalFriction = friction * horizontalMomentumMultiplier(coefficients)
+    if (contextBlockIds(validContext).some((blockId) => Number(blockId) === COBWEB_BLOCK_ID_VALUE) && friction < 1) {
+      acceleration *= COBWEB_STEADY_SPEED_RATIO * (1 - horizontalFriction) / (1 - friction)
     }
     if (validInput.sneak) {
       acceleration *= Number(validConfig.sneakMultiplier)
     } else if (validInput.sprint && forward > 0) {
       acceleration *= Number(validConfig.sprintMultiplier)
+    }
+    if (isClimbable && horizontalFriction < 1) {
+      const climbableSteadySpeed = acceleration / (1 - horizontalFriction)
+      if (climbableSteadySpeed > 0) {
+        acceleration *= MAX_CLIMBABLE_HORIZONTAL_SPEED / climbableSteadySpeed
+      }
     }
     const nextVx = Number(checkedBody.success.vx) + directionX * acceleration
     const nextVz = Number(checkedBody.success.vz) + directionZ * acceleration
@@ -486,33 +491,30 @@ export const applyMovementFriction = (
   })
 }
 
-export const applyKnockback = (body: Body, impulse: VelocityVector): Result.Result<Body, Brand.BrandError> => {
-  if (body.kind !== 'dynamic') {
-    return Result.succeed(body)
-  }
-
-  const bodyVxSnapshot = body.vx
-  const bodyVySnapshot = body.vy
-  const bodyVzSnapshot = body.vz
+export const applyKnockback = (
+  body: Body,
+  impulse: VelocityVector,
+): Result.Result<Body, Brand.BrandError | RangeError> => {
   const impulseXSnapshot = impulse.x
   const impulseYSnapshot = impulse.y
   const impulseZSnapshot = impulse.z
   const values = Result.all([
-    BlocksPerSecond.result(bodyVxSnapshot),
-    BlocksPerSecond.result(bodyVySnapshot),
-    BlocksPerSecond.result(bodyVzSnapshot),
+    validateMovementBody(body),
     BlocksPerSecond.result(impulseXSnapshot),
     BlocksPerSecond.result(impulseYSnapshot),
     BlocksPerSecond.result(impulseZSnapshot),
   ])
-  return Result.flatMap(values, ([vx, vy, vz, impulseX, impulseY, impulseZ]) =>
-    Result.map(
+  return Result.flatMap(values, ([validatedBody, impulseX, impulseY, impulseZ]) => {
+    if (validatedBody.kind !== 'dynamic') {
+      return Result.succeed(body)
+    }
+    return Result.map(
       Result.all([
-        BlocksPerSecond.result(vx + impulseX),
-        BlocksPerSecond.result(vy + impulseY),
-        BlocksPerSecond.result(vz + impulseZ),
+        BlocksPerSecond.result(Number(validatedBody.vx) + Number(impulseX)),
+        BlocksPerSecond.result(Number(validatedBody.vy) + Number(impulseY)),
+        BlocksPerSecond.result(Number(validatedBody.vz) + Number(impulseZ)),
       ]),
-      ([nextVx, nextVy, nextVz]): Body => ({ ...body, vx: nextVx, vy: nextVy, vz: nextVz }),
-    ),
-  )
+      ([nextVx, nextVy, nextVz]): Body => ({ ...validatedBody, vx: nextVx, vy: nextVy, vz: nextVz }),
+    )
+  })
 }

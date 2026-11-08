@@ -95,7 +95,7 @@ describe('kernel-backed world queries', () => {
     const shaped = blockEnvironmentFromKernel(idAt, () => shape)
     expect(shaped.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
 
-    const state: BlockShapeStateInput = { kind: 'slab', half: 'top' }
+    const state: BlockShapeStateInput = { kind: 'slab', type: 'top' }
     const stateful = blockEnvironmentFromKernel(idAt, undefined, () => state)
     expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
 
@@ -128,7 +128,7 @@ describe('kernel-backed world queries', () => {
     expect(shaped.environment.blockShapeAt?.(cell(0), cell(0), cell(0))).toBe(shape)
     expect(shaped.stepHeight).toBeUndefined()
 
-    const state: BlockShapeStateInput = { kind: 'slab', half: 'top' }
+    const state: BlockShapeStateInput = { kind: 'slab', type: 'top' }
     const stateful = resolveOptionsFromKernel({ ...base, blockShapeStateAt: () => state })
     expect(stateful.blockShapeStateAt?.(cell(0), cell(0), cell(0))).toBe(state)
 

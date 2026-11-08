@@ -1,5 +1,17 @@
 import type { AABB, BlockShape } from './coordinates.js'
-import { type BlockFacing, type BlockHalf, type BlockShapeLookup, type BlockShapeStateInput, SNOW_LAYER_COUNTS, type SnowLayerCount, type StairShape, type WallConnection } from './block-shape-state.js'
+import {
+  type BlockFacing,
+  type BlockHalf,
+  type BlockShapeLookup,
+  type BlockShapeStateInput,
+  type BlockStateConnectionValue,
+  type BlockStateConnections,
+  type DoorHalf,
+  SNOW_LAYER_COUNTS,
+  type SnowLayerCount,
+  type StairShape,
+  type WallConnection,
+} from './block-shape-state.js'
 import { type CollisionShape, PositionAxis } from '@nerima-games/mc-kernel'
 import { Result } from 'effect'
 
@@ -119,31 +131,34 @@ const stairShapes = (state: Extract<BlockShapeStateInput, { kind: 'stairs' }>): 
     return [base, facingBox]
   }
   let side: AABB
-  if (state.shape === 'innerLeft' || state.shape === 'outerLeft') {
+  if (state.shape === 'inner_left' || state.shape === 'outer_left') {
     side = sideHalf(state.facing, 'left')
   } else {
     side = sideHalf(state.facing, 'right')
   }
-  if (state.shape === 'outerLeft' || state.shape === 'outerRight') {
+  if (state.shape === 'outer_left' || state.shape === 'outer_right') {
     return [base, intersectHorizontal(facing, side, stepMinY, stepMaxY)]
   }
   const sideBox = localBox(side.minX, stepMinY, side.minZ, side.maxX, stepMaxY, side.maxZ)
   return [base, facingBox, sideBox]
 }
 
+const wallConnectionIsPresent = (connection: BlockStateConnectionValue | undefined): boolean =>
+  typeof connection !== 'undefined' && connection !== false && connection !== 'none'
+
 const fenceShapes = (state: Extract<BlockShapeStateInput, { kind: 'fence' }>): ReadonlyArray<AABB> => {
   const post = localBox(SIX_SIXTEENTHS, 0, SIX_SIXTEENTHS, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS)
   const shapes: Array<AABB> = [post]
-  if (state.north) {
+  if (wallConnectionIsPresent(state.connections?.north)) {
     shapes.push(localBox(SIX_SIXTEENTHS, 0, 0, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, HALF_BLOCK))
   }
-  if (state.south) {
+  if (wallConnectionIsPresent(state.connections?.south)) {
     shapes.push(localBox(SIX_SIXTEENTHS, 0, HALF_BLOCK, TEN_SIXTEENTHS, TWENTY_FOUR_SIXTEENTHS, 1))
   }
-  if (state.east) {
+  if (wallConnectionIsPresent(state.connections?.east)) {
     shapes.push(localBox(HALF_BLOCK, 0, SIX_SIXTEENTHS, 1, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS))
   }
-  if (state.west) {
+  if (wallConnectionIsPresent(state.connections?.west)) {
     shapes.push(localBox(0, 0, SIX_SIXTEENTHS, HALF_BLOCK, TWENTY_FOUR_SIXTEENTHS, TEN_SIXTEENTHS))
   }
   return shapes
@@ -158,19 +173,19 @@ const wallShapes = (state: Extract<BlockShapeStateInput, { kind: 'wall' }>): Rea
   const armMin = HALF_BLOCK - WALL_ARM_HALF_WIDTH
   const armMax = HALF_BLOCK + WALL_ARM_HALF_WIDTH
   const armHeight = TWENTY_FOUR_SIXTEENTHS
-  if (state.up) {
+  if (wallConnectionIsPresent(state.connections?.up)) {
     shapes.push(localBox(centerMin, 0, centerMin, centerMax, TWENTY_FOUR_SIXTEENTHS, centerMax))
   }
-  if (state.north !== 'none') {
+  if (wallConnectionIsPresent(state.connections?.north)) {
     shapes.push(localBox(armMin, 0, 0, armMax, armHeight, armMax))
   }
-  if (state.south !== 'none') {
+  if (wallConnectionIsPresent(state.connections?.south)) {
     shapes.push(localBox(armMin, 0, armMin, armMax, armHeight, 1))
   }
-  if (state.east !== 'none') {
+  if (wallConnectionIsPresent(state.connections?.east)) {
     shapes.push(localBox(armMin, 0, armMin, 1, armHeight, armMax))
   }
-  if (state.west !== 'none') {
+  if (wallConnectionIsPresent(state.connections?.west)) {
     shapes.push(localBox(0, 0, armMin, armMax, armHeight, armMax))
   }
   return shapes
@@ -248,18 +263,18 @@ const bedShapes = (facing: BlockFacing, part: 'head' | 'foot'): ReadonlyArray<AA
   ...BED_LEGS_BY_FACING[bedLegFacing(facing, part)],
 ]
 
-const pressurePlateHeight = (pressed: boolean): number => {
-  if (pressed) {
+const pressurePlateHeight = (powered: boolean): number => {
+  if (powered) {
     return HALF_PIXEL
   }
   return ONE_SIXTEENTH
 }
-const pressurePlateShape = (pressed: boolean): AABB => localBox(
+const pressurePlateShape = (powered: boolean): AABB => localBox(
   ONE_SIXTEENTH,
   0,
   ONE_SIXTEENTH,
   FIFTEEN_SIXTEENTHS,
-  pressurePlateHeight(pressed),
+  pressurePlateHeight(powered),
   FIFTEEN_SIXTEENTHS,
 )
 
@@ -273,30 +288,49 @@ const isBlockHalf = (value: unknown): value is BlockHalf =>
   value === 'bottom' || value === 'top'
 
 const isStairShape = (value: unknown): value is StairShape =>
-  value === 'straight' || value === 'innerLeft' || value === 'innerRight' || value === 'outerLeft' || value === 'outerRight'
+  value === 'straight' || value === 'inner_left' || value === 'inner_right' || value === 'outer_left' || value === 'outer_right'
 
 const isWallConnection = (value: unknown): value is WallConnection =>
-  value === 'none' || value === 'low' || value === 'tall'
+  typeof value === 'boolean' || value === 'none' || value === 'side' || value === 'up'
+
+const BLOCK_STATE_CONNECTION_KEYS: ReadonlyArray<keyof BlockStateConnections> = [
+  'down',
+  'north',
+  'east',
+  'south',
+  'west',
+  'up',
+]
+
+const isBlockStateConnections = (value: unknown): value is BlockStateConnections =>
+  isRecord(value) &&
+  Object.keys(value).every((key) => BLOCK_STATE_CONNECTION_KEYS.some((direction) => direction === key)) &&
+  BLOCK_STATE_CONNECTION_KEYS.every((direction) =>
+    typeof value[direction] === 'undefined' || isWallConnection(value[direction]))
+
+const isOptionalBlockStateConnections = (value: unknown): value is BlockStateConnections | undefined =>
+  typeof value === 'undefined' || isBlockStateConnections(value)
 
 const isSnowLayerCount = (value: unknown): value is SnowLayerCount =>
   SNOW_LAYER_COUNTS.some((layer) => layer === value)
 
 const isSlabInput = (state: Record<string, unknown>): boolean =>
-  isBlockHalf(state['half']) || state['half'] === 'double'
+  state['type'] === 'bottom' || state['type'] === 'top' || state['type'] === 'double'
 
 const isStairsInput = (state: Record<string, unknown>): boolean =>
   isBlockFacing(state['facing']) && isBlockHalf(state['half']) && isStairShape(state['shape'])
 
 const isFenceInput = (state: Record<string, unknown>): boolean =>
-  typeof state['north'] === 'boolean' && typeof state['east'] === 'boolean' &&
-  typeof state['south'] === 'boolean' && typeof state['west'] === 'boolean'
+  isOptionalBlockStateConnections(state['connections'])
 
 const isWallInput = (state: Record<string, unknown>): boolean =>
-  isWallConnection(state['north']) && isWallConnection(state['east']) &&
-  isWallConnection(state['south']) && isWallConnection(state['west']) && typeof state['up'] === 'boolean'
+  isOptionalBlockStateConnections(state['connections'])
+
+const isDoorHalf = (value: unknown): value is DoorHalf =>
+  value === 'lower' || value === 'upper'
 
 const isDoorInput = (state: Record<string, unknown>): boolean =>
-  isBlockFacing(state['facing']) && isBlockHalf(state['half']) &&
+  isBlockFacing(state['facing']) && isDoorHalf(state['half']) &&
   (state['hinge'] === 'left' || state['hinge'] === 'right') && typeof state['open'] === 'boolean'
 
 const isTrapdoorInput = (state: Record<string, unknown>): boolean =>
@@ -331,7 +365,7 @@ const isBlockShapeStateInput = (value: unknown): value is BlockShapeStateInput =
     case 'cactus':
       return true
     case 'pressurePlate':
-      return typeof value['pressed'] === 'boolean'
+      return typeof value['powered'] === 'boolean'
     default:
       return false
   }
@@ -344,10 +378,10 @@ export const blockShapeForState = (input: unknown): Result.Result<BlockShape | n
   }
   const state = input
   if (state.kind === 'slab') {
-    if (state.half === 'double') {
+    if (state.type === 'double') {
       return Result.succeed(FULL_BLOCK_SHAPE)
     }
-    if (state.half === 'bottom') {
+    if (state.type === 'bottom') {
       return Result.succeed(SLAB_SHAPE)
     }
     return Result.succeed({ ...FULL_BLOCK_SHAPE, minY: PositionAxis(HALF_BLOCK) })
@@ -391,7 +425,7 @@ export const blockShapeForState = (input: unknown): Result.Result<BlockShape | n
   if (state.kind === 'cactus') {
     return Result.succeed(CACTUS_SHAPE)
   }
-  return Result.succeed(pressurePlateShape(state.pressed))
+  return Result.succeed(pressurePlateShape(state.powered))
 }
 
 /** Adapts either a raw custom shape or a typed shape failure to the Result channel. */
