@@ -5,6 +5,7 @@ import {
   type BlockShapeLookup,
   type BlockStateConnectionValue,
   type BlockStateConnections,
+  type BlockStateFacing,
   type BlockStateLookupFailure,
   type CustomBlockShapeStateInput,
   type StairShape,
@@ -32,20 +33,44 @@ const FIFTEEN_SIXTEENTHS = 0.9375
 const PIXELS_PER_BLOCK = 16
 const TWO_PIXELS = 2
 const THREE_PIXELS = 3
+const FOUR_PIXELS = 4
+const FIVE_PIXELS = 5
 const SIX_PIXELS = 6
+const SEVEN_PIXELS = 7
 const NINE_PIXELS = 9
 const TEN_PIXELS = 10
+const ELEVEN_PIXELS = 11
+const TWELVE_PIXELS = 12
+const THIRTEEN_PIXELS = 13
 const FOURTEEN_PIXELS = 14
 const TWENTY_FOUR_PIXELS = 24
 const SNOW_LAYER_PIXELS = TWO_PIXELS
+const TWO_SIXTEENTHS = TWO_PIXELS / PIXELS_PER_BLOCK
 const THREE_SIXTEENTHS = THREE_PIXELS / PIXELS_PER_BLOCK
+const FOUR_SIXTEENTHS = FOUR_PIXELS / PIXELS_PER_BLOCK
+const FIVE_SIXTEENTHS = FIVE_PIXELS / PIXELS_PER_BLOCK
 const SIX_SIXTEENTHS = SIX_PIXELS / PIXELS_PER_BLOCK
+const SEVEN_SIXTEENTHS = SEVEN_PIXELS / PIXELS_PER_BLOCK
 const TEN_SIXTEENTHS = TEN_PIXELS / PIXELS_PER_BLOCK
+const ELEVEN_SIXTEENTHS = ELEVEN_PIXELS / PIXELS_PER_BLOCK
+const TWELVE_SIXTEENTHS = TWELVE_PIXELS / PIXELS_PER_BLOCK
+const THIRTEEN_SIXTEENTHS = THIRTEEN_PIXELS / PIXELS_PER_BLOCK
 const FOURTEEN_SIXTEENTHS = FOURTEEN_PIXELS / PIXELS_PER_BLOCK
 const TWENTY_FOUR_SIXTEENTHS = TWENTY_FOUR_PIXELS / PIXELS_PER_BLOCK
 const WALL_ARM_HALF_WIDTH = THREE_PIXELS / PIXELS_PER_BLOCK
 const NINE_SIXTEENTHS = NINE_PIXELS / PIXELS_PER_BLOCK
 const HALF_PIXEL = HALF_BLOCK / PIXELS_PER_BLOCK
+const PISTON_HEAD_LONG_ARM_END = 1 + FOUR_SIXTEENTHS
+const PISTON_HEAD_LONG_ARM_START = -FOUR_SIXTEENTHS
+
+const localBox = (minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB => ({
+  maxX: PositionAxis(maxX),
+  maxY: PositionAxis(maxY),
+  maxZ: PositionAxis(maxZ),
+  minX: PositionAxis(minX),
+  minY: PositionAxis(minY),
+  minZ: PositionAxis(minZ),
+})
 
 /** The shape a full block occupies within its own cell: the whole unit cube. */
 export const FULL_BLOCK_SHAPE: AABB = {
@@ -55,6 +80,286 @@ export const FULL_BLOCK_SHAPE: AABB = {
   minX: PositionAxis(0),
   minY: PositionAxis(0),
   minZ: PositionAxis(0),
+}
+
+const DIRECTIONAL_HALF_SHAPES: Readonly<Record<BlockFacing, AABB>> = {
+  east: localBox(HALF_BLOCK, 0, 0, 1, 1, 1),
+  north: localBox(0, 0, 0, 1, 1, HALF_BLOCK),
+  south: localBox(0, 0, HALF_BLOCK, 1, 1, 1),
+  west: localBox(0, 0, 0, HALF_BLOCK, 1, 1),
+}
+
+const sixWayFacing = (facing: BlockStateFacing | undefined): facing is BlockStateFacing =>
+  facing === 'north' || facing === 'east' || facing === 'south' || facing === 'west' || facing === 'up' || facing === 'down'
+const horizontalFacing = (facing: BlockStateFacing | undefined): facing is BlockFacing =>
+  facing === 'north' || facing === 'east' || facing === 'south' || facing === 'west'
+
+const EXTENDED_PISTON_SHAPES_BY_FACING: Readonly<Record<BlockStateFacing, AABB>> = {
+  down: localBox(0, FOUR_SIXTEENTHS, 0, 1, 1, 1),
+  east: localBox(0, 0, 0, TWELVE_SIXTEENTHS, 1, 1),
+  north: localBox(0, 0, FOUR_SIXTEENTHS, 1, 1, 1),
+  south: localBox(0, 0, 0, 1, 1, TWELVE_SIXTEENTHS),
+  up: localBox(0, 0, 0, 1, TWELVE_SIXTEENTHS, 1),
+  west: localBox(FOUR_SIXTEENTHS, 0, 0, 1, 1, 1),
+}
+
+const pistonShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (typeof state.extended !== 'boolean' || !sixWayFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  if (!state.extended) {
+    return FULL_BLOCK_SHAPE
+  }
+  return EXTENDED_PISTON_SHAPES_BY_FACING[state.facing]
+}
+
+const LADDER_SHAPES_BY_FACING: Readonly<Record<BlockFacing, AABB>> = {
+  east: localBox(0, 0, 0, THREE_SIXTEENTHS, 1, 1),
+  north: localBox(0, 0, THIRTEEN_SIXTEENTHS, 1, 1, 1),
+  south: localBox(0, 0, 0, 1, 1, THREE_SIXTEENTHS),
+  west: localBox(THIRTEEN_SIXTEENTHS, 0, 0, 1, 1, 1),
+}
+
+const ladderShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!horizontalFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  return LADDER_SHAPES_BY_FACING[state.facing]
+}
+
+const AMETHYST_CLUSTER_SHAPES_BY_FACING: Readonly<Record<BlockStateFacing, AABB>> = {
+  down: localBox(THREE_SIXTEENTHS, NINE_SIXTEENTHS, THREE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, 1, THIRTEEN_SIXTEENTHS),
+  east: localBox(0, THREE_SIXTEENTHS, THREE_SIXTEENTHS, SEVEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS),
+  north: localBox(THREE_SIXTEENTHS, THREE_SIXTEENTHS, NINE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, 1),
+  south: localBox(THREE_SIXTEENTHS, THREE_SIXTEENTHS, 0, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, SEVEN_SIXTEENTHS),
+  up: localBox(THREE_SIXTEENTHS, 0, THREE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, SEVEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS),
+  west: localBox(NINE_SIXTEENTHS, THREE_SIXTEENTHS, THREE_SIXTEENTHS, 1, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS),
+}
+
+const amethystClusterShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!sixWayFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  return AMETHYST_CLUSTER_SHAPES_BY_FACING[state.facing]
+}
+
+type HopperFacing = Extract<BlockStateFacing, 'down' | 'north' | 'south' | 'west' | 'east'>
+const HOPPER_SHAPES_BY_FACING: Readonly<Record<HopperFacing, ReadonlyArray<AABB>>> = {
+  down: [
+    localBox(SIX_SIXTEENTHS, 0, SIX_SIXTEENTHS, TEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TEN_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, SIX_SIXTEENTHS),
+    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(TEN_SIXTEENTHS, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TEN_SIXTEENTHS),
+    localBox(0, TEN_SIXTEENTHS, 0, FOUR_SIXTEENTHS, ELEVEN_SIXTEENTHS, 1),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 0, 1, ELEVEN_SIXTEENTHS, FOUR_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, 1),
+    localBox(TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(0, ELEVEN_SIXTEENTHS, 0, TWO_SIXTEENTHS, 1, 1),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, 0, 1, 1, TWO_SIXTEENTHS),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1, 1, 1),
+    localBox(FOURTEEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWO_SIXTEENTHS, 1, 1, FOURTEEN_SIXTEENTHS),
+  ],
+  east: [
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(TWELVE_SIXTEENTHS, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, 1, HALF_BLOCK, TEN_SIXTEENTHS),
+    localBox(0, TEN_SIXTEENTHS, 0, FOUR_SIXTEENTHS, ELEVEN_SIXTEENTHS, 1),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 0, 1, ELEVEN_SIXTEENTHS, FOUR_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, 1),
+    localBox(TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(0, ELEVEN_SIXTEENTHS, 0, TWO_SIXTEENTHS, 1, 1),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, 0, 1, 1, TWO_SIXTEENTHS),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1, 1, 1),
+    localBox(FOURTEEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWO_SIXTEENTHS, 1, 1, FOURTEEN_SIXTEENTHS),
+  ],
+  north: [
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, 0, TEN_SIXTEENTHS, HALF_BLOCK, FOUR_SIXTEENTHS),
+    localBox(0, TEN_SIXTEENTHS, 0, FOUR_SIXTEENTHS, ELEVEN_SIXTEENTHS, 1),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 0, 1, ELEVEN_SIXTEENTHS, FOUR_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, 1),
+    localBox(TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(0, ELEVEN_SIXTEENTHS, 0, TWO_SIXTEENTHS, 1, 1),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, 0, 1, 1, TWO_SIXTEENTHS),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1, 1, 1),
+    localBox(FOURTEEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWO_SIXTEENTHS, 1, 1, FOURTEEN_SIXTEENTHS),
+  ],
+  south: [
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, HALF_BLOCK, 1),
+    localBox(0, TEN_SIXTEENTHS, 0, FOUR_SIXTEENTHS, ELEVEN_SIXTEENTHS, 1),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 0, 1, ELEVEN_SIXTEENTHS, FOUR_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, 1),
+    localBox(TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(0, ELEVEN_SIXTEENTHS, 0, TWO_SIXTEENTHS, 1, 1),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, 0, 1, 1, TWO_SIXTEENTHS),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1, 1, 1),
+    localBox(FOURTEEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWO_SIXTEENTHS, 1, 1, FOURTEEN_SIXTEENTHS),
+  ],
+  west: [
+    localBox(0, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, TWELVE_SIXTEENTHS, HALF_BLOCK, TEN_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, SIX_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, HALF_BLOCK, SIX_SIXTEENTHS, TWELVE_SIXTEENTHS, ELEVEN_SIXTEENTHS, TEN_SIXTEENTHS),
+    localBox(0, TEN_SIXTEENTHS, 0, FOUR_SIXTEENTHS, ELEVEN_SIXTEENTHS, 1),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 0, 1, ELEVEN_SIXTEENTHS, FOUR_SIXTEENTHS),
+    localBox(FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, 1),
+    localBox(TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, 1, ELEVEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+    localBox(0, ELEVEN_SIXTEENTHS, 0, TWO_SIXTEENTHS, 1, 1),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, 0, 1, 1, TWO_SIXTEENTHS),
+    localBox(TWO_SIXTEENTHS, ELEVEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1, 1, 1),
+    localBox(FOURTEEN_SIXTEENTHS, ELEVEN_SIXTEENTHS, TWO_SIXTEENTHS, 1, 1, FOURTEEN_SIXTEENTHS),
+  ],
+}
+
+const hopperShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!state.facing || state.facing === 'up') {
+    return globalThis.undefined
+  }
+  return HOPPER_SHAPES_BY_FACING[state.facing]
+}
+
+type PistonHeadShapeFactory = (longerEnd: number, shorterStart: number) => BlockShape
+const PISTON_HEAD_SHAPES_BY_FACING: Readonly<Record<BlockStateFacing, PistonHeadShapeFactory>> = {
+  down: (longerEnd) => [
+    localBox(0, 0, 0, 1, FOUR_SIXTEENTHS, 1),
+    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, TEN_SIXTEENTHS, longerEnd, TEN_SIXTEENTHS),
+  ],
+  east: (_longerEnd, shorterStart) => [
+    localBox(TWELVE_SIXTEENTHS, 0, 0, 1, 1, 1),
+    localBox(shorterStart, SIX_SIXTEENTHS, SIX_SIXTEENTHS, TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, TEN_SIXTEENTHS),
+  ],
+  north: (longerEnd) => [
+    localBox(0, 0, 0, 1, 1, FOUR_SIXTEENTHS),
+    localBox(SIX_SIXTEENTHS, SIX_SIXTEENTHS, FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TEN_SIXTEENTHS, longerEnd),
+  ],
+  south: (_longerEnd, shorterStart) => [
+    localBox(0, 0, TWELVE_SIXTEENTHS, 1, 1, 1),
+    localBox(SIX_SIXTEENTHS, SIX_SIXTEENTHS, shorterStart, TEN_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
+  ],
+  up: (_longerEnd, shorterStart) => [
+    localBox(0, TWELVE_SIXTEENTHS, 0, 1, 1, 1),
+    localBox(SIX_SIXTEENTHS, shorterStart, SIX_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, TEN_SIXTEENTHS),
+  ],
+  west: (longerEnd) => [
+    localBox(0, 0, 0, FOUR_SIXTEENTHS, 1, 1),
+    localBox(FOUR_SIXTEENTHS, SIX_SIXTEENTHS, SIX_SIXTEENTHS, longerEnd, TEN_SIXTEENTHS, TEN_SIXTEENTHS),
+  ],
+}
+const pistonHeadShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!sixWayFacing(state.facing) || typeof state.short !== 'boolean' || (state.type !== 'normal' && state.type !== 'sticky')) {
+    return globalThis.undefined
+  }
+  let longerEnd = 1
+  let shorterStart = 0
+  if (!state.short) {
+    longerEnd = PISTON_HEAD_LONG_ARM_END
+    shorterStart = PISTON_HEAD_LONG_ARM_START
+  }
+  return PISTON_HEAD_SHAPES_BY_FACING[state.facing](longerEnd, shorterStart)
+}
+
+const CHORUS_PLANT_CONNECTIONS = ['down', 'east', 'north', 'south', 'up', 'west'] as const
+const chorusPlantShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  const { connections } = state
+  if (typeof connections === 'undefined' || CHORUS_PLANT_CONNECTIONS.some((direction) => typeof connections[direction] !== 'boolean')) {
+    return globalThis.undefined
+  }
+  const { down: downState, east: eastState, north: northState, south: southState, up: upState, west: westState } = connections
+  let centerMinY = THREE_SIXTEENTHS
+  let centerMaxY = THIRTEEN_SIXTEENTHS
+  if (downState === true) {
+    centerMinY = 0
+  }
+  if (upState === true) {
+    centerMaxY = 1
+  }
+  const shapes: Array<AABB> = [localBox(THREE_SIXTEENTHS, centerMinY, THREE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, centerMaxY, THIRTEEN_SIXTEENTHS)]
+  if (northState === true) {
+    shapes.push(localBox(THREE_SIXTEENTHS, THREE_SIXTEENTHS, 0, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THREE_SIXTEENTHS))
+  }
+  if (eastState === true) {
+    shapes.push(localBox(THIRTEEN_SIXTEENTHS, THREE_SIXTEENTHS, THREE_SIXTEENTHS, 1, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS))
+  }
+  if (southState === true) {
+    shapes.push(localBox(THREE_SIXTEENTHS, THREE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS, 1))
+  }
+  if (westState === true) {
+    shapes.push(localBox(0, THREE_SIXTEENTHS, THREE_SIXTEENTHS, THREE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, THIRTEEN_SIXTEENTHS))
+  }
+  return shapes
+}
+
+const END_ROD_SHAPES_BY_AXIS: Readonly<Record<'x' | 'y' | 'z', AABB>> = {
+  x: localBox(0, SIX_SIXTEENTHS, SIX_SIXTEENTHS, 1, TEN_SIXTEENTHS, TEN_SIXTEENTHS),
+  y: localBox(SIX_SIXTEENTHS, 0, SIX_SIXTEENTHS, TEN_SIXTEENTHS, 1, TEN_SIXTEENTHS),
+  z: localBox(SIX_SIXTEENTHS, SIX_SIXTEENTHS, 0, TEN_SIXTEENTHS, TEN_SIXTEENTHS, 1),
+}
+const endRodShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!sixWayFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  if (state.facing === 'east' || state.facing === 'west') {
+    return END_ROD_SHAPES_BY_AXIS.x
+  }
+  if (state.facing === 'up' || state.facing === 'down') {
+    return END_ROD_SHAPES_BY_AXIS.y
+  }
+  return END_ROD_SHAPES_BY_AXIS.z
+}
+
+const CHEST_SHAPES_BY_FACING: Readonly<Record<BlockFacing, Readonly<Record<'single' | 'left' | 'right', AABB>>>> = {
+  east: {
+    left: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1),
+    right: localBox(ONE_SIXTEENTH, 0, 0, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    single: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+  },
+  north: {
+    left: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, 1, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    right: localBox(0, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    single: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+  },
+  south: {
+    left: localBox(0, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    right: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, 1, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    single: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+  },
+  west: {
+    left: localBox(ONE_SIXTEENTH, 0, 0, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+    right: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, 1),
+    single: localBox(ONE_SIXTEENTH, 0, ONE_SIXTEENTH, FIFTEEN_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FIFTEEN_SIXTEENTHS),
+  },
+}
+const chestShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!horizontalFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  if (state.type !== 'single' && state.type !== 'left' && state.type !== 'right') {
+    return globalThis.undefined
+  }
+  return CHEST_SHAPES_BY_FACING[state.facing][state.type]
+}
+
+const ANVIL_NORTH_SOUTH_SHAPES: ReadonlyArray<AABB> = [
+  localBox(TWO_SIXTEENTHS, 0, TWO_SIXTEENTHS, FOURTEEN_SIXTEENTHS, FOUR_SIXTEENTHS, FOURTEEN_SIXTEENTHS),
+  localBox(FOUR_SIXTEENTHS, FOUR_SIXTEENTHS, THREE_SIXTEENTHS, TWELVE_SIXTEENTHS, FIVE_SIXTEENTHS, THIRTEEN_SIXTEENTHS),
+  localBox(SIX_SIXTEENTHS, FIVE_SIXTEENTHS, FOUR_SIXTEENTHS, TEN_SIXTEENTHS, 1, TWELVE_SIXTEENTHS),
+  localBox(THREE_SIXTEENTHS, TEN_SIXTEENTHS, 0, SIX_SIXTEENTHS, 1, 1),
+  localBox(SIX_SIXTEENTHS, TEN_SIXTEENTHS, 0, THIRTEEN_SIXTEENTHS, 1, FOUR_SIXTEENTHS),
+  localBox(SIX_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, THIRTEEN_SIXTEENTHS, 1, 1),
+  localBox(TEN_SIXTEENTHS, TEN_SIXTEENTHS, FOUR_SIXTEENTHS, THIRTEEN_SIXTEENTHS, 1, TWELVE_SIXTEENTHS),
+]
+const anvilShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
+  if (!horizontalFacing(state.facing)) {
+    return globalThis.undefined
+  }
+  if (state.facing === 'north' || state.facing === 'south') {
+    return ANVIL_NORTH_SOUTH_SHAPES
+  }
+  return ANVIL_NORTH_SOUTH_SHAPES.map((shape) => localBox(
+    1 - Number(shape.maxZ), Number(shape.minY), Number(shape.minX),
+    1 - Number(shape.minZ), Number(shape.maxY), Number(shape.maxX),
+  ))
 }
 
 /** A bottom slab: the lower eight pixels of its cell. */
@@ -80,15 +385,6 @@ export const CACTUS_SHAPE: AABB = {
   minZ: PositionAxis(ONE_SIXTEENTH),
 }
 
-const localBox = (minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB => ({
-  maxX: PositionAxis(maxX),
-  maxY: PositionAxis(maxY),
-  maxZ: PositionAxis(maxZ),
-  minX: PositionAxis(minX),
-  minY: PositionAxis(minY),
-  minZ: PositionAxis(minZ),
-})
-
 const Y_RANGE_BY_HALF: Readonly<Record<BlockHalf, readonly [number, number]>> = {
   bottom: [0, HALF_BLOCK],
   top: [HALF_BLOCK, 1],
@@ -97,12 +393,6 @@ const yRangeForHalf = (half: BlockHalf): readonly [number, number] => Y_RANGE_BY
 
 const fullHorizontalBox = (minY: number, maxY: number): AABB => localBox(0, minY, 0, 1, maxY, 1)
 
-const DIRECTIONAL_HALF_SHAPES: Readonly<Record<BlockFacing, AABB>> = {
-  east: localBox(HALF_BLOCK, 0, 0, 1, 1, 1),
-  north: localBox(0, 0, 0, 1, 1, HALF_BLOCK),
-  south: localBox(0, 0, HALF_BLOCK, 1, 1, 1),
-  west: localBox(0, 0, 0, HALF_BLOCK, 1, 1),
-}
 const directionalHalf = (facing: BlockFacing): AABB => DIRECTIONAL_HALF_SHAPES[facing]
 
 const sideHalf = (facing: BlockFacing, side: 'left' | 'right'): AABB => {
@@ -177,8 +467,6 @@ const fenceShapes = (connections: BlockStateConnections | undefined): ReadonlyAr
 
 const wallShapes = (connections: BlockStateConnections | undefined): ReadonlyArray<AABB> => {
   const shapes: Array<AABB> = []
-  const FOUR_PIXELS = 4
-  const TWELVE_PIXELS = 12
   const centerMin = FOUR_PIXELS / PIXELS_PER_BLOCK
   const centerMax = TWELVE_PIXELS / PIXELS_PER_BLOCK
   const armMin = HALF_BLOCK - WALL_ARM_HALF_WIDTH
@@ -452,6 +740,24 @@ export const blockShapeForKernelState = (
   state: EffectiveBlockStateValues,
 ): BlockShape | null | undefined => {
   switch (blockType) {
+    case 'piston':
+      return pistonShapeForState(state)
+    case 'ladder':
+      return ladderShapeForState(state)
+    case 'amethyst_cluster':
+      return amethystClusterShapeForState(state)
+    case 'hopper':
+      return hopperShapeForState(state)
+    case 'piston_head':
+      return pistonHeadShapeForState(state)
+    case 'chorus_plant':
+      return chorusPlantShapeForState(state)
+    case 'end_rod':
+      return endRodShapeForState(state)
+    case 'chest':
+      return chestShapeForState(state)
+    case 'anvil':
+      return anvilShapeForState(state)
     case 'stone_slab':
     case 'purpur_slab':
       return slabShapeForState(state)

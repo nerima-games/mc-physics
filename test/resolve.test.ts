@@ -60,6 +60,7 @@ import {
 import {
   type BlockFacing,
   type BlockHalf,
+  type BlockStateFacing,
   type BlockStateConnectionValue,
   type BlockStateConnections,
   type BlockStateHinge,
@@ -68,6 +69,7 @@ import {
   type StairShape,
 } from '../src/domain/block-shape-state'
 import { resolveOptionsFromKernel } from '../src/domain/kernel-world'
+import { sampleBlockHazards } from '../src/domain/environment'
 import { BlockLength, BlocksPerSecond, BlocksPerSecondSquared } from '../src/domain/physical-units'
 import { DeltaTimeSecs, MAX_DELTA_SECS, MIN_DELTA_SECS } from '../src/domain/delta-time'
 import {
@@ -332,6 +334,35 @@ const kernelStateShapeTuples = (
     halfHeight: HalfHeight(0.1),
   })
   return tuplesOfAABBs(unwrap(blockShapesAtResult(options, 0, 0, 0)))
+}
+
+const SIX_WAY_FACINGS = ['north', 'east', 'south', 'west', 'up', 'down'] as const satisfies readonly BlockStateFacing[]
+const HORIZONTAL_FACINGS = ['north', 'south', 'west', 'east'] as const satisfies readonly BlockFacing[]
+const sortedBoxTuples = (boxes: ReadonlyArray<BoxTuple>): ReadonlyArray<BoxTuple> => [...boxes].sort((left, right) => {
+  if (left[0] !== right[0]) return left[0] - right[0]
+  if (left[1] !== right[1]) return left[1] - right[1]
+  if (left[2] !== right[2]) return left[2] - right[2]
+  if (left[3] !== right[3]) return left[3] - right[3]
+  if (left[4] !== right[4]) return left[4] - right[4]
+  return left[5] - right[5]
+})
+
+const chorusOccupiedSixteenths = (boxes: ReadonlyArray<BoxTuple>): string => {
+  const occupied: Array<string> = []
+  for (let x = 0; x < 16; x += 1) {
+    for (let y = 0; y < 16; y += 1) {
+      for (let z = 0; z < 16; z += 1) {
+        const point: readonly [number, number, number] = [(x + 0.5) / 16, (y + 0.5) / 16, (z + 0.5) / 16]
+        if (boxes.some(([minX, minY, minZ, maxX, maxY, maxZ]) =>
+          point[0] >= minX && point[0] < maxX &&
+          point[1] >= minY && point[1] < maxY &&
+          point[2] >= minZ && point[2] < maxZ)) {
+          occupied.push(`${x},${y},${z}`)
+        }
+      }
+    }
+  }
+  return occupied.join('|')
 }
 
 const kernelShapeStateInput = (state: KernelShapeStateInput): Readonly<{ blockType: BlockType; values: BlockStateValues }> => {
@@ -1056,6 +1087,235 @@ describe('kernel state-specific collision shapes', () => {
     expect(Result.isFailure(kernelBlockStateForCell(BlockId(255), undefined))).toBe(true)
   })
 
+  it('selects vanilla Java 26.3 geometry for the nine remaining kernel states', () => {
+    const fullBlock: BoxTuple = [0, 0, 0, 1, 1, 1]
+    const extendedPiston: Readonly<Record<BlockStateFacing, BoxTuple>> = {
+      north: [0, 0, 1 / 4, 1, 1, 1],
+      east: [0, 0, 0, 3 / 4, 1, 1],
+      south: [0, 0, 0, 1, 1, 3 / 4],
+      west: [1 / 4, 0, 0, 1, 1, 1],
+      up: [0, 0, 0, 1, 3 / 4, 1],
+      down: [0, 1 / 4, 0, 1, 1, 1],
+    }
+    const ladders: Readonly<Record<BlockFacing, BoxTuple>> = {
+      north: [0, 0, 13 / 16, 1, 1, 1],
+      south: [0, 0, 0, 1, 1, 3 / 16],
+      west: [13 / 16, 0, 0, 1, 1, 1],
+      east: [0, 0, 0, 3 / 16, 1, 1],
+    }
+    const amethystClusters: Readonly<Record<BlockStateFacing, BoxTuple>> = {
+      north: [3 / 16, 3 / 16, 9 / 16, 13 / 16, 13 / 16, 1],
+      east: [0, 3 / 16, 3 / 16, 7 / 16, 13 / 16, 13 / 16],
+      south: [3 / 16, 3 / 16, 0, 13 / 16, 13 / 16, 7 / 16],
+      west: [9 / 16, 3 / 16, 3 / 16, 1, 13 / 16, 13 / 16],
+      up: [3 / 16, 0, 3 / 16, 13 / 16, 7 / 16, 13 / 16],
+      down: [3 / 16, 9 / 16, 3 / 16, 13 / 16, 1, 13 / 16],
+    }
+
+    for (const facing of SIX_WAY_FACINGS) {
+      expect(kernelStateShapeTuples('piston', { facing, extended: false })).toEqual([fullBlock])
+      expect(kernelStateShapeTuples('piston', { facing, extended: true })).toEqual([extendedPiston[facing]])
+      expect(kernelStateShapeTuples('amethyst_cluster', { facing })).toEqual([amethystClusters[facing]])
+      expect(kernelStateShapeTuples('amethyst_cluster', { facing, waterlogged: true })).toEqual([amethystClusters[facing]])
+      const rod: Readonly<Record<'x' | 'y' | 'z', BoxTuple>> = {
+        x: [0, 3 / 8, 3 / 8, 1, 5 / 8, 5 / 8],
+        y: [3 / 8, 0, 3 / 8, 5 / 8, 1, 5 / 8],
+        z: [3 / 8, 3 / 8, 0, 5 / 8, 5 / 8, 1],
+      }
+      let axis: 'x' | 'y' | 'z' = 'z'
+      if (facing === 'east' || facing === 'west') {
+        axis = 'x'
+      } else if (facing === 'up' || facing === 'down') {
+        axis = 'y'
+      }
+      expect(kernelStateShapeTuples('end_rod', { facing })).toEqual([rod[axis]])
+    }
+    for (const facing of HORIZONTAL_FACINGS) {
+      expect(kernelStateShapeTuples('ladder', { facing })).toEqual([ladders[facing]])
+      expect(kernelStateShapeTuples('ladder', { facing, waterlogged: true })).toEqual([ladders[facing]])
+    }
+  })
+
+  it('selects the hopper and piston-head boxes from facing and short state values', () => {
+    const hopperSideTop: ReadonlyArray<BoxTuple> = [
+      [0, 5 / 8, 0, 1 / 4, 11 / 16, 1],
+      [1 / 4, 5 / 8, 0, 1, 11 / 16, 1 / 4],
+      [1 / 4, 5 / 8, 3 / 4, 1, 11 / 16, 1],
+      [3 / 4, 5 / 8, 1 / 4, 1, 11 / 16, 3 / 4],
+      [0, 11 / 16, 0, 1 / 8, 1, 1],
+      [1 / 8, 11 / 16, 0, 1, 1, 1 / 8],
+      [1 / 8, 11 / 16, 7 / 8, 1, 1, 1],
+      [7 / 8, 11 / 16, 1 / 8, 1, 1, 7 / 8],
+    ]
+    const hopperDown: ReadonlyArray<BoxTuple> = [
+      [3 / 8, 0, 3 / 8, 5 / 8, 11 / 16, 5 / 8],
+      [1 / 4, 1 / 4, 1 / 4, 3 / 8, 11 / 16, 3 / 4],
+      [3 / 8, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 8],
+      [3 / 8, 1 / 4, 5 / 8, 3 / 4, 11 / 16, 3 / 4],
+      [5 / 8, 1 / 4, 3 / 8, 3 / 4, 11 / 16, 5 / 8],
+      [0, 5 / 8, 0, 1 / 4, 11 / 16, 1],
+      [1 / 4, 5 / 8, 0, 1, 11 / 16, 1 / 4],
+      [1 / 4, 5 / 8, 3 / 4, 1, 11 / 16, 1],
+      [3 / 4, 5 / 8, 1 / 4, 1, 11 / 16, 3 / 4],
+      ...hopperSideTop.slice(4),
+    ]
+    const hopperFacing: Readonly<Record<Exclude<BlockStateFacing, 'up'>, ReadonlyArray<BoxTuple>>> = {
+      down: hopperDown,
+      north: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 8, 1 / 4, 0, 5 / 8, 1 / 2, 1 / 4],
+        ...hopperSideTop,
+      ],
+      south: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 8, 1 / 4, 3 / 4, 5 / 8, 1 / 2, 1],
+        ...hopperSideTop,
+      ],
+      west: [
+        [0, 1 / 4, 3 / 8, 3 / 4, 1 / 2, 5 / 8],
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 8],
+        [1 / 4, 1 / 4, 5 / 8, 3 / 4, 11 / 16, 3 / 4],
+        [1 / 4, 1 / 2, 3 / 8, 3 / 4, 11 / 16, 5 / 8],
+        ...hopperSideTop,
+      ],
+      east: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 4, 1 / 4, 3 / 8, 1, 1 / 2, 5 / 8],
+        ...hopperSideTop,
+      ],
+    }
+    for (const facing of ['down', 'north', 'south', 'west', 'east'] as const) {
+      expect(sortedBoxTuples(kernelStateShapeTuples('hopper', { facing }))).toEqual(sortedBoxTuples(hopperFacing[facing]))
+      expect(sortedBoxTuples(kernelStateShapeTuples('hopper', { facing, enabled: false }))).toEqual(sortedBoxTuples(hopperFacing[facing]))
+    }
+
+    const pistonHead = (facing: BlockStateFacing, short: boolean): ReadonlyArray<BoxTuple> => {
+      const end = short ? 1 : 5 / 4
+      const start = short ? 0 : -1 / 4
+      switch (facing) {
+        case 'north': return [[0, 0, 0, 1, 1, 1 / 4], [3 / 8, 3 / 8, 1 / 4, 5 / 8, 5 / 8, end]]
+        case 'east': return [[3 / 4, 0, 0, 1, 1, 1], [start, 3 / 8, 3 / 8, 3 / 4, 5 / 8, 5 / 8]]
+        case 'south': return [[0, 0, 3 / 4, 1, 1, 1], [3 / 8, 3 / 8, start, 5 / 8, 5 / 8, 3 / 4]]
+        case 'west': return [[0, 0, 0, 1 / 4, 1, 1], [1 / 4, 3 / 8, 3 / 8, end, 5 / 8, 5 / 8]]
+        case 'up': return [[0, 3 / 4, 0, 1, 1, 1], [3 / 8, start, 3 / 8, 5 / 8, 3 / 4, 5 / 8]]
+        case 'down': return [[0, 0, 0, 1, 1 / 4, 1], [3 / 8, 1 / 4, 3 / 8, 5 / 8, end, 5 / 8]]
+        default: throw new Error('Unexpected piston head facing')
+      }
+    }
+    for (const facing of SIX_WAY_FACINGS) {
+      for (const short of [false, true]) {
+        for (const type of ['normal', 'sticky'] as const) {
+          expect(kernelStateShapeTuples('piston_head', { facing, short, type })).toEqual(pistonHead(facing, short))
+        }
+      }
+    }
+  })
+
+  it('selects chest halves and anvil axes from state values', () => {
+    const chestBoxes: Readonly<Record<BlockFacing, Readonly<Record<'single' | 'left' | 'right', BoxTuple>>>> = {
+      north: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 1 / 16, 1, 7 / 8, 15 / 16],
+        right: [0, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+      },
+      south: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [0, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        right: [1 / 16, 0, 1 / 16, 1, 7 / 8, 15 / 16],
+      },
+      west: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 0, 15 / 16, 7 / 8, 15 / 16],
+        right: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 1],
+      },
+      east: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 1],
+        right: [1 / 16, 0, 0, 15 / 16, 7 / 8, 15 / 16],
+      },
+    }
+    for (const facing of HORIZONTAL_FACINGS) {
+      for (const type of ['single', 'left', 'right'] as const) {
+        expect(kernelStateShapeTuples('chest', { facing, type })).toEqual([chestBoxes[facing][type]])
+        expect(kernelStateShapeTuples('chest', { facing, type, waterlogged: true })).toEqual([chestBoxes[facing][type]])
+      }
+    }
+
+    const anvilNorthSouth: ReadonlyArray<BoxTuple> = [
+      [1 / 8, 0, 1 / 8, 7 / 8, 1 / 4, 7 / 8],
+      [1 / 4, 1 / 4, 3 / 16, 3 / 4, 5 / 16, 13 / 16],
+      [3 / 8, 5 / 16, 1 / 4, 5 / 8, 1, 3 / 4],
+      [3 / 16, 5 / 8, 0, 6 / 16, 1, 1],
+      [3 / 8, 5 / 8, 0, 13 / 16, 1, 1 / 4],
+      [3 / 8, 5 / 8, 3 / 4, 13 / 16, 1, 1],
+      [5 / 8, 5 / 8, 1 / 4, 13 / 16, 1, 3 / 4],
+    ]
+    const occupancy = (boxes: ReadonlyArray<BoxTuple>) => chorusOccupiedSixteenths(boxes)
+    for (const facing of HORIZONTAL_FACINGS) {
+      const expected = facing === 'north' || facing === 'south'
+        ? anvilNorthSouth
+        : anvilNorthSouth.map((box) => rotateBox(box, 'east'))
+      expect(occupancy(kernelStateShapeTuples('anvil', { facing }))).toBe(occupancy(expected))
+    }
+  })
+
+  it('matches chorus plant collision coverage for each connection combination', () => {
+    const connectionStateRadix = 2
+    const connectionStateCount = 64
+    for (let mask = 0; mask < connectionStateCount; mask += 1) {
+      const connectionIsSet = (index: number): boolean =>
+        Math.floor(mask / connectionStateRadix ** index) % connectionStateRadix === 1
+      const connections = {
+        down: connectionIsSet(0),
+        east: connectionIsSet(1),
+        north: connectionIsSet(2),
+        south: connectionIsSet(3),
+        up: connectionIsSet(4),
+        west: connectionIsSet(5),
+      }
+      const { down, east, north, south, up, west } = connections
+      const expectedBoxes: Array<BoxTuple> = [[
+        3 / 16, down ? 0 : 3 / 16, 3 / 16,
+        13 / 16, up ? 1 : 13 / 16, 13 / 16,
+      ]]
+      if (north) expectedBoxes.push([3 / 16, 3 / 16, 0, 13 / 16, 13 / 16, 3 / 16])
+      if (east) expectedBoxes.push([13 / 16, 3 / 16, 3 / 16, 1, 13 / 16, 13 / 16])
+      if (south) expectedBoxes.push([3 / 16, 3 / 16, 13 / 16, 13 / 16, 13 / 16, 1])
+      if (west) expectedBoxes.push([0, 3 / 16, 3 / 16, 3 / 16, 13 / 16, 13 / 16])
+      const actual = kernelStateShapeTuples('chorus_plant', { connections })
+      expect(chorusOccupiedSixteenths(actual)).toBe(chorusOccupiedSixteenths(expectedBoxes))
+    }
+  })
+
+  it('keeps ladder collision and climbable sampling on the same facing state', () => {
+    const ladderId = blockIdFor('ladder')
+    const northLadder = unwrap(encodeBlockState(ladderId, { facing: 'north' }))
+    const shapeOptions = resolveOptionsFromKernel({
+      blockIdAt: () => ladderId,
+      blockStateAt: () => northLadder,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    const ladderShape = unwrap(blockShapesAtResult(shapeOptions, 0, 0, 0))
+    const climbingBody = localShape({
+      minX: 1 / 4, minY: 1 / 4, minZ: 7 / 8,
+      maxX: 3 / 4, maxY: 3 / 4, maxZ: 15 / 16,
+    })
+    expect(tuplesOfAABBs(ladderShape)).toEqual([[0, 0, 13 / 16, 1, 1, 1]])
+    expect(ladderShape.some((shape) => collidesWith(climbingBody, shape))).toBe(true)
+
+    const ladderSample = sampleOf('ladder')
+    const environment: BlockEnvironment = {
+      blockAt: () => Result.succeed(ladderSample),
+      blockIdAt: () => ladderId,
+      blockStateAt: () => northLadder,
+    }
+    expect(unwrap(sampleBlockHazards(climbingBody, environment))).toMatchObject({
+      climbable: true,
+      suffocating: false,
+    })
+  })
+
   it('leaves kernel states without a PH1 mapping to the static collision shape', () => {
     const stoneState = unwrap(kernelBlockStateForCell(blockIdFor('stone'), undefined))
     if (stoneState === null) throw new Error('Expected the stone default state')
@@ -1066,6 +1326,16 @@ describe('kernel state-specific collision shapes', () => {
     expect(blockShapeForKernelState('bed', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('snow', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('pressure_plate', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('piston', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('ladder', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('amethyst_cluster', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('hopper', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('piston_head', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chorus_plant', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('end_rod', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chest', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chest', { ...incompleteState, facing: 'north' })).toBeUndefined()
+    expect(blockShapeForKernelState('anvil', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('stone', incompleteState)).toBeUndefined()
     expect(kernelStateShapeTuples('stone_slab', { type: 'top' })).toEqual([[0, 0.5, 0, 1, 1, 1]])
   })
