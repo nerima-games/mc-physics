@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from 'vitest'
 import * as fc from 'fast-check'
 import {
   BlockAxis,
+  AIR_BLOCK_ID,
   BlockId,
   PositionAxis,
   blockIdOf,
@@ -48,7 +49,14 @@ import {
   type AABB,
   type BlockShape,
 } from '../src/domain/coordinates'
-import { blockShapeForCustomState, blockShapeLookupResult, CACTUS_SHAPE, PRESSURE_PLATE_SHAPE } from '../src/domain/shape-data'
+import {
+  blockShapeForCustomState,
+  blockShapeForKernelState,
+  blockShapeLookupResult,
+  kernelBlockStateForCell,
+  CACTUS_SHAPE,
+  PRESSURE_PLATE_SHAPE,
+} from '../src/domain/shape-data'
 import {
   type BlockFacing,
   type BlockHalf,
@@ -937,6 +945,17 @@ describe('kernel state-specific collision shapes', () => {
     }
     expect(Result.isFailure(blockShapeForCustomState(null))).toBe(true)
     expect(Result.isFailure(blockShapeForCustomState({ kind: 'unknown' }))).toBe(true)
+    let kindReads = 0
+    const changingKind = new Proxy({}, {
+      get: (_target, property) => {
+        if (property === 'kind') {
+          kindReads += 1
+          return kindReads === 1 ? 'fence' : 'unknown'
+        }
+        return undefined
+      },
+    })
+    expect(Result.isFailure(blockShapeForCustomState(changingKind))).toBe(true)
     expect(Result.isFailure(encodeBlockState(blockIdFor('pressure_plate'), { pressed: false }))).toBe(true)
     expect(unwrap(blockShapeLookupResult(Result.succeed(CACTUS_SHAPE)))).toBe(CACTUS_SHAPE)
   })
@@ -947,6 +966,7 @@ describe('kernel state-specific collision shapes', () => {
 
   it('uses kernel defaults only for an omitted state and fails closed at state boundaries', () => {
     const slabId = blockIdFor('stone_slab')
+    const encodedState = unwrap(encodeBlockState(slabId, { type: 'top' }))
     const defaultOptions = resolveOptionsFromKernel({
       blockIdAt: () => slabId,
       blockStateAt: () => undefined,
@@ -962,6 +982,17 @@ describe('kernel state-specific collision shapes', () => {
     const legacyShape = unwrap(blockShapesAtResult(legacyOptions, 0, 0, 0))
     expect(tuplesOfAABBs(defaultShape)).toEqual([[0, 0, 0, 1, 0.5, 1]])
     expect(defaultShape).toEqual(legacyShape)
+
+    const stoneId = blockIdFor('stone')
+    const staticStateOptions = resolveOptionsFromKernel({
+      blockIdAt: () => stoneId,
+      blockStateAt: () => undefined,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    expect(tuplesOfAABBs(unwrap(blockShapesAtResult(staticStateOptions, 0, 0, 0)))).toEqual([
+      [0, 0, 0, 1, 1, 1],
+    ])
 
     const invalidEncoded = withWorld(() => false, {
       blockIdAt: () => slabId,
@@ -1003,6 +1034,40 @@ describe('kernel state-specific collision shapes', () => {
         reason: 'missing-block-id',
       })
     }
+
+    const missingCallbackId = withWorld(() => false, {
+      blockStateAt: () => undefined,
+    })
+    expect(Result.isFailure(blockShapesAtResult(missingCallbackId, 0, 0, 0))).toBe(true)
+
+    const invalidBlockId = withWorld(() => false, {
+      blockIdAt: () => Number.NaN,
+      blockStateAt: () => undefined,
+    })
+    expect(Result.isFailure(blockShapesAtResult(invalidBlockId, 0, 0, 0))).toBe(true)
+
+    expect(Result.isFailure(kernelBlockStateForCell(undefined, undefined))).toBe(true)
+    expect(kernelBlockStateForCell(null, undefined)).toEqual(Result.succeed(null))
+    expect(Result.isFailure(kernelBlockStateForCell(null, encodedState))).toBe(true)
+    expect(kernelBlockStateForCell(AIR_BLOCK_ID, undefined)).toEqual(Result.succeed(null))
+    expect(Result.isFailure(kernelBlockStateForCell(AIR_BLOCK_ID, encodedState))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell(Number.NaN, undefined))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell('not-a-block-id', undefined))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell(BlockId(255), undefined))).toBe(true)
+  })
+
+  it('leaves kernel states without a PH1 mapping to the static collision shape', () => {
+    const stoneState = unwrap(kernelBlockStateForCell(blockIdFor('stone'), undefined))
+    if (stoneState === null) throw new Error('Expected the stone default state')
+    const incompleteState = stoneState.values
+    expect(blockShapeForKernelState('stone_slab', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('oak_stairs', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('door', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('bed', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('snow', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('pressure_plate', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('stone', incompleteState)).toBeUndefined()
+    expect(kernelStateShapeTuples('stone_slab', { type: 'top' })).toEqual([[0, 0.5, 0, 1, 1, 1]])
   })
 
   it('uses BlockId identity to decode an encoded state before selecting geometry', () => {
@@ -1044,6 +1109,16 @@ describe('kernel state-specific collision shapes', () => {
     })
     const result = resolveBodyResult(bodyAt(0.5, 0.6, 0.5), DT, options)
     expect(Result.isSuccess(result)).toBe(true)
+
+    const environmentStateOnly = withWorld(() => false, {
+      environment: {
+        blockAt: () => Result.succeed(null),
+        blockIdAt: () => slabId,
+        blockStateAt: () => bottomSlab,
+      },
+    })
+    const staticBody = { ...bodyAt(0.5, 0.6, 0.5), kind: 'static' as const }
+    expect(Result.isSuccess(resolveBodyResult(staticBody, DT, environmentStateOnly))).toBe(true)
   })
 
   it('property: kernel door states place their thin panel from facing, hinge, and open', () => {

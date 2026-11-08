@@ -20,7 +20,7 @@ export type ResolveOptions = {
   /** Optional state-specific or compound geometry. When supplied, it is authoritative. */
   readonly blockShapeAt?: BlockShapeAt
   /** Kernel block identity for resolving the encoded state at each cell. */
-  readonly blockIdAt?: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
+  readonly blockIdAt?: NonNullable<BlockEnvironment['blockIdAt']>
   /** Encoded kernel state; undefined selects the kernel default for the block id. */
   readonly blockStateAt?: BlockStateAt
   /** Per-cell PH1 state for geometry not represented in the kernel definition table. */

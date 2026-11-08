@@ -349,7 +349,7 @@ type KernelBlockStateFailure = BlockStateCodecFailure | Brand.BrandError | Block
 
 /** Resolves state by block id so geometry cannot be selected by a caller-supplied kind. */
 export const kernelBlockStateForCell = (
-  rawBlockId: number | null | undefined,
+  rawBlockId: unknown,
   encodedState: EncodedBlockState | undefined,
 ): Result.Result<KernelBlockState | null, KernelBlockStateFailure> => {
   if (typeof rawBlockId === 'undefined') {
@@ -361,7 +361,13 @@ export const kernelBlockStateForCell = (
     }
     return Result.succeed(null)
   }
-  return Result.flatMap(BlockId.result(rawBlockId), (blockId): Result.Result<KernelBlockState | null, KernelBlockStateFailure> => {
+  let numericBlockId: number
+  if (typeof rawBlockId === 'number') {
+    numericBlockId = rawBlockId
+  } else {
+    numericBlockId = Number.NaN
+  }
+  return Result.flatMap(BlockId.result(numericBlockId), (blockId): Result.Result<KernelBlockState | null, KernelBlockStateFailure> => {
     if (isEmpty(blockId)) {
       if (typeof encodedState !== 'undefined') {
         return Result.fail({ _tag: 'BlockStateLookupFailure', reason: 'missing-block-id' })

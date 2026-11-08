@@ -103,6 +103,18 @@ describe('environment material sampling', () => {
       movementDrag: stone.properties.movementDrag,
     })
 
+    const stoneId = unwrapOption(blockIdOf('stone'))
+    const kernelStateEnvironment = environmentOf(
+      { [keyOf(0, 0, 0)]: 'stone' },
+      undefined,
+      () => stoneId,
+      () => undefined,
+    )
+    expect(sampleSurfaceEffects(bodyBox(1.5), kernelStateEnvironment)).toEqual({
+      friction: stone.properties.friction,
+      movementDrag: stone.properties.movementDrag,
+    })
+
     const customShapeEnvironment = environmentOf(
       { [keyOf(0, 0, 0)]: 'stone' },
       () => PRESSURE_PLATE_SHAPE,

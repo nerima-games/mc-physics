@@ -28,13 +28,14 @@ export type BlockLookupError = Brand.BrandError | BlockRegistryResolutionFailure
 export type EnvironmentError = BlockLookupError | BlockStateCodecFailure | BlockStateLookupFailure | RangeError
 
 export type BlockAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockSample | null, BlockLookupError>
+type BlockIdLookupAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
 
 export type EnvironmentBlockShapeAt = BlockShapeAt
 
 export type BlockEnvironment = Readonly<{
   readonly blockAt: BlockAt
   readonly blockShapeAt?: EnvironmentBlockShapeAt
-  readonly blockIdAt?: (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null
+  readonly blockIdAt?: BlockIdLookupAt
   readonly blockStateAt?: BlockStateAt
   readonly customBlockShapeStateAt?: CustomBlockShapeStateAt
 }>
