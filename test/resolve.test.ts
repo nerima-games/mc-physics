@@ -13,10 +13,23 @@
  *   physics-no-block-id-name-checks
  */
 import { isDeepStrictEqual } from 'node:util'
-import { Result } from 'effect'
+import { Option, Result } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import * as fc from 'fast-check'
-import { BlockAxis, BlockId, PositionAxis, resolveBlockProperties, type BlockProperties, type CollisionShape } from '@nerima-games/mc-kernel'
+import {
+  BlockAxis,
+  AIR_BLOCK_ID,
+  BlockId,
+  PositionAxis,
+  blockIdOf,
+  blockStateDefinitionOf,
+  encodeBlockState,
+  resolveBlockProperties,
+  type BlockProperties,
+  type BlockStateValues,
+  type BlockType,
+  type CollisionShape,
+} from '@nerima-games/mc-kernel'
 import type { BlockEnvironment } from '../src/domain/environment-types'
 import {
   CONTACT_EPSILON,
@@ -36,23 +49,27 @@ import {
   type AABB,
   type BlockShape,
 } from '../src/domain/coordinates'
-import { blockShapeForState, blockShapeLookupResult, CACTUS_SHAPE, PRESSURE_PLATE_SHAPE } from '../src/domain/shape-data'
 import {
-  SNOW_LAYER_COUNTS,
+  blockShapeForCustomState,
+  blockShapeForKernelState,
+  blockShapeLookupResult,
+  kernelBlockStateForCell,
+  CACTUS_SHAPE,
+  PRESSURE_PLATE_SHAPE,
+} from '../src/domain/shape-data'
+import {
   type BlockFacing,
   type BlockHalf,
-  type BlockShapeStateInput,
+  type BlockStateFacing,
   type BlockStateConnectionValue,
   type BlockStateConnections,
-  type BlockStateFacing,
-  type BlockStateHalf,
   type BlockStateHinge,
   type BlockStatePart,
-  type BlockStateShape,
-  type BlockStateType,
-  type BlockStateValues,
+  type DoorHalf,
   type StairShape,
 } from '../src/domain/block-shape-state'
+import { resolveOptionsFromKernel } from '../src/domain/kernel-world'
+import { sampleBlockHazards } from '../src/domain/environment'
 import { BlockLength, BlocksPerSecond, BlocksPerSecondSquared } from '../src/domain/physical-units'
 import { DeltaTimeSecs, MAX_DELTA_SECS, MIN_DELTA_SECS } from '../src/domain/delta-time'
 import {
@@ -114,6 +131,11 @@ type ResolveOptionsInput = Omit<Partial<ResolveOptions>, 'halfWidth' | 'halfHeig
 const unwrap = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isSuccess(result)) return result.success
   throw new Error('Expected Result.Success')
+}
+
+const unwrapOption = <A>(option: Option.Option<A>): A => {
+  if (Option.isSome(option)) return option.value
+  throw new Error('Expected Option.Some')
 }
 
 const bodyFrom = (body: BodyInput): Body => ({
@@ -266,6 +288,25 @@ const localShape = (shape: Omit<AABB, 'minX' | 'minY' | 'minZ' | 'maxX' | 'maxY'
 
 type BoxTuple = readonly [number, number, number, number, number, number]
 
+type BlockShapeStateInput =
+  | Readonly<{ kind: 'slab'; type: Extract<BlockStateValues['type'], 'bottom' | 'top' | 'double'> }>
+  | Readonly<{ kind: 'stairs'; facing: BlockFacing; half: BlockHalf; shape: StairShape }>
+  | Readonly<{ kind: 'fence'; connections?: BlockStateConnections }>
+  | Readonly<{ kind: 'wall'; connections?: BlockStateConnections }>
+  | Readonly<{ kind: 'door'; facing: BlockFacing; half: DoorHalf; hinge: BlockStateHinge; open: boolean }>
+  | Readonly<{ kind: 'trapdoor'; facing: BlockFacing; half: BlockHalf; open: boolean }>
+  | Readonly<{ kind: 'bed'; facing: BlockFacing; part: BlockStatePart }>
+  | Readonly<{ kind: 'carpet' }>
+  | Readonly<{ kind: 'snow'; layers: NonNullable<BlockStateValues['layers']> }>
+  | Readonly<{ kind: 'soulSand' }>
+  | Readonly<{ kind: 'cactus' }>
+  | Readonly<{ kind: 'pressurePlate'; powered: boolean }>
+
+type KernelShapeStateInput = Extract<
+  BlockShapeStateInput,
+  { kind: 'slab' | 'stairs' | 'door' | 'bed' | 'snow' | 'pressurePlate' }
+>
+
 const shapeTuples = (shape: BlockShape | null): ReadonlyArray<BoxTuple> => shape === null
   ? []
   : aabbsOfBlockShape(shape).map((box) => [
@@ -273,12 +314,133 @@ const shapeTuples = (shape: BlockShape | null): ReadonlyArray<BoxTuple> => shape
       Number(box.maxX), Number(box.maxY), Number(box.maxZ),
     ] as const)
 
-const stateShapeTuples = (state: BlockShapeStateInput): ReadonlyArray<BoxTuple> =>
-  shapeTuples(unwrap(blockShapeForState(state)))
+const tuplesOfAABBs = (boxes: ReadonlyArray<AABB>): ReadonlyArray<BoxTuple> => boxes.map((box) => [
+  Number(box.minX), Number(box.minY), Number(box.minZ),
+  Number(box.maxX), Number(box.maxY), Number(box.maxZ),
+] as const)
+
+const blockIdFor = (blockType: BlockType) => unwrapOption(blockIdOf(blockType))
+
+const kernelStateShapeTuples = (
+  blockType: BlockType,
+  values?: BlockStateValues,
+): ReadonlyArray<BoxTuple> => {
+  const blockId = blockIdFor(blockType)
+  const encoded = typeof values === 'undefined' ? undefined : unwrap(encodeBlockState(blockId, values))
+  const options = resolveOptionsFromKernel({
+    blockIdAt: () => blockId,
+    blockStateAt: () => encoded,
+    halfWidth: BlockLength(0.1),
+    halfHeight: HalfHeight(0.1),
+  })
+  return tuplesOfAABBs(unwrap(blockShapesAtResult(options, 0, 0, 0)))
+}
+
+const SIX_WAY_FACINGS = ['north', 'east', 'south', 'west', 'up', 'down'] as const satisfies readonly BlockStateFacing[]
+const HORIZONTAL_FACINGS = ['north', 'south', 'west', 'east'] as const satisfies readonly BlockFacing[]
+const sortedBoxTuples = (boxes: ReadonlyArray<BoxTuple>): ReadonlyArray<BoxTuple> => [...boxes].sort((left, right) => {
+  if (left[0] !== right[0]) return left[0] - right[0]
+  if (left[1] !== right[1]) return left[1] - right[1]
+  if (left[2] !== right[2]) return left[2] - right[2]
+  if (left[3] !== right[3]) return left[3] - right[3]
+  if (left[4] !== right[4]) return left[4] - right[4]
+  return left[5] - right[5]
+})
+
+const chorusOccupiedSixteenths = (boxes: ReadonlyArray<BoxTuple>): string => {
+  const occupied: Array<string> = []
+  for (let x = 0; x < 16; x += 1) {
+    for (let y = 0; y < 16; y += 1) {
+      for (let z = 0; z < 16; z += 1) {
+        const point: readonly [number, number, number] = [(x + 0.5) / 16, (y + 0.5) / 16, (z + 0.5) / 16]
+        if (boxes.some(([minX, minY, minZ, maxX, maxY, maxZ]) =>
+          point[0] >= minX && point[0] < maxX &&
+          point[1] >= minY && point[1] < maxY &&
+          point[2] >= minZ && point[2] < maxZ)) {
+          occupied.push(`${x},${y},${z}`)
+        }
+      }
+    }
+  }
+  return occupied.join('|')
+}
+
+const kernelShapeStateInput = (state: KernelShapeStateInput): Readonly<{ blockType: BlockType; values: BlockStateValues }> => {
+  const blockType = ({
+    slab: 'stone_slab',
+    stairs: 'oak_stairs',
+    door: 'door',
+    bed: 'bed',
+    snow: 'snow',
+    pressurePlate: 'pressure_plate',
+  } as const)[state.kind]
+  let values: BlockStateValues = {}
+  switch (state.kind) {
+    case 'slab':
+      values = { type: state.type }
+      break
+    case 'stairs':
+      values = { facing: state.facing, half: state.half, shape: state.shape }
+      break
+    case 'door':
+      values = { facing: state.facing, half: state.half, hinge: state.hinge, open: state.open }
+      break
+    case 'bed':
+      values = { facing: state.facing, part: state.part }
+      break
+    case 'snow':
+      values = { layers: state.layers }
+      break
+    case 'pressurePlate':
+      values = { powered: state.powered }
+      break
+    default: {
+      const exhaustiveState: never = state
+      return exhaustiveState
+    }
+  }
+  return { blockType, values }
+}
+
+const optionsForShapeState = (
+  state: BlockShapeStateInput,
+  isTargetCell: (bx: number, by: number, bz: number) => boolean,
+): ResolveOptions => {
+  if (state.kind === 'fence' || state.kind === 'wall' || state.kind === 'trapdoor' || state.kind === 'carpet' || state.kind === 'soulSand') {
+    return withWorld(() => false, {
+      halfWidth: 0.1,
+      halfHeight: 0.1,
+      blockPropertiesAt: () => propertiesFor('none'),
+      customBlockShapeStateAt: (bx, by, bz) => isTargetCell(bx, by, bz) ? state : null,
+    })
+  }
+  if (state.kind === 'cactus') {
+    return withWorld(() => false, {
+      halfWidth: 0.1,
+      halfHeight: 0.1,
+      blockPropertiesAt: (bx, by, bz) => isTargetCell(bx, by, bz) ? propertiesFor('cactus') : propertiesFor('none'),
+    })
+  }
+  const { blockType, values } = kernelShapeStateInput(state)
+  const blockId = blockIdFor(blockType)
+  const encodedState = unwrap(encodeBlockState(blockId, values))
+  return resolveOptionsFromKernel({
+    blockIdAt: (bx, by, bz) => isTargetCell(bx, by, bz) ? blockId : null,
+    blockStateAt: (bx, by, bz) => isTargetCell(bx, by, bz) ? encodedState : undefined,
+    halfWidth: BlockLength(0.1),
+    halfHeight: HalfHeight(0.1),
+  })
+}
+
+const stateShapeTuples = (state: BlockShapeStateInput): ReadonlyArray<BoxTuple> => {
+  const options = optionsForShapeState(state, () => true)
+  return tuplesOfAABBs(unwrap(blockShapesAtResult(options, 0, 0, 0)))
+}
 
 const K1_FACING_VALUES: ReadonlyArray<BlockFacing> = ['north', 'east', 'south', 'west']
 const K1_STAIR_HALF_VALUES: ReadonlyArray<BlockHalf> = ['bottom', 'top']
 const K1_DOOR_HALF_VALUES = ['upper', 'lower'] as const
+const KERNEL_SNOW_LAYER_VALUES = [1, 2, 3, 4, 5, 6, 7, 8] as const satisfies ReadonlyArray<NonNullable<BlockStateValues['layers']>>
 const K1_SLAB_TYPE_VALUES = ['bottom', 'top', 'double'] as const
 const K1_STAIR_SHAPE_VALUES: ReadonlyArray<StairShape> = [
   'straight', 'inner_left', 'inner_right', 'outer_left', 'outer_right',
@@ -305,69 +467,6 @@ const stateWithConnection = (
   if (kind === 'fence') return { kind: 'fence', connections }
   return { kind: 'wall', connections }
 }
-const K1_BLOCK_STATE_VOCABULARY = {
-  axis: {
-    x: true, y: true, z: true,
-  } satisfies Readonly<Record<NonNullable<BlockStateValues['axis']>, true>>,
-  face: {
-    ceiling: true, floor: true, wall: true,
-  } satisfies Readonly<Record<NonNullable<BlockStateValues['face']>, true>>,
-  facing: {
-    down: true, east: true, north: true, south: true, up: true, west: true,
-  } satisfies Readonly<Record<BlockStateFacing, true>>,
-  half: {
-    bottom: true, lower: true, top: true, upper: true,
-  } satisfies Readonly<Record<BlockStateHalf, true>>,
-  shape: {
-    ascending_east: true,
-    ascending_north: true,
-    ascending_south: true,
-    ascending_west: true,
-    east_west: true,
-    inner_left: true,
-    inner_right: true,
-    north_east: true,
-    north_south: true,
-    north_west: true,
-    outer_left: true,
-    outer_right: true,
-    south_east: true,
-    south_west: true,
-    straight: true,
-  } satisfies Readonly<Record<BlockStateShape, true>>,
-  type: {
-    bottom: true,
-    double: true,
-    left: true,
-    normal: true,
-    right: true,
-    single: true,
-    sticky: true,
-    top: true,
-  } satisfies Readonly<Record<BlockStateType, true>>,
-  hinge: {
-    left: true, right: true,
-  } satisfies Readonly<Record<BlockStateHinge, true>>,
-  open: [false, true],
-  powered: [false, true],
-  part: {
-    foot: true, head: true,
-  } satisfies Readonly<Record<BlockStatePart, true>>,
-  layers: [1, 2, 3, 4, 5, 6, 7, 8],
-  mode: {
-    compare: true, subtract: true,
-  } satisfies Readonly<Record<NonNullable<BlockStateValues['mode']>, true>>,
-  connections: {
-    directions: {
-      down: true, east: true, north: true, south: true, up: true, west: true,
-    } satisfies Readonly<Record<keyof BlockStateConnections, true>>,
-    strings: {
-      none: true, side: true, up: true,
-    } satisfies Readonly<Record<Exclude<BlockStateConnectionValue, boolean>, true>>,
-    booleans: [false, true] satisfies ReadonlyArray<Extract<BlockStateConnectionValue, boolean>>,
-  },
-} as const
-
 const K1_STAIRS_CANONICAL_SHAPES: Readonly<Record<StairShape, ReadonlyArray<BoxTuple>>> = {
   straight: [[0, 0, 0, 1, 0.5, 1], [0, 0.5, 0, 1, 1, 0.5]],
   inner_left: [[0, 0, 0, 1, 0.5, 1], [0, 0.5, 0, 1, 1, 0.5], [0, 0.5, 0, 0.5, 1, 1]],
@@ -572,7 +671,7 @@ const blockShapeStateArbitrary = fc.oneof(
     half: fc.constantFrom(...K1_STAIR_HALF_VALUES),
     open: fc.boolean(),
   }).map((state): BlockShapeStateInput => ({ kind: 'trapdoor', ...state })),
-  fc.constantFrom(...SNOW_LAYER_COUNTS).map((layers): BlockShapeStateInput => ({ kind: 'snow', layers })),
+  fc.constantFrom(...KERNEL_SNOW_LAYER_VALUES).map((layers): BlockShapeStateInput => ({ kind: 'snow', layers })),
   fc.record({
     facing: fc.constantFrom(...K1_FACING_VALUES),
     part: fc.constantFrom<'head' | 'foot'>('head', 'foot'),
@@ -799,32 +898,20 @@ describe('sneak edge prevention', () => {
   })
 })
 
-describe('vanilla state-specific collision shapes', () => {
-  it('pins the complete K1 #90 state vocabulary and geometry-specific subsets', () => {
-    const vocabularyKeys = (value: object): ReadonlyArray<string> => Object.keys(value).sort()
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.axis)).toEqual(['x', 'y', 'z'])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.face)).toEqual(['ceiling', 'floor', 'wall'])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.facing)).toEqual(['down', 'east', 'north', 'south', 'up', 'west'])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.half)).toEqual(['bottom', 'lower', 'top', 'upper'])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.shape)).toEqual([
-      'ascending_east', 'ascending_north', 'ascending_south', 'ascending_west', 'east_west',
-      'inner_left', 'inner_right', 'north_east', 'north_south', 'north_west',
-      'outer_left', 'outer_right', 'south_east', 'south_west', 'straight',
+describe('kernel state-specific collision shapes', () => {
+  it('uses kernel state definitions for the geometry-specific subsets', () => {
+    const definitionFor = (blockType: BlockType) => unwrap(blockStateDefinitionOf(blockIdFor(blockType)))
+    expect(definitionFor('stone_slab').slots.map((slot) => slot.property)).toEqual(['type', 'waterlogged'])
+    expect(definitionFor('oak_stairs').slots.map((slot) => slot.property)).toEqual([
+      'facing', 'half', 'shape', 'waterlogged',
     ])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.type)).toEqual([
-      'bottom', 'double', 'left', 'normal', 'right', 'single', 'sticky', 'top',
+    expect(definitionFor('door').slots.map((slot) => slot.property)).toEqual([
+      'facing', 'half', 'hinge', 'open', 'powered',
     ])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.hinge)).toEqual(['left', 'right'])
-    expect(K1_BLOCK_STATE_VOCABULARY.open).toEqual([false, true])
-    expect(K1_BLOCK_STATE_VOCABULARY.powered).toEqual([false, true])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.part)).toEqual(['foot', 'head'])
-    expect(K1_BLOCK_STATE_VOCABULARY.layers).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.mode)).toEqual(['compare', 'subtract'])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.connections.directions)).toEqual([
-      'down', 'east', 'north', 'south', 'up', 'west',
-    ])
-    expect(vocabularyKeys(K1_BLOCK_STATE_VOCABULARY.connections.strings)).toEqual(['none', 'side', 'up'])
-    expect(K1_BLOCK_STATE_VOCABULARY.connections.booleans).toEqual([false, true])
+    expect(definitionFor('door_open').blockType).toBe('door_open')
+    expect(definitionFor('bed').slots.map((slot) => slot.property)).toEqual(['facing', 'occupied', 'part'])
+    expect(definitionFor('snow').slots.map((slot) => slot.property)).toEqual(['layers'])
+    expect(definitionFor('pressure_plate').slots.map((slot) => slot.property)).toEqual(['powered'])
 
     for (const type of K1_SLAB_TYPE_VALUES) {
       const state: BlockShapeStateInput = { kind: 'slab', type }
@@ -847,12 +934,16 @@ describe('vanilla state-specific collision shapes', () => {
       }
     }
 
-    expect(Result.isFailure(blockShapeForState({ kind: 'slab', type: 'single' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'stairs', facing: 'up', half: 'bottom', shape: 'straight' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'stairs', facing: 'north', half: 'bottom', shape: 'innerLeft' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'stairs', facing: 'north', half: 'bottom', shape: 'ascending_east' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'door', facing: 'north', half: 'bottom', hinge: 'left', open: false }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'wall', connections: { north: 'low' } }))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('stone_slab'), { type: 'single' }))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('oak_stairs'), { facing: 'up' }))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('oak_stairs'), { shape: 'innerLeft' }))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('oak_stairs'), { shape: 'ascending_east' }))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('door'), { half: 'bottom' }))).toBe(true)
+    expect(Result.isFailure(blockShapeForCustomState({ kind: 'wall', connections: { north: 'low' } }))).toBe(true)
+    expect(kernelStateShapeTuples('purpur_slab', { type: 'top' })).toEqual([[0, 0.5, 0, 1, 1, 1]])
+    expect(kernelStateShapeTuples('purpur_stairs', {
+      facing: 'east', half: 'top', shape: 'outer_left',
+    })).toEqual(expectedStairShape({ kind: 'stairs', facing: 'east', half: 'top', shape: 'outer_left' }))
   })
 
   it('matches exact block-pixel heights and rejects invalid snow layers', () => {
@@ -870,33 +961,467 @@ describe('vanilla state-specific collision shapes', () => {
     expect(stateShapeTuples({ kind: 'cactus' })).toEqual([[1 / 16, 0, 1 / 16, 15 / 16, 15 / 16, 15 / 16]])
     expect(stateShapeTuples({ kind: 'pressurePlate', powered: false })).toEqual([[1 / 16, 0, 1 / 16, 15 / 16, 1 / 16, 15 / 16]])
     expect(stateShapeTuples({ kind: 'pressurePlate', powered: true })).toEqual([[1 / 16, 0, 1 / 16, 15 / 16, 0.5 / 16, 15 / 16]])
-    for (let layers = 1; layers <= 8; layers += 1) {
+    for (const layers of KERNEL_SNOW_LAYER_VALUES) {
       const expectedHeight = (2 * layers - 2) / 16
-      expect(shapeTuples(unwrap(blockShapeForState({ kind: 'snow', layers })))).toEqual(
+      expect(stateShapeTuples({ kind: 'snow', layers })).toEqual(
         layers === 1 ? [] : [[0, 0, 0, 1, expectedHeight, 1]],
       )
     }
     for (const layers of [0, 9, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const invalid = blockShapeForState({ kind: 'snow', layers })
+      const invalid = encodeBlockState(blockIdFor('snow'), { layers })
       expect(Result.isFailure(invalid)).toBe(true)
-      if (Result.isFailure(invalid)) expect(invalid.failure).toBeInstanceOf(RangeError)
+      if (Result.isFailure(invalid)) {
+        expect(invalid.failure).toMatchObject({ _tag: 'BlockStateCodecFailure' })
+      }
     }
-    expect(Result.isFailure(blockShapeForState(null))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'unknown' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'bed', facing: 'north' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'pressurePlate' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'slab', half: 'bottom' }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'door', facing: 'north', half: 'bottom', hinge: 'left', open: false }))).toBe(true)
-    expect(Result.isFailure(blockShapeForState({ kind: 'pressurePlate', pressed: false }))).toBe(true)
+    expect(Result.isFailure(blockShapeForCustomState(null))).toBe(true)
+    expect(Result.isFailure(blockShapeForCustomState({ kind: 'unknown' }))).toBe(true)
+    let kindReads = 0
+    const changingKind = new Proxy({}, {
+      get: (_target, property) => {
+        if (property === 'kind') {
+          kindReads += 1
+          return kindReads === 1 ? 'fence' : 'unknown'
+        }
+        return undefined
+      },
+    })
+    expect(Result.isFailure(blockShapeForCustomState(changingKind))).toBe(true)
+    expect(Result.isFailure(encodeBlockState(blockIdFor('pressure_plate'), { pressed: false }))).toBe(true)
     expect(unwrap(blockShapeLookupResult(Result.succeed(CACTUS_SHAPE)))).toBe(CACTUS_SHAPE)
   })
 
   it('treats the first snow layer as empty collision geometry', () => {
-    const options = withWorld(() => true, {
-      blockShapeStateAt: () => ({ kind: 'snow', layers: 1 }),
-    })
+    expect(kernelStateShapeTuples('snow', { layers: 1 })).toEqual([])
+  })
 
-    expect(unwrap(blockShapesAtResult(options, 0, 0, 0))).toEqual([])
+  it('uses kernel defaults only for an omitted state and fails closed at state boundaries', () => {
+    const slabId = blockIdFor('stone_slab')
+    const encodedState = unwrap(encodeBlockState(slabId, { type: 'top' }))
+    const defaultOptions = resolveOptionsFromKernel({
+      blockIdAt: () => slabId,
+      blockStateAt: () => undefined,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    const legacyOptions = resolveOptionsFromKernel({
+      blockIdAt: () => slabId,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    const defaultShape = unwrap(blockShapesAtResult(defaultOptions, 0, 0, 0))
+    const legacyShape = unwrap(blockShapesAtResult(legacyOptions, 0, 0, 0))
+    expect(tuplesOfAABBs(defaultShape)).toEqual([[0, 0, 0, 1, 0.5, 1]])
+    expect(defaultShape).toEqual(legacyShape)
+
+    const stoneId = blockIdFor('stone')
+    const staticStateOptions = resolveOptionsFromKernel({
+      blockIdAt: () => stoneId,
+      blockStateAt: () => undefined,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    expect(tuplesOfAABBs(unwrap(blockShapesAtResult(staticStateOptions, 0, 0, 0)))).toEqual([
+      [0, 0, 0, 1, 1, 1],
+    ])
+
+    const invalidEncoded = withWorld(() => false, {
+      blockIdAt: () => slabId,
+      // @ts-expect-error Malformed untrusted value must fail at the state codec boundary.
+      blockStateAt: () => Number.NaN,
+    })
+    const invalidResult = blockShapesAtResult(invalidEncoded, 0, 0, 0)
+    expect(Result.isFailure(invalidResult)).toBe(true)
+    if (Result.isFailure(invalidResult)) {
+      expect(invalidResult.failure).toMatchObject({
+        _tag: 'BlockStateCodecFailure',
+        reason: 'invalid-encoded-value',
+      })
+    }
+
+    const reservedEncoded = withWorld(() => false, {
+      blockIdAt: () => slabId,
+      // @ts-expect-error Reserved encoded value must fail at the state codec boundary.
+      blockStateAt: () => 0xffff_ffff,
+    })
+    const reservedResult = blockShapesAtResult(reservedEncoded, 0, 0, 0)
+    expect(Result.isFailure(reservedResult)).toBe(true)
+    if (Result.isFailure(reservedResult)) {
+      expect(reservedResult.failure).toMatchObject({
+        _tag: 'BlockStateCodecFailure',
+        reason: 'reserved-code',
+      })
+    }
+
+    const suppliedWithoutId = withWorld(() => false, {
+      blockIdAt: () => null,
+      blockStateAt: () => unwrap(encodeBlockState(slabId, { type: 'top' })),
+    })
+    const missingIdResult = blockShapesAtResult(suppliedWithoutId, 0, 0, 0)
+    expect(Result.isFailure(missingIdResult)).toBe(true)
+    if (Result.isFailure(missingIdResult)) {
+      expect(missingIdResult.failure).toMatchObject({
+        _tag: 'BlockStateLookupFailure',
+        reason: 'missing-block-id',
+      })
+    }
+
+    const missingCallbackId = withWorld(() => false, {
+      blockStateAt: () => undefined,
+    })
+    expect(Result.isFailure(blockShapesAtResult(missingCallbackId, 0, 0, 0))).toBe(true)
+
+    const invalidBlockId = withWorld(() => false, {
+      blockIdAt: () => Number.NaN,
+      blockStateAt: () => undefined,
+    })
+    expect(Result.isFailure(blockShapesAtResult(invalidBlockId, 0, 0, 0))).toBe(true)
+
+    expect(Result.isFailure(kernelBlockStateForCell(undefined, undefined))).toBe(true)
+    expect(kernelBlockStateForCell(null, undefined)).toEqual(Result.succeed(null))
+    expect(Result.isFailure(kernelBlockStateForCell(null, encodedState))).toBe(true)
+    expect(kernelBlockStateForCell(AIR_BLOCK_ID, undefined)).toEqual(Result.succeed(null))
+    expect(Result.isFailure(kernelBlockStateForCell(AIR_BLOCK_ID, encodedState))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell(Number.NaN, undefined))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell('not-a-block-id', undefined))).toBe(true)
+    expect(Result.isFailure(kernelBlockStateForCell(BlockId(255), undefined))).toBe(true)
+  })
+
+  it('selects vanilla Java 26.3 geometry for the nine remaining kernel states', () => {
+    const fullBlock: BoxTuple = [0, 0, 0, 1, 1, 1]
+    const extendedPiston: Readonly<Record<BlockStateFacing, BoxTuple>> = {
+      north: [0, 0, 1 / 4, 1, 1, 1],
+      east: [0, 0, 0, 3 / 4, 1, 1],
+      south: [0, 0, 0, 1, 1, 3 / 4],
+      west: [1 / 4, 0, 0, 1, 1, 1],
+      up: [0, 0, 0, 1, 3 / 4, 1],
+      down: [0, 1 / 4, 0, 1, 1, 1],
+    }
+    const ladders: Readonly<Record<BlockFacing, BoxTuple>> = {
+      north: [0, 0, 13 / 16, 1, 1, 1],
+      south: [0, 0, 0, 1, 1, 3 / 16],
+      west: [13 / 16, 0, 0, 1, 1, 1],
+      east: [0, 0, 0, 3 / 16, 1, 1],
+    }
+    const amethystClusters: Readonly<Record<BlockStateFacing, BoxTuple>> = {
+      north: [3 / 16, 3 / 16, 9 / 16, 13 / 16, 13 / 16, 1],
+      east: [0, 3 / 16, 3 / 16, 7 / 16, 13 / 16, 13 / 16],
+      south: [3 / 16, 3 / 16, 0, 13 / 16, 13 / 16, 7 / 16],
+      west: [9 / 16, 3 / 16, 3 / 16, 1, 13 / 16, 13 / 16],
+      up: [3 / 16, 0, 3 / 16, 13 / 16, 7 / 16, 13 / 16],
+      down: [3 / 16, 9 / 16, 3 / 16, 13 / 16, 1, 13 / 16],
+    }
+
+    for (const facing of SIX_WAY_FACINGS) {
+      expect(kernelStateShapeTuples('piston', { facing, extended: false })).toEqual([fullBlock])
+      expect(kernelStateShapeTuples('piston', { facing, extended: true })).toEqual([extendedPiston[facing]])
+      expect(kernelStateShapeTuples('amethyst_cluster', { facing })).toEqual([amethystClusters[facing]])
+      expect(kernelStateShapeTuples('amethyst_cluster', { facing, waterlogged: true })).toEqual([amethystClusters[facing]])
+      const rod: Readonly<Record<'x' | 'y' | 'z', BoxTuple>> = {
+        x: [0, 3 / 8, 3 / 8, 1, 5 / 8, 5 / 8],
+        y: [3 / 8, 0, 3 / 8, 5 / 8, 1, 5 / 8],
+        z: [3 / 8, 3 / 8, 0, 5 / 8, 5 / 8, 1],
+      }
+      let axis: 'x' | 'y' | 'z' = 'z'
+      if (facing === 'east' || facing === 'west') {
+        axis = 'x'
+      } else if (facing === 'up' || facing === 'down') {
+        axis = 'y'
+      }
+      expect(kernelStateShapeTuples('end_rod', { facing })).toEqual([rod[axis]])
+    }
+    for (const facing of HORIZONTAL_FACINGS) {
+      expect(kernelStateShapeTuples('ladder', { facing })).toEqual([ladders[facing]])
+      expect(kernelStateShapeTuples('ladder', { facing, waterlogged: true })).toEqual([ladders[facing]])
+    }
+  })
+
+  it('selects the hopper and piston-head boxes from facing and short state values', () => {
+    const hopperSideTop: ReadonlyArray<BoxTuple> = [
+      [0, 5 / 8, 0, 1 / 4, 11 / 16, 1],
+      [1 / 4, 5 / 8, 0, 1, 11 / 16, 1 / 4],
+      [1 / 4, 5 / 8, 3 / 4, 1, 11 / 16, 1],
+      [3 / 4, 5 / 8, 1 / 4, 1, 11 / 16, 3 / 4],
+      [0, 11 / 16, 0, 1 / 8, 1, 1],
+      [1 / 8, 11 / 16, 0, 1, 1, 1 / 8],
+      [1 / 8, 11 / 16, 7 / 8, 1, 1, 1],
+      [7 / 8, 11 / 16, 1 / 8, 1, 1, 7 / 8],
+    ]
+    const hopperDown: ReadonlyArray<BoxTuple> = [
+      [3 / 8, 0, 3 / 8, 5 / 8, 11 / 16, 5 / 8],
+      [1 / 4, 1 / 4, 1 / 4, 3 / 8, 11 / 16, 3 / 4],
+      [3 / 8, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 8],
+      [3 / 8, 1 / 4, 5 / 8, 3 / 4, 11 / 16, 3 / 4],
+      [5 / 8, 1 / 4, 3 / 8, 3 / 4, 11 / 16, 5 / 8],
+      [0, 5 / 8, 0, 1 / 4, 11 / 16, 1],
+      [1 / 4, 5 / 8, 0, 1, 11 / 16, 1 / 4],
+      [1 / 4, 5 / 8, 3 / 4, 1, 11 / 16, 1],
+      [3 / 4, 5 / 8, 1 / 4, 1, 11 / 16, 3 / 4],
+      ...hopperSideTop.slice(4),
+    ]
+    const hopperFacing: Readonly<Record<Exclude<BlockStateFacing, 'up'>, ReadonlyArray<BoxTuple>>> = {
+      down: hopperDown,
+      north: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 8, 1 / 4, 0, 5 / 8, 1 / 2, 1 / 4],
+        ...hopperSideTop,
+      ],
+      south: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 8, 1 / 4, 3 / 4, 5 / 8, 1 / 2, 1],
+        ...hopperSideTop,
+      ],
+      west: [
+        [0, 1 / 4, 3 / 8, 3 / 4, 1 / 2, 5 / 8],
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 8],
+        [1 / 4, 1 / 4, 5 / 8, 3 / 4, 11 / 16, 3 / 4],
+        [1 / 4, 1 / 2, 3 / 8, 3 / 4, 11 / 16, 5 / 8],
+        ...hopperSideTop,
+      ],
+      east: [
+        [1 / 4, 1 / 4, 1 / 4, 3 / 4, 11 / 16, 3 / 4],
+        [3 / 4, 1 / 4, 3 / 8, 1, 1 / 2, 5 / 8],
+        ...hopperSideTop,
+      ],
+    }
+    for (const facing of ['down', 'north', 'south', 'west', 'east'] as const) {
+      expect(sortedBoxTuples(kernelStateShapeTuples('hopper', { facing }))).toEqual(sortedBoxTuples(hopperFacing[facing]))
+      expect(sortedBoxTuples(kernelStateShapeTuples('hopper', { facing, enabled: false }))).toEqual(sortedBoxTuples(hopperFacing[facing]))
+    }
+
+    const pistonHead = (facing: BlockStateFacing, short: boolean): ReadonlyArray<BoxTuple> => {
+      const end = short ? 1 : 5 / 4
+      const start = short ? 0 : -1 / 4
+      switch (facing) {
+        case 'north': return [[0, 0, 0, 1, 1, 1 / 4], [3 / 8, 3 / 8, 1 / 4, 5 / 8, 5 / 8, end]]
+        case 'east': return [[3 / 4, 0, 0, 1, 1, 1], [start, 3 / 8, 3 / 8, 3 / 4, 5 / 8, 5 / 8]]
+        case 'south': return [[0, 0, 3 / 4, 1, 1, 1], [3 / 8, 3 / 8, start, 5 / 8, 5 / 8, 3 / 4]]
+        case 'west': return [[0, 0, 0, 1 / 4, 1, 1], [1 / 4, 3 / 8, 3 / 8, end, 5 / 8, 5 / 8]]
+        case 'up': return [[0, 3 / 4, 0, 1, 1, 1], [3 / 8, start, 3 / 8, 5 / 8, 3 / 4, 5 / 8]]
+        case 'down': return [[0, 0, 0, 1, 1 / 4, 1], [3 / 8, 1 / 4, 3 / 8, 5 / 8, end, 5 / 8]]
+        default: throw new Error('Unexpected piston head facing')
+      }
+    }
+    for (const facing of SIX_WAY_FACINGS) {
+      for (const short of [false, true]) {
+        for (const type of ['normal', 'sticky'] as const) {
+          expect(kernelStateShapeTuples('piston_head', { facing, short, type })).toEqual(pistonHead(facing, short))
+        }
+      }
+    }
+  })
+
+  it('selects chest halves and anvil axes from state values', () => {
+    const chestBoxes: Readonly<Record<BlockFacing, Readonly<Record<'single' | 'left' | 'right', BoxTuple>>>> = {
+      north: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 1 / 16, 1, 7 / 8, 15 / 16],
+        right: [0, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+      },
+      south: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [0, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        right: [1 / 16, 0, 1 / 16, 1, 7 / 8, 15 / 16],
+      },
+      west: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 0, 15 / 16, 7 / 8, 15 / 16],
+        right: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 1],
+      },
+      east: {
+        single: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 15 / 16],
+        left: [1 / 16, 0, 1 / 16, 15 / 16, 7 / 8, 1],
+        right: [1 / 16, 0, 0, 15 / 16, 7 / 8, 15 / 16],
+      },
+    }
+    for (const facing of HORIZONTAL_FACINGS) {
+      for (const type of ['single', 'left', 'right'] as const) {
+        expect(kernelStateShapeTuples('chest', { facing, type })).toEqual([chestBoxes[facing][type]])
+        expect(kernelStateShapeTuples('chest', { facing, type, waterlogged: true })).toEqual([chestBoxes[facing][type]])
+      }
+    }
+
+    const anvilNorthSouth: ReadonlyArray<BoxTuple> = [
+      [1 / 8, 0, 1 / 8, 7 / 8, 1 / 4, 7 / 8],
+      [1 / 4, 1 / 4, 3 / 16, 3 / 4, 5 / 16, 13 / 16],
+      [3 / 8, 5 / 16, 1 / 4, 5 / 8, 1, 3 / 4],
+      [3 / 16, 5 / 8, 0, 6 / 16, 1, 1],
+      [3 / 8, 5 / 8, 0, 13 / 16, 1, 1 / 4],
+      [3 / 8, 5 / 8, 3 / 4, 13 / 16, 1, 1],
+      [5 / 8, 5 / 8, 1 / 4, 13 / 16, 1, 3 / 4],
+    ]
+    const occupancy = (boxes: ReadonlyArray<BoxTuple>) => chorusOccupiedSixteenths(boxes)
+    for (const facing of HORIZONTAL_FACINGS) {
+      const expected = facing === 'north' || facing === 'south'
+        ? anvilNorthSouth
+        : anvilNorthSouth.map((box) => rotateBox(box, 'east'))
+      expect(occupancy(kernelStateShapeTuples('anvil', { facing }))).toBe(occupancy(expected))
+    }
+  })
+
+  it('matches chorus plant collision coverage for each connection combination', () => {
+    const connectionStateRadix = 2
+    const connectionStateCount = 64
+    for (let mask = 0; mask < connectionStateCount; mask += 1) {
+      const connectionIsSet = (index: number): boolean =>
+        Math.floor(mask / connectionStateRadix ** index) % connectionStateRadix === 1
+      const connections = {
+        down: connectionIsSet(0),
+        east: connectionIsSet(1),
+        north: connectionIsSet(2),
+        south: connectionIsSet(3),
+        up: connectionIsSet(4),
+        west: connectionIsSet(5),
+      }
+      const { down, east, north, south, up, west } = connections
+      const expectedBoxes: Array<BoxTuple> = [[
+        3 / 16, down ? 0 : 3 / 16, 3 / 16,
+        13 / 16, up ? 1 : 13 / 16, 13 / 16,
+      ]]
+      if (north) expectedBoxes.push([3 / 16, 3 / 16, 0, 13 / 16, 13 / 16, 3 / 16])
+      if (east) expectedBoxes.push([13 / 16, 3 / 16, 3 / 16, 1, 13 / 16, 13 / 16])
+      if (south) expectedBoxes.push([3 / 16, 3 / 16, 13 / 16, 13 / 16, 13 / 16, 1])
+      if (west) expectedBoxes.push([0, 3 / 16, 3 / 16, 3 / 16, 13 / 16, 13 / 16])
+      const actual = kernelStateShapeTuples('chorus_plant', { connections })
+      expect(chorusOccupiedSixteenths(actual)).toBe(chorusOccupiedSixteenths(expectedBoxes))
+    }
+  })
+
+  it('keeps ladder collision and climbable sampling on the same facing state', () => {
+    const ladderId = blockIdFor('ladder')
+    const northLadder = unwrap(encodeBlockState(ladderId, { facing: 'north' }))
+    const shapeOptions = resolveOptionsFromKernel({
+      blockIdAt: () => ladderId,
+      blockStateAt: () => northLadder,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    const ladderShape = unwrap(blockShapesAtResult(shapeOptions, 0, 0, 0))
+    const climbingBody = localShape({
+      minX: 1 / 4, minY: 1 / 4, minZ: 7 / 8,
+      maxX: 3 / 4, maxY: 3 / 4, maxZ: 15 / 16,
+    })
+    expect(tuplesOfAABBs(ladderShape)).toEqual([[0, 0, 13 / 16, 1, 1, 1]])
+    expect(ladderShape.some((shape) => collidesWith(climbingBody, shape))).toBe(true)
+
+    const ladderSample = sampleOf('ladder')
+    const environment: BlockEnvironment = {
+      blockAt: () => Result.succeed(ladderSample),
+      blockIdAt: () => ladderId,
+      blockStateAt: () => northLadder,
+    }
+    expect(unwrap(sampleBlockHazards(climbingBody, environment))).toMatchObject({
+      climbable: true,
+      suffocating: false,
+    })
+  })
+
+  it('leaves kernel states without a PH1 mapping to the static collision shape', () => {
+    const stoneState = unwrap(kernelBlockStateForCell(blockIdFor('stone'), undefined))
+    if (stoneState === null) throw new Error('Expected the stone default state')
+    const incompleteState = stoneState.values
+    expect(blockShapeForKernelState('stone_slab', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('oak_stairs', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('door', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('bed', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('snow', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('pressure_plate', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('piston', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('ladder', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('amethyst_cluster', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('hopper', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('piston_head', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chorus_plant', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('end_rod', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chest', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('chest', { ...incompleteState, facing: 'north' })).toBeUndefined()
+    expect(blockShapeForKernelState('anvil', incompleteState)).toBeUndefined()
+    expect(blockShapeForKernelState('stone', incompleteState)).toBeUndefined()
+    expect(kernelStateShapeTuples('stone_slab', { type: 'top' })).toEqual([[0, 0.5, 0, 1, 1, 1]])
+  })
+
+  it('uses BlockId identity to decode an encoded state before selecting geometry', () => {
+    const pressurePlateId = blockIdFor('pressure_plate')
+    const slabTop = unwrap(encodeBlockState(blockIdFor('stone_slab'), { type: 'top' }))
+    expect(unwrap(blockStateDefinitionOf(pressurePlateId)).blockType).toBe('pressure_plate')
+    const options = resolveOptionsFromKernel({
+      blockIdAt: () => pressurePlateId,
+      blockStateAt: () => slabTop,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    expect(tuplesOfAABBs(unwrap(blockShapesAtResult(options, 0, 0, 0)))).toEqual([
+      [1 / 16, 0, 1 / 16, 15 / 16, 0.5 / 16, 15 / 16],
+    ])
+
+    const doorOpenId = blockIdFor('door_open')
+    const openDoorState = unwrap(encodeBlockState(doorOpenId, { facing: 'north', hinge: 'left' }))
+    const openDoorOptions = resolveOptionsFromKernel({
+      blockIdAt: () => doorOpenId,
+      blockStateAt: () => openDoorState,
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
+    })
+    expect(tuplesOfAABBs(unwrap(blockShapesAtResult(openDoorOptions, 0, 0, 0)))).toEqual([
+      [0, 0, 0, 3 / 16, 1, 1],
+    ])
+  })
+
+  it('keeps the resolver block id paired with an environment state callback', () => {
+    const slabId = blockIdFor('stone_slab')
+    const bottomSlab = unwrap(encodeBlockState(slabId, { type: 'bottom' }))
+    const options = withWorld(() => false, {
+      blockIdAt: () => slabId,
+      environment: {
+        blockAt: () => Result.succeed(sampleOf('stone_slab')),
+        blockStateAt: () => bottomSlab,
+      },
+    })
+    const result = resolveBodyResult(bodyAt(0.5, 0.6, 0.5), DT, options)
+    expect(Result.isSuccess(result)).toBe(true)
+
+    const environmentStateOnly = withWorld(() => false, {
+      environment: {
+        blockAt: () => Result.succeed(null),
+        blockIdAt: () => slabId,
+        blockStateAt: () => bottomSlab,
+      },
+    })
+    const staticBody = { ...bodyAt(0.5, 0.6, 0.5), kind: 'static' as const }
+    expect(Result.isSuccess(resolveBodyResult(staticBody, DT, environmentStateOnly))).toBe(true)
+  })
+
+  it('property: kernel door states place their thin panel from facing, hinge, and open', () => {
+    const panel: Readonly<Record<BlockFacing, BoxTuple>> = {
+      north: [0, 0, 0, 1, 1, 3 / 16],
+      east: [13 / 16, 0, 0, 1, 1, 1],
+      south: [0, 0, 13 / 16, 1, 1, 1],
+      west: [0, 0, 0, 3 / 16, 1, 1],
+    }
+    const opposite: Readonly<Record<BlockFacing, BlockFacing>> = {
+      north: 'south', east: 'west', south: 'north', west: 'east',
+    }
+    const openEdge: Readonly<Record<BlockFacing, Readonly<Record<'left' | 'right', BlockFacing>>>> = {
+      north: { left: 'west', right: 'east' },
+      east: { left: 'north', right: 'south' },
+      south: { left: 'east', right: 'west' },
+      west: { left: 'south', right: 'north' },
+    }
+    fc.assert(
+      fc.property(
+        fc.record({
+          facing: fc.constantFrom(...K1_FACING_VALUES),
+          hinge: fc.constantFrom<'left' | 'right'>('left', 'right'),
+          open: fc.boolean(),
+        }),
+        ({ facing, hinge, open }) => {
+          const actual = kernelStateShapeTuples('door', { facing, hinge, open })
+          const edge = open ? openEdge[facing][hinge] : opposite[facing]
+          return isDeepStrictEqual(actual, [panel[edge]])
+        },
+      ),
+      { numRuns: 250 },
+    )
   })
 
   describe('stairs by K1 facing, half, and snake-case shape', () => {
@@ -1050,7 +1575,7 @@ describe('vanilla state-specific collision shapes', () => {
   it('property: generated state shapes match the independent expected-shape oracle', () => {
     fc.assert(
       fc.property(blockShapeStateArbitrary, (state) => {
-        const actual = shapeTuples(unwrap(blockShapeForState(state)))
+        const actual = stateShapeTuples(state)
         return isDeepStrictEqual(actual, expectedShapeForState(state)) && actual.every(([minX, minY, minZ, maxX, maxY, maxZ]) =>
           [minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite) &&
           minX <= maxX && minY <= maxY && minZ <= maxZ &&
@@ -1064,7 +1589,7 @@ describe('vanilla state-specific collision shapes', () => {
   it('property: arbitrary shape inputs return a typed failure or finite ordered boxes', () => {
     fc.assert(
       fc.property(fc.anything(), (input) => {
-        const result = blockShapeForState(input)
+        const result = blockShapeForCustomState(input)
         if (Result.isFailure(result)) return result.failure instanceof RangeError
         return result.success === null || shapeTuples(result.success).every(([minX, minY, minZ, maxX, maxY, maxZ]) =>
           [minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite) &&
@@ -1075,28 +1600,31 @@ describe('vanilla state-specific collision shapes', () => {
     )
   })
 
-  it('passes block state into a custom resolver shape callback', () => {
-    const seenStates: Array<BlockShapeStateInput | null | undefined> = []
-    const carpet: BlockShapeStateInput = { kind: 'carpet' }
-    const options = withWorld(() => false, {
-      halfWidth: 0.1,
-      halfHeight: 0.1,
-      blockShapeStateAt: (bx, by, bz) => bx === 0 && by === 1 && bz === 0 ? carpet : null,
-      blockShapeAt: (_bx, _by, _bz, state) => {
-        if (state !== null && state !== undefined) seenStates.push(state)
-        return state?.kind === 'carpet' ? localShape({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1 / 16, maxZ: 1 }) : null
+  it('passes kernel-resolved identity and values to a custom shape callback', () => {
+    const slabId = blockIdFor('stone_slab')
+    const encodedTop = unwrap(encodeBlockState(slabId, { type: 'top' }))
+    let seenBlockType: BlockType | undefined
+    let seenSlabType: BlockStateValues['type'] | undefined
+    const options = resolveOptionsFromKernel({
+      blockIdAt: () => slabId,
+      blockStateAt: () => encodedTop,
+      blockShapeAt: (_bx, _by, _bz, values, blockType) => {
+        seenBlockType = blockType
+        seenSlabType = values?.type
+        return localShape({ minX: 0, minY: 0.25, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 })
       },
+      halfWidth: BlockLength(0.1),
+      halfHeight: HalfHeight(0.1),
     })
-    const body = bodyFrom({ kind: 'dynamic', x: 0.5, y: 1.5, z: 0.5, vx: 0, vy: 0, vz: 0 })
-    const result = resolveBodyResult(body, DT, options)
+    const shapes = unwrap(blockShapesAtResult(options, 0, 0, 0))
 
-    expect(Result.isSuccess(result)).toBe(true)
-    expect(seenStates).toContainEqual(carpet)
+    expect(tuplesOfAABBs(shapes)).toEqual([[0, 0.25, 0, 1, 1, 1]])
+    expect(seenBlockType).toBe('stone_slab')
+    expect(seenSlabType).toBe('top')
   })
 
-  it('forwards resolver state geometry into suffocation sampling', () => {
+  it('uses resolver custom geometry during suffocation sampling', () => {
     const stone = sampleOf('stone')
-    const carpet: BlockShapeStateInput = { kind: 'carpet' }
     const cell = (bx: number, by: number, bz: number): boolean => bx === 0 && by === 1 && bz === 0
     const options = withWorld(() => false, {
       halfWidth: 0.1,
@@ -1105,7 +1633,7 @@ describe('vanilla state-specific collision shapes', () => {
         blockAt: (bx, by, bz) => Result.succeed(cell(bx, by, bz) ? stone : null),
       },
       blockPropertiesAt: (bx, by, bz) => cell(bx, by, bz) ? stone.properties : null,
-      blockShapeStateAt: (bx, by, bz) => cell(bx, by, bz) ? carpet : null,
+      customBlockShapeStateAt: (bx, by, bz) => cell(bx, by, bz) ? { kind: 'carpet' } : null,
     })
     const body = bodyFrom({ kind: 'dynamic', x: 0.5, y: 1.5, z: 0.5, vx: 0, vy: 0, vz: 0 })
     const result = resolveBodyResult(body, DT, options)
@@ -1125,7 +1653,7 @@ describe('vanilla state-specific collision shapes', () => {
           const options = withWorld(() => false, {
             halfWidth: 0.1,
             halfHeight: 0.1,
-            blockShapeStateAt: (bx, by, bz) => bx === 1 && by === 0 && bz === 0 ? fence : null,
+            customBlockShapeStateAt: (bx, by, bz) => bx === 1 && by === 0 && bz === 0 ? fence : null,
             blockPropertiesAt: () => propertiesFor('none'),
           })
           const result = resolveBodyResult(
@@ -1158,12 +1686,7 @@ describe('vanilla state-specific collision shapes', () => {
   it('property: resolving against every state shape leaves no body penetration', () => {
     fc.assert(
       fc.property(blockShapeStateArbitrary, (state) => {
-        const options = withWorld(() => false, {
-          halfWidth: 0.1,
-          halfHeight: 0.1,
-          blockPropertiesAt: () => propertiesFor('none'),
-          blockShapeStateAt: (bx, by, bz) => bx === 1 && by === 0 && bz === 0 ? state : null,
-        })
+        const options = optionsForShapeState(state, (bx, by, bz) => bx === 1 && by === 0 && bz === 0)
         const result = resolveBodyResult(
           bodyFrom({ kind: 'dynamic', x: 0.75, y: 0.45, z: 0.5, vx: 5, vy: 0, vz: 0 }),
           DT,

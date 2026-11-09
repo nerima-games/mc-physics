@@ -20,7 +20,7 @@ import { sampleBlockHazards } from './environment.js'
 export type {
   BlockPropertiesAt,
   BlockShapeAt,
-  BlockShapeStateAt,
+  BlockStateAt,
   HasGroundSupport,
   HorizontalPosition,
   Resolution,
@@ -105,7 +105,7 @@ const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveO
     return Result.fail(new RangeError('stepHeight must be non-negative'))
   }
 
-  const { blockPropertiesAt, blockShapeAt, blockShapeStateAt, bouncinessAt } = options
+  const { blockPropertiesAt, blockShapeAt, blockIdAt, blockStateAt, customBlockShapeStateAt, bouncinessAt } = options
   let checkedOptions: ResolveOptions = {
     blockPropertiesAt,
     environment,
@@ -118,8 +118,14 @@ const validateResolveOptions = (options: ResolveOptions): Result.Result<ResolveO
   if (typeof blockShapeAt !== 'undefined') {
     checkedOptions = { ...checkedOptions, blockShapeAt }
   }
-  if (typeof blockShapeStateAt !== 'undefined') {
-    checkedOptions = { ...checkedOptions, blockShapeStateAt }
+  if (typeof blockIdAt !== 'undefined') {
+    checkedOptions = { ...checkedOptions, blockIdAt }
+  }
+  if (typeof blockStateAt !== 'undefined') {
+    checkedOptions = { ...checkedOptions, blockStateAt }
+  }
+  if (typeof customBlockShapeStateAt !== 'undefined') {
+    checkedOptions = { ...checkedOptions, customBlockShapeStateAt }
   }
   if (typeof stepHeight !== 'undefined') {
     checkedOptions = { ...checkedOptions, stepHeight }
@@ -136,13 +142,24 @@ const finishResolution = (
   box: AABB,
   options: ResolveOptions,
 ): Result.Result<Resolution, ResolveError> => {
-  const { environment, blockShapeAt, blockShapeStateAt } = options
+  const { environment, blockShapeAt, blockIdAt, blockStateAt, customBlockShapeStateAt } = options
   let environmentWithShapes: BlockEnvironment = environment
   if (typeof environment.blockShapeAt === 'undefined' && typeof blockShapeAt === 'function') {
     environmentWithShapes = { ...environmentWithShapes, blockShapeAt }
   }
-  if (typeof environment.blockShapeStateAt === 'undefined' && typeof blockShapeStateAt === 'function') {
-    environmentWithShapes = { ...environmentWithShapes, blockShapeStateAt }
+  const effectiveBlockStateAt = blockStateAt ?? environment.blockStateAt
+  if (typeof effectiveBlockStateAt === 'function') {
+    environmentWithShapes = { ...environmentWithShapes, blockStateAt: effectiveBlockStateAt }
+    if (typeof blockIdAt === 'function') {
+      environmentWithShapes = { ...environmentWithShapes, blockIdAt }
+    }
+  }
+  const effectiveCustomBlockShapeStateAt = customBlockShapeStateAt ?? environment.customBlockShapeStateAt
+  if (typeof effectiveCustomBlockShapeStateAt === 'function') {
+    environmentWithShapes = {
+      ...environmentWithShapes,
+      customBlockShapeStateAt: effectiveCustomBlockShapeStateAt,
+    }
   }
   return Result.map(sampleBlockHazards(box, environmentWithShapes), (hazards): Resolution => ({ body, hazards, isGrounded }))
 }

@@ -1,7 +1,7 @@
-import { Result } from 'effect'
+import { Option, Result } from 'effect'
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
-import { BlockAxis, PositionAxis, type BlockType } from '@nerima-games/mc-kernel'
+import { BlockAxis, PositionAxis, blockIdOf, encodeBlockState, type BlockType } from '@nerima-games/mc-kernel'
 import {
   BlockLength,
   BlocksPerSecond,
@@ -29,6 +29,11 @@ const keyOf = (bx: number, by: number, bz: number): string => `${bx}:${by}:${bz}
 const unwrapResult = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isSuccess(result)) return result.success
   throw new Error('Expected Result.Success')
+}
+
+const unwrapOption = <A>(option: Option.Option<A>): A => {
+  if (Option.isSome(option)) return option.value
+  throw new Error('Expected Option.Some')
 }
 
 const entityAABB = (...args: Parameters<typeof entityAABBResult>): AABB =>
@@ -61,14 +66,16 @@ const aabb = (minX: number, minY: number, minZ: number, maxX: number, maxY: numb
 const environmentOf = (
   blocks: Readonly<Record<string, BlockType>>,
   blockShapeAt?: BlockEnvironment['blockShapeAt'],
-  blockShapeStateAt?: BlockEnvironment['blockShapeStateAt'],
+  blockIdAt?: BlockEnvironment['blockIdAt'],
+  blockStateAt?: BlockEnvironment['blockStateAt'],
 ): BlockEnvironment => ({
   blockAt: (bx, by, bz) => {
     const type = blocks[keyOf(bx, by, bz)]
     return Result.succeed(type === undefined ? null : sampleOf(type))
   },
   ...(blockShapeAt ? { blockShapeAt } : {}),
-  ...(blockShapeStateAt ? { blockShapeStateAt } : {}),
+  ...(blockIdAt ? { blockIdAt } : {}),
+  ...(blockStateAt ? { blockStateAt } : {}),
 })
 
 const bodyBox = (
@@ -92,6 +99,18 @@ describe('environment material sampling', () => {
     const stone = sampleOf('stone')
     const environment = environmentOf({ [keyOf(0, 0, 0)]: 'stone' })
     expect(sampleSurfaceEffects(bodyBox(1.5), environment)).toEqual({
+      friction: stone.properties.friction,
+      movementDrag: stone.properties.movementDrag,
+    })
+
+    const stoneId = unwrapOption(blockIdOf('stone'))
+    const kernelStateEnvironment = environmentOf(
+      { [keyOf(0, 0, 0)]: 'stone' },
+      undefined,
+      () => stoneId,
+      () => undefined,
+    )
+    expect(sampleSurfaceEffects(bodyBox(1.5), kernelStateEnvironment)).toEqual({
       friction: stone.properties.friction,
       movementDrag: stone.properties.movementDrag,
     })
@@ -124,17 +143,18 @@ describe('environment material sampling', () => {
     })
   })
 
-  it('uses state geometry for support friction at the exact surface and just outside it', () => {
+  it('uses custom geometry for support friction at the exact surface and just outside it', () => {
     const stone = sampleOf('stone')
     const blocks = { [keyOf(0, 1, 0)]: 'stone' as const }
-    const carpetState = environmentOf(blocks, undefined, (bx, by, bz) =>
-      bx === 0 && by === 1 && bz === 0 ? { kind: 'carpet' } : null,
-    )
+    const carpetShape: BlockEnvironment = {
+      ...environmentOf(blocks),
+      customBlockShapeStateAt: () => ({ kind: 'carpet' }),
+    }
     const onCarpet = bodyBox(1.5625, 0.25, 0.5)
     const aboveCarpet = bodyBox(1.562501, 0.25, 0.5)
 
-    expect(sampleSurfaceEffects(onCarpet, carpetState).friction).toBe(stone.properties.friction)
-    expect(sampleSurfaceEffects(aboveCarpet, carpetState).friction).toBe(1)
+    expect(sampleSurfaceEffects(onCarpet, carpetShape).friction).toBe(stone.properties.friction)
+    expect(sampleSurfaceEffects(aboveCarpet, carpetShape).friction).toBe(1)
   })
 
   it('returns a failure for non-finite AABB coordinates', () => {
@@ -239,9 +259,10 @@ describe('environment hazards', () => {
     const stone = sampleOf('stone')
     const box = bodyBox(1.5, 0.1, 0.1)
     const blocks = { [keyOf(0, 1, 0)]: 'stone' as const }
-    const carpet = environmentOf(blocks, undefined, (bx, by, bz) =>
-      bx === 0 && by === 1 && bz === 0 ? { kind: 'carpet' } : null,
-    )
+    const carpet: BlockEnvironment = {
+      ...environmentOf(blocks),
+      customBlockShapeStateAt: () => ({ kind: 'carpet' }),
+    }
     const invalidShape = environmentOf(blocks, () => Result.fail(new RangeError('invalid block shape')))
 
     expect(sampleBlockHazards(box, environmentOf(blocks)).suffocating).toBe(stone.capabilities.suffocates)
@@ -249,6 +270,20 @@ describe('environment hazards', () => {
     const failure = sampleBlockHazardsResult(box, invalidShape)
     expect(Result.isFailure(failure)).toBe(true)
     if (Result.isFailure(failure)) expect(failure.failure).toBeInstanceOf(RangeError)
+  })
+
+  it('uses kernel block identity and validated state geometry when sampling support', () => {
+    const slab = sampleOf('stone_slab')
+    const slabId = unwrapOption(blockIdOf('stone_slab'))
+    const bottomSlab = unwrapResult(encodeBlockState(slabId, { type: 'bottom' }))
+    const topSlab = unwrapResult(encodeBlockState(slabId, { type: 'top' }))
+    const blocks = { [keyOf(0, 0, 0)]: 'stone_slab' as const }
+    const bottomEnvironment = environmentOf(blocks, undefined, () => slabId, () => bottomSlab)
+    const topEnvironment = environmentOf(blocks, undefined, () => slabId, () => topSlab)
+    const box = bodyBox(1, 0.25, 0.5)
+
+    expect(sampleSurfaceEffects(box, bottomEnvironment).friction).toBe(slab.properties.friction)
+    expect(sampleSurfaceEffects(box, topEnvironment).friction).toBe(1)
   })
 
   it('uses kernel contact damage, suffocation, and climbable capabilities', () => {

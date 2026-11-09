@@ -82,7 +82,7 @@ describe('public API surface', () => {
         'applyMovementFriction',
         'applyKnockback',
         'movementCoefficientsForBlockId',
-        'blockShapeForState',
+        'blockShapeForCustomState',
         // creative flight
         'createCreativeFlightState',
         'toggleCreativeFlight',

@@ -1,12 +1,12 @@
 import type { BlockAxis, BlockProperties, PositionAxis } from '@nerima-games/mc-kernel'
 import type { BlockEnvironment, BlockHazards, BlockLookupError, EnvironmentError } from './environment-types.js'
-import type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
+import type { BlockShapeAt, BlockStateAt, CustomBlockShapeStateAt } from './block-shape-state.js'
 import type { BlockLength } from './physical-units.js'
 import type { Body } from './integrate.js'
 import type { HalfHeight } from './coordinates.js'
 import type { Result } from 'effect'
 
-export type { BlockShapeAt, BlockShapeStateAt } from './block-shape-state.js'
+export type { BlockShapeAt, BlockStateAt, CustomBlockShapeStateAt } from './block-shape-state.js'
 
 export type ResolveError = EnvironmentError
 
@@ -19,8 +19,12 @@ export type ResolveOptions = {
   readonly blockPropertiesAt: BlockPropertiesAt
   /** Optional state-specific or compound geometry. When supplied, it is authoritative. */
   readonly blockShapeAt?: BlockShapeAt
-  /** Local state input for built-in state-sensitive collision geometry. */
-  readonly blockShapeStateAt?: BlockShapeStateAt
+  /** Kernel block identity for resolving the encoded state at each cell. */
+  readonly blockIdAt?: NonNullable<BlockEnvironment['blockIdAt']>
+  /** Encoded kernel state; undefined selects the kernel default for the block id. */
+  readonly blockStateAt?: BlockStateAt
+  /** Per-cell PH1 state for geometry not represented in the kernel definition table. */
+  readonly customBlockShapeStateAt?: CustomBlockShapeStateAt
   readonly stepHeight?: BlockLength
   /** Prevent moving more than 0.6 blocks down while crouching. */
   readonly sneaking?: boolean

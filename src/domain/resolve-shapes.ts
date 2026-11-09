@@ -1,5 +1,6 @@
 import {
   type AABB,
+  type BlockShape,
   type CentreY,
   aabbOfCollisionShape,
   aabbsOfBlockShape,
@@ -8,11 +9,34 @@ import {
   entityAABB,
 } from './coordinates.js'
 import { BlockAxis, type PositionAxis } from '@nerima-games/mc-kernel'
+import {
+  type KernelBlockState,
+  blockShapeForCustomState,
+  blockShapeForKernelState,
+  blockShapeLookupResult,
+  kernelBlockStateForCell,
+} from './shape-data.js'
 import type { ResolveError, ResolveOptions } from './resolve-types.js'
-import { blockShapeForState, blockShapeLookupResult } from './shape-data.js'
 import { Result } from 'effect'
 
 const EMPTY_SHAPES: ReadonlyArray<AABB> = []
+
+const blockAabbsForShape = (
+  blockX: ReturnType<typeof BlockAxis>,
+  blockY: ReturnType<typeof BlockAxis>,
+  blockZ: ReturnType<typeof BlockAxis>,
+  shape: BlockShape | null,
+) => {
+  if (shape === null) {
+    return Result.succeed(EMPTY_SHAPES)
+  }
+  return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
+    blockX,
+    blockY,
+    blockZ,
+    localShape,
+  )))
+}
 
 export const blockShapesAtAxes = (
   options: ResolveOptions,
@@ -20,45 +44,48 @@ export const blockShapesAtAxes = (
   blockY: ReturnType<typeof BlockAxis>,
   blockZ: ReturnType<typeof BlockAxis>,
 ): Result.Result<ReadonlyArray<AABB>, ResolveError> => {
-  const shapeState = options.blockShapeStateAt?.(blockX, blockY, blockZ) ?? null
+  const blockStateAt = options.blockStateAt ?? options.environment.blockStateAt
+  const blockIdAt = options.blockIdAt ?? options.environment.blockIdAt
+  const customBlockShapeStateAt = options.customBlockShapeStateAt ?? options.environment.customBlockShapeStateAt
+  let stateContext: Result.Result<KernelBlockState | null | undefined, ResolveError>
+  if (typeof blockStateAt === 'function') {
+    stateContext = kernelBlockStateForCell(blockIdAt?.(blockX, blockY, blockZ), blockStateAt(blockX, blockY, blockZ))
+  } else {
+    stateContext = Result.succeed(globalThis.undefined)
+  }
   const customShapeAt = options.blockShapeAt
-  if (customShapeAt) {
-    return Result.flatMap(blockShapeLookupResult(customShapeAt(blockX, blockY, blockZ, shapeState)), (shape) => {
-      if (shape === null) {
-        return Result.succeed(EMPTY_SHAPES)
-      }
-      return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
+  return Result.flatMap(stateContext, (context) => {
+    if (customShapeAt) {
+      return Result.flatMap(blockShapeLookupResult(customShapeAt(
         blockX,
         blockY,
         blockZ,
-        localShape,
-      )))
-    })
-  }
-
-  if (shapeState !== null) {
-    return Result.flatMap(blockShapeForState(shapeState), (shape) => {
+        context?.values ?? null,
+        context?.blockType,
+      )), (shape) => blockAabbsForShape(blockX, blockY, blockZ, shape))
+    }
+    if (context !== null && typeof context !== 'undefined') {
+      const stateShape = blockShapeForKernelState(context.blockType, context.values)
+      if (typeof stateShape !== 'undefined') {
+        return blockAabbsForShape(blockX, blockY, blockZ, stateShape)
+      }
+    }
+    const customState = customBlockShapeStateAt?.(blockX, blockY, blockZ)
+    if (customState !== null && typeof customState !== 'undefined') {
+      return Result.flatMap(blockShapeForCustomState(customState), (shape) =>
+        blockAabbsForShape(blockX, blockY, blockZ, shape),
+      )
+    }
+    return Result.flatMap(options.blockPropertiesAt(blockX, blockY, blockZ), (properties) => {
+      if (properties === null) {
+        return Result.succeed(EMPTY_SHAPES)
+      }
+      const shape = aabbOfCollisionShape(properties.collisionShape)
       if (shape === null) {
         return Result.succeed(EMPTY_SHAPES)
       }
-      return Result.all(aabbsOfBlockShape(shape).map((localShape) => blockAABB(
-        blockX,
-        blockY,
-        blockZ,
-        localShape,
-      )))
+      return Result.map(blockAABB(blockX, blockY, blockZ, shape), (block) => [block])
     })
-  }
-
-  return Result.flatMap(options.blockPropertiesAt(blockX, blockY, blockZ), (properties) => {
-    if (properties === null) {
-      return Result.succeed(EMPTY_SHAPES)
-    }
-    const shape = aabbOfCollisionShape(properties.collisionShape)
-    if (shape === null) {
-      return Result.succeed(EMPTY_SHAPES)
-    }
-    return Result.map(blockAABB(blockX, blockY, blockZ, shape), (block) => [block])
   })
 }
 

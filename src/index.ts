@@ -22,8 +22,13 @@ export type {
   BlockHalf,
   BlockShapeAt,
   BlockShapeLookup,
-  BlockShapeStateAt,
-  BlockShapeStateInput,
+  BlockStateCodecFailure,
+  BlockStateAt,
+  BlockStateLookupFailure,
+  CustomBlockShapeStateAt,
+  CustomBlockShapeStateInput,
+  EffectiveBlockStateValues,
+  EncodedBlockState,
   SnowLayerCount,
   StairShape,
   WallConnection,
@@ -67,7 +72,7 @@ export {
   FULL_BLOCK_SHAPE,
   PRESSURE_PLATE_SHAPE,
   SLAB_SHAPE,
-  blockShapeForState,
+  blockShapeForCustomState,
 } from './domain/shape-data.js'
 
 export { DEFAULT_EXPLOSION_LIMITS } from '@nerima-games/mc-kernel'
