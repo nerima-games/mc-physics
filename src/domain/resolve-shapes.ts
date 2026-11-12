@@ -11,6 +11,7 @@ import {
 import { BlockAxis, type PositionAxis } from '@nerima-games/mc-kernel'
 import {
   type KernelBlockState,
+  UnsupportedBlockShapeError,
   blockShapeForCustomState,
   blockShapeForKernelState,
   blockShapeLookupResult,
@@ -66,6 +67,9 @@ export const blockShapesAtAxes = (
     }
     if (context !== null && typeof context !== 'undefined') {
       const stateShape = blockShapeForKernelState(context.blockType, context.values)
+      if (stateShape instanceof UnsupportedBlockShapeError) {
+        return Result.fail(stateShape)
+      }
       if (typeof stateShape !== 'undefined') {
         return blockAabbsForShape(blockX, blockY, blockZ, stateShape)
       }

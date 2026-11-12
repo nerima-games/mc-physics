@@ -37,6 +37,7 @@ describe('public API surface', () => {
         'SLAB_SHAPE',
         'CACTUS_SHAPE',
         'PRESSURE_PLATE_SHAPE',
+        'UnsupportedBlockShapeError',
         'COLLISION_SHAPE_AABBS',
         // delta-time
         'DeltaTimeSecs',

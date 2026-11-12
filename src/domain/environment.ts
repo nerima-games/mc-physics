@@ -24,6 +24,7 @@ import { Brand, Result } from 'effect'
 import {
   FULL_BLOCK_SHAPE,
   type KernelBlockState,
+  UnsupportedBlockShapeError,
   blockShapeForCustomState,
   blockShapeForKernelState,
   blockShapeLookupResult,
@@ -139,6 +140,9 @@ const localShapeAt = (
   }
   if (context !== null && typeof context !== 'undefined') {
     const stateShape = blockShapeForKernelState(context.blockType, context.values)
+    if (stateShape instanceof UnsupportedBlockShapeError) {
+      return Result.fail(stateShape)
+    }
     if (typeof stateShape !== 'undefined') {
       return Result.succeed(aabbsForShape(stateShape))
     }

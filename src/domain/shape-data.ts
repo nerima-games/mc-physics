@@ -60,8 +60,16 @@ const TWENTY_FOUR_SIXTEENTHS = TWENTY_FOUR_PIXELS / PIXELS_PER_BLOCK
 const WALL_ARM_HALF_WIDTH = THREE_PIXELS / PIXELS_PER_BLOCK
 const NINE_SIXTEENTHS = NINE_PIXELS / PIXELS_PER_BLOCK
 const HALF_PIXEL = HALF_BLOCK / PIXELS_PER_BLOCK
-const PISTON_HEAD_LONG_ARM_END = 1 + FOUR_SIXTEENTHS
-const PISTON_HEAD_LONG_ARM_START = -FOUR_SIXTEENTHS
+
+export class UnsupportedBlockShapeError extends RangeError {
+  readonly _tag = 'UnsupportedBlockShapeError'
+  readonly blockType = 'piston_head' as const
+
+  constructor() {
+    super('piston_head collision shape is unsupported')
+    this.name = 'UnsupportedBlockShapeError'
+  }
+}
 
 const localBox = (minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number): AABB => ({
   maxX: PositionAxis(maxX),
@@ -217,46 +225,6 @@ const hopperShapeForState = (state: EffectiveBlockStateValues): BlockShape | und
     return globalThis.undefined
   }
   return HOPPER_SHAPES_BY_FACING[state.facing]
-}
-
-type PistonHeadShapeFactory = (longerEnd: number, shorterStart: number) => BlockShape
-const PISTON_HEAD_SHAPES_BY_FACING: Readonly<Record<BlockStateFacing, PistonHeadShapeFactory>> = {
-  down: (longerEnd) => [
-    localBox(0, 0, 0, 1, FOUR_SIXTEENTHS, 1),
-    localBox(SIX_SIXTEENTHS, FOUR_SIXTEENTHS, SIX_SIXTEENTHS, TEN_SIXTEENTHS, longerEnd, TEN_SIXTEENTHS),
-  ],
-  east: (_longerEnd, shorterStart) => [
-    localBox(TWELVE_SIXTEENTHS, 0, 0, 1, 1, 1),
-    localBox(shorterStart, SIX_SIXTEENTHS, SIX_SIXTEENTHS, TWELVE_SIXTEENTHS, TEN_SIXTEENTHS, TEN_SIXTEENTHS),
-  ],
-  north: (longerEnd) => [
-    localBox(0, 0, 0, 1, 1, FOUR_SIXTEENTHS),
-    localBox(SIX_SIXTEENTHS, SIX_SIXTEENTHS, FOUR_SIXTEENTHS, TEN_SIXTEENTHS, TEN_SIXTEENTHS, longerEnd),
-  ],
-  south: (_longerEnd, shorterStart) => [
-    localBox(0, 0, TWELVE_SIXTEENTHS, 1, 1, 1),
-    localBox(SIX_SIXTEENTHS, SIX_SIXTEENTHS, shorterStart, TEN_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS),
-  ],
-  up: (_longerEnd, shorterStart) => [
-    localBox(0, TWELVE_SIXTEENTHS, 0, 1, 1, 1),
-    localBox(SIX_SIXTEENTHS, shorterStart, SIX_SIXTEENTHS, TEN_SIXTEENTHS, TWELVE_SIXTEENTHS, TEN_SIXTEENTHS),
-  ],
-  west: (longerEnd) => [
-    localBox(0, 0, 0, FOUR_SIXTEENTHS, 1, 1),
-    localBox(FOUR_SIXTEENTHS, SIX_SIXTEENTHS, SIX_SIXTEENTHS, longerEnd, TEN_SIXTEENTHS, TEN_SIXTEENTHS),
-  ],
-}
-const pistonHeadShapeForState = (state: EffectiveBlockStateValues): BlockShape | undefined => {
-  if (!sixWayFacing(state.facing) || typeof state.short !== 'boolean' || (state.type !== 'normal' && state.type !== 'sticky')) {
-    return globalThis.undefined
-  }
-  let longerEnd = 1
-  let shorterStart = 0
-  if (!state.short) {
-    longerEnd = PISTON_HEAD_LONG_ARM_END
-    shorterStart = PISTON_HEAD_LONG_ARM_START
-  }
-  return PISTON_HEAD_SHAPES_BY_FACING[state.facing](longerEnd, shorterStart)
 }
 
 const CHORUS_PLANT_CONNECTIONS = ['down', 'east', 'north', 'south', 'up', 'west'] as const
@@ -738,10 +706,14 @@ const pressurePlateShapeForState = (state: EffectiveBlockStateValues): BlockShap
 export const blockShapeForKernelState = (
   blockType: BlockType,
   state: EffectiveBlockStateValues,
-): BlockShape | null | undefined => {
+): BlockShape | null | UnsupportedBlockShapeError | undefined => {
   switch (blockType) {
     case 'piston':
+    case 'sticky_piston':
       return pistonShapeForState(state)
+    case 'redstone_torch':
+    case 'redstone_wall_torch':
+      return null
     case 'ladder':
       return ladderShapeForState(state)
     case 'amethyst_cluster':
@@ -749,7 +721,7 @@ export const blockShapeForKernelState = (
     case 'hopper':
       return hopperShapeForState(state)
     case 'piston_head':
-      return pistonHeadShapeForState(state)
+      return new UnsupportedBlockShapeError()
     case 'chorus_plant':
       return chorusPlantShapeForState(state)
     case 'end_rod':

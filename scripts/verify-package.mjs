@@ -63,6 +63,7 @@ const expectedExports = [
   'SNOWBALL_PROFILE',
   'TERMINAL_VELOCITY_Y',
   'TRIDENT_PROFILE',
+  'UnsupportedBlockShapeError',
   'aabbOfCollisionShape',
   'aabbsOfBlockShape',
   'advanceFallTracking',
@@ -130,6 +131,9 @@ try {
   assert.deepEqual(Object.keys(physics).sort(), expectedExports)
   assert.equal(physics.DeltaTimeSecs(0), 0)
   assert.equal(physics.FULL_BLOCK_SHAPE.minX, 0)
+  const unsupportedShape = new physics.UnsupportedBlockShapeError()
+  assert.equal(unsupportedShape instanceof RangeError, true)
+  assert.equal(unsupportedShape.blockType, 'piston_head')
   assert.equal(typeof physics.voxelRaycast, 'function')
   assert.equal(typeof physics.applyCreativeFlightInput, 'function')
   assert.equal('planExplosion' in physics, false)
