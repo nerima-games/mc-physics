@@ -741,7 +741,11 @@ export const blockShapeForKernelState = (
 ): BlockShape | null | undefined => {
   switch (blockType) {
     case 'piston':
+    case 'sticky_piston':
       return pistonShapeForState(state)
+    case 'redstone_torch':
+    case 'redstone_wall_torch':
+      return null
     case 'ladder':
       return ladderShapeForState(state)
     case 'amethyst_cluster':

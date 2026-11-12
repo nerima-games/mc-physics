@@ -1025,6 +1025,8 @@ describe('kernel state-specific collision shapes', () => {
       [0, 0, 0, 1, 1, 1],
     ])
 
+    expect(kernelStateShapeTuples('bookshelf')).toEqual([[0, 0, 0, 1, 1, 1]])
+
     const invalidEncoded = withWorld(() => false, {
       blockIdAt: () => slabId,
       // @ts-expect-error Malformed untrusted value must fail at the state codec boundary.
@@ -1087,15 +1089,15 @@ describe('kernel state-specific collision shapes', () => {
     expect(Result.isFailure(kernelBlockStateForCell(BlockId(255), undefined))).toBe(true)
   })
 
-  it('selects vanilla Java 26.3 geometry for the nine remaining kernel states', () => {
+  it('selects vanilla Java 26.3 geometry for the remaining kernel states', () => {
     const fullBlock: BoxTuple = [0, 0, 0, 1, 1, 1]
     const extendedPiston: Readonly<Record<BlockStateFacing, BoxTuple>> = {
-      north: [0, 0, 1 / 4, 1, 1, 1],
-      east: [0, 0, 0, 3 / 4, 1, 1],
-      south: [0, 0, 0, 1, 1, 3 / 4],
-      west: [1 / 4, 0, 0, 1, 1, 1],
-      up: [0, 0, 0, 1, 3 / 4, 1],
-      down: [0, 1 / 4, 0, 1, 1, 1],
+      north: [0, 0, 4 / 16, 1, 1, 1],
+      east: [0, 0, 0, 12 / 16, 1, 1],
+      south: [0, 0, 0, 1, 1, 12 / 16],
+      west: [4 / 16, 0, 0, 1, 1, 1],
+      up: [0, 0, 0, 1, 12 / 16, 1],
+      down: [0, 4 / 16, 0, 1, 1, 1],
     }
     const ladders: Readonly<Record<BlockFacing, BoxTuple>> = {
       north: [0, 0, 13 / 16, 1, 1, 1],
@@ -1115,6 +1117,8 @@ describe('kernel state-specific collision shapes', () => {
     for (const facing of SIX_WAY_FACINGS) {
       expect(kernelStateShapeTuples('piston', { facing, extended: false })).toEqual([fullBlock])
       expect(kernelStateShapeTuples('piston', { facing, extended: true })).toEqual([extendedPiston[facing]])
+      expect(kernelStateShapeTuples('sticky_piston', { facing, extended: false })).toEqual([fullBlock])
+      expect(kernelStateShapeTuples('sticky_piston', { facing, extended: true })).toEqual([extendedPiston[facing]])
       expect(kernelStateShapeTuples('amethyst_cluster', { facing })).toEqual([amethystClusters[facing]])
       expect(kernelStateShapeTuples('amethyst_cluster', { facing, waterlogged: true })).toEqual([amethystClusters[facing]])
       const rod: Readonly<Record<'x' | 'y' | 'z', BoxTuple>> = {
@@ -1131,12 +1135,17 @@ describe('kernel state-specific collision shapes', () => {
       expect(kernelStateShapeTuples('end_rod', { facing })).toEqual([rod[axis]])
     }
     for (const facing of HORIZONTAL_FACINGS) {
+      expect(kernelStateShapeTuples('redstone_wall_torch', { facing, lit: false })).toEqual([])
+      expect(kernelStateShapeTuples('redstone_wall_torch', { facing, lit: true })).toEqual([])
       expect(kernelStateShapeTuples('ladder', { facing })).toEqual([ladders[facing]])
       expect(kernelStateShapeTuples('ladder', { facing, waterlogged: true })).toEqual([ladders[facing]])
     }
+    expect(kernelStateShapeTuples('torch')).toEqual([])
+    expect(kernelStateShapeTuples('redstone_torch', { lit: false })).toEqual([])
+    expect(kernelStateShapeTuples('redstone_torch', { lit: true })).toEqual([])
   })
 
-  it('selects the hopper and piston-head boxes from facing and short state values', () => {
+  it('selects the hopper boxes from facing state values', () => {
     const hopperSideTop: ReadonlyArray<BoxTuple> = [
       [0, 5 / 8, 0, 1 / 4, 11 / 16, 1],
       [1 / 4, 5 / 8, 0, 1, 11 / 16, 1 / 4],
