@@ -1,5 +1,15 @@
 # @nerima-games/mc-physics
 
+## 0.6.0
+
+### Minor Changes
+
+- [#46](https://github.com/nerima-games/mc-physics/pull/46) [`65685cb`](https://github.com/nerima-games/mc-physics/commit/65685cb2551d8af45761c8139657e70f41df21cc) Thanks [@takeokunn](https://github.com/takeokunn)! - Use mc-kernel 0.15.0 block states for state-aware collision shapes.
+
+- [#47](https://github.com/nerima-games/mc-physics/pull/47) [`b453eb9`](https://github.com/nerima-games/mc-physics/commit/b453eb9d690d0964b7d026cbd0edbce0f9e0c65e) Thanks [@takeokunn](https://github.com/takeokunn)! - Pin mc-kernel to 0.17.0, resolve piston and sticky piston base states and bookshelf collision, and keep redstone torches non-colliding.
+
+- [#45](https://github.com/nerima-games/mc-physics/pull/45) [`0c2c84d`](https://github.com/nerima-games/mc-physics/commit/0c2c84de0c39502fd8cc10d3b5bfcfdd8b746616) Thanks [@takeokunn](https://github.com/takeokunn)! - Add tick-based player movement, vanilla ladder and surface friction, crouch edge stopping, and state-aware block collision shapes.
+
 ## 0.5.0
 
 ### Minor Changes
