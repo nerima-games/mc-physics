@@ -71,7 +71,6 @@ export {
   COLLISION_SHAPE_AABBS,
   FULL_BLOCK_SHAPE,
   PRESSURE_PLATE_SHAPE,
-  UnsupportedBlockShapeError,
   SLAB_SHAPE,
   blockShapeForCustomState,
 } from './domain/shape-data.js'

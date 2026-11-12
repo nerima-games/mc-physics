@@ -15,7 +15,6 @@ import type {
 import type { BlocksPerSecondSquared, PerSecond } from './physical-units.js'
 import type { Brand, Result } from 'effect'
 import type { BlockRegistryResolutionFailure } from '@nerima-games/mc-kernel/domain/block-registry'
-import type { UnsupportedBlockShapeError } from './shape-data.js'
 
 export type FluidFlow = Readonly<{ readonly x: number; readonly y: number; readonly z: number }>
 
@@ -26,7 +25,7 @@ export type BlockSample = Readonly<{
 
 export type BlockLookupError = Brand.BrandError | BlockRegistryResolutionFailure
 
-export type EnvironmentError = BlockLookupError | BlockStateCodecFailure | BlockStateLookupFailure | RangeError | UnsupportedBlockShapeError
+export type EnvironmentError = BlockLookupError | BlockStateCodecFailure | BlockStateLookupFailure | RangeError
 
 export type BlockAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => Result.Result<BlockSample | null, BlockLookupError>
 type BlockIdLookupAt = (bx: BlockAxis, by: BlockAxis, bz: BlockAxis) => number | null

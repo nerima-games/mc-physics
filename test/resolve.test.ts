@@ -31,7 +31,6 @@ import {
   type CollisionShape,
 } from '@nerima-games/mc-kernel'
 import type { BlockEnvironment } from '../src/domain/environment-types'
-import { UnsupportedBlockShapeError } from '../src/index'
 import {
   CONTACT_EPSILON,
   CentreY,
@@ -1199,56 +1198,26 @@ describe('kernel state-specific collision shapes', () => {
       expect(sortedBoxTuples(kernelStateShapeTuples('hopper', { facing, enabled: false }))).toEqual(sortedBoxTuples(hopperFacing[facing]))
     }
 
-  })
-
-  it('propagates piston-head collision as a typed unsupported result', () => {
-    const pistonHeadId = blockIdFor('piston_head')
-    const encodedHead = unwrap(encodeBlockState(pistonHeadId, { facing: 'north', short: false, type: 'normal' }))
-    const options = resolveOptionsFromKernel({
-      blockIdAt: () => pistonHeadId,
-      blockStateAt: () => encodedHead,
-      halfWidth: BlockLength(0.1),
-      halfHeight: HalfHeight(0.1),
-    })
-    const unsupported = blockShapesAtResult(options, 0, 0, 0)
-    expect(Result.isFailure(unsupported)).toBe(true)
-    if (Result.isFailure(unsupported)) {
-      expect(unsupported.failure).toBeInstanceOf(UnsupportedBlockShapeError)
-      expect(unsupported.failure).toMatchObject({
-        _tag: 'UnsupportedBlockShapeError',
-        blockType: 'piston_head',
-      })
+    const pistonHead = (facing: BlockStateFacing, short: boolean): ReadonlyArray<BoxTuple> => {
+      const end = short ? 1 : 5 / 4
+      const start = short ? 0 : -1 / 4
+      switch (facing) {
+        case 'north': return [[0, 0, 0, 1, 1, 1 / 4], [3 / 8, 3 / 8, 1 / 4, 5 / 8, 5 / 8, end]]
+        case 'east': return [[3 / 4, 0, 0, 1, 1, 1], [start, 3 / 8, 3 / 8, 3 / 4, 5 / 8, 5 / 8]]
+        case 'south': return [[0, 0, 3 / 4, 1, 1, 1], [3 / 8, 3 / 8, start, 5 / 8, 5 / 8, 3 / 4]]
+        case 'west': return [[0, 0, 0, 1 / 4, 1, 1], [1 / 4, 3 / 8, 3 / 8, end, 5 / 8, 5 / 8]]
+        case 'up': return [[0, 3 / 4, 0, 1, 1, 1], [3 / 8, start, 3 / 8, 5 / 8, 3 / 4, 5 / 8]]
+        case 'down': return [[0, 0, 0, 1, 1 / 4, 1], [3 / 8, 1 / 4, 3 / 8, 5 / 8, end, 5 / 8]]
+        default: throw new Error('Unexpected piston head facing')
+      }
     }
-
-    const resolution = resolveBodyResult(bodyAt(0.5, 0.5, 0.5), DT, options)
-    expect(Result.isFailure(resolution)).toBe(true)
-    if (Result.isFailure(resolution)) {
-      expect(resolution.failure).toBeInstanceOf(UnsupportedBlockShapeError)
-      expect(resolution.failure).toMatchObject({
-        _tag: 'UnsupportedBlockShapeError',
-        blockType: 'piston_head',
-      })
+    for (const facing of SIX_WAY_FACINGS) {
+      for (const short of [false, true]) {
+        for (const type of ['normal', 'sticky'] as const) {
+          expect(kernelStateShapeTuples('piston_head', { facing, short, type })).toEqual(pistonHead(facing, short))
+        }
+      }
     }
-
-    const box = unwrap(entityAABB(PositionAxis(0.5), CentreY(0.5), PositionAxis(0.5), BlockLength(0.1), HalfHeight(0.1)))
-    const environmentUnsupported = sampleBlockHazards(box, options.environment)
-    expect(Result.isFailure(environmentUnsupported)).toBe(true)
-    if (Result.isFailure(environmentUnsupported)) {
-      expect(environmentUnsupported.failure).toBeInstanceOf(UnsupportedBlockShapeError)
-      expect(environmentUnsupported.failure).toMatchObject({
-        _tag: 'UnsupportedBlockShapeError',
-        blockType: 'piston_head',
-      })
-    }
-
-    const customShapeOptions = resolveOptionsFromKernel({
-      blockIdAt: () => pistonHeadId,
-      blockStateAt: () => encodedHead,
-      blockShapeAt: () => null,
-      halfWidth: BlockLength(0.1),
-      halfHeight: HalfHeight(0.1),
-    })
-    expect(tuplesOfAABBs(unwrap(blockShapesAtResult(customShapeOptions, 0, 0, 0)))).toEqual([])
   })
 
   it('selects chest halves and anvil axes from state values', () => {
@@ -1356,7 +1325,7 @@ describe('kernel state-specific collision shapes', () => {
     })
   })
 
-  it('uses static shapes for unmapped kernel states and marks piston_head unsupported', () => {
+  it('leaves kernel states without a PH1 mapping to the static collision shape', () => {
     const stoneState = unwrap(kernelBlockStateForCell(blockIdFor('stone'), undefined))
     if (stoneState === null) throw new Error('Expected the stone default state')
     const incompleteState = stoneState.values
@@ -1370,7 +1339,7 @@ describe('kernel state-specific collision shapes', () => {
     expect(blockShapeForKernelState('ladder', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('amethyst_cluster', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('hopper', incompleteState)).toBeUndefined()
-    expect(blockShapeForKernelState('piston_head', incompleteState)).toBeInstanceOf(UnsupportedBlockShapeError)
+    expect(blockShapeForKernelState('piston_head', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('chorus_plant', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('end_rod', incompleteState)).toBeUndefined()
     expect(blockShapeForKernelState('chest', incompleteState)).toBeUndefined()
